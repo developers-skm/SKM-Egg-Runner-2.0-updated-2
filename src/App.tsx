@@ -1106,7 +1106,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Living World Weather and Day/Night Cycle Controller Panel (Sized down for elegant non-blocking premium UI) */}
+      {/* Living World Weather and Day/Night Cycle Coantroller Panel (Sized down for elegant non-blocking premium UI) */}
       <div className="fixed top-20 left-4 z-40 pointer-events-auto origin-top-left scale-[0.58]">
         {!isWeatherCtrlOpen ? (
           <button
@@ -1115,9 +1115,6 @@ export default function App() {
             title="Open Dynamic Weather & Cycle Controller"
             id="weather_btn_expand"
           >
-            <span className="animate-spin-slow">🌍</span>
-            <span>Living World</span>
-            <span className="bg-yellow-400 text-neutral-950 font-black rounded px-1 py-0.5 text-[7px]">LIVE</span>
           </button>
         ) : (
           <div className="w-[280px] bg-neutral-950/95 border border-white/10 text-white rounded-2xl shadow-2xl p-4 backdrop-blur-md transition-all duration-300">
