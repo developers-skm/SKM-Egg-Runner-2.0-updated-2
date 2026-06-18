@@ -407,7 +407,6 @@ export const GameOverScreen: React.FC<GameOverScreenProps> = ({
                 <RefreshCw className="w-7 h-7 text-[#5C2C0C] font-black shrink-0" />
               </div>
             </button>
-
             {/* Right Circular Button (Home ⎋) */}
             <button
               id="btn_exit_lobby"
