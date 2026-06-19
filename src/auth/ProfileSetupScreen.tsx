@@ -1,7 +1,7 @@
 /**
  * SKM EGG RUNNER — Profile Setup Screen
  * Shown once for every new Google account, before entering the game.
- * Creates the Firestore users/{uid} document with a fresh zero profile.
+ * Collects player name + phone number and creates a fresh Firestore profile.
  */
 
 import React, { useState } from 'react';
@@ -16,47 +16,50 @@ interface ProfileSetupScreenProps {
 
 const NAME_MIN = 3;
 const NAME_MAX = 20;
-const NAME_RE  = /^[a-zA-Z0-9 _-]+$/; // letters, numbers, space, underscore, hyphen
+const NAME_RE  = /^[a-zA-Z0-9 _-]+$/;
+const PHONE_RE = /^[6-9]\d{9}$/; // Indian mobile: starts 6-9, 10 digits
 
 export default function ProfileSetupScreen({ user, onProfileCreated }: ProfileSetupScreenProps) {
-  const [name,     setName]     = useState('');
-  const [error,    setError]    = useState('');
-  const [loading,  setLoading]  = useState(false);
+  const [name,    setName]    = useState('');
+  const [phone,   setPhone]   = useState('');
+  const [error,   setError]   = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const validate = (v: string): string => {
-    const t = v.trim();
-    if (t.length < NAME_MIN) return `Name must be at least ${NAME_MIN} characters.`;
-    if (t.length > NAME_MAX) return `Name must be ${NAME_MAX} characters or less.`;
-    if (!NAME_RE.test(t))    return 'Only letters, numbers, spaces, _ and - allowed.';
+  const validate = (): string => {
+    const t = name.trim();
+    if (t.length < NAME_MIN) return `Player name must be at least ${NAME_MIN} characters.`;
+    if (t.length > NAME_MAX) return `Player name must be ${NAME_MAX} characters or less.`;
+    if (!NAME_RE.test(t))    return 'Name: only letters, numbers, spaces, _ and - allowed.';
+    const p = phone.trim();
+    if (p && !PHONE_RE.test(p)) return 'Enter a valid 10-digit mobile number.';
     return '';
   };
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const trimmed = name.trim();
-    const err = validate(trimmed);
+    const err = validate();
     if (err) { setError(err); return; }
+
+    const trimmedName  = name.trim();
+    const trimmedPhone = phone.trim();
 
     setLoading(true);
     setError('');
 
     try {
-      // Check if name is already taken
-      // (simple check — in production add a separate playerNames collection)
       const ref = doc(db, 'users', user.uid);
       const existing = await getDoc(ref);
       if (existing.exists()) {
-        // Profile was created in a race — just proceed
-        onProfileCreated(existing.data().playerName ?? trimmed);
+        onProfileCreated(existing.data().playerName ?? trimmedName);
         return;
       }
 
-      // Create fresh profile — all stats start at zero
       await setDoc(ref, {
         uid:              user.uid,
-        playerName:       trimmed,
+        playerName:       trimmedName,
         email:            user.email ?? '',
         photoURL:         user.photoURL ?? '',
+        phone:            trimmedPhone,
         // Game stats — all zero
         bestScore:        0,
         bestDistance:     0,
@@ -70,24 +73,27 @@ export default function ProfileSetupScreen({ user, onProfileCreated }: ProfileSe
         xp:               0,
         currentStage:     'EGG',
         evolutionProgress: 0,
-        // Inventory / skins
         unlockedSkins:    ['skin_classic'],
         activeSkinId:     'skin_classic',
-        // Streak
-        dailyRewardStreak:   0,
+        dailyRewardStreak:    0,
         lastDailyRewardClaim: null,
-        // Timestamps
         createdAt:        serverTimestamp(),
         lastLogin:        serverTimestamp(),
       });
 
-      onProfileCreated(trimmed);
+      onProfileCreated(trimmedName);
     } catch (err) {
       console.error('[ProfileSetup] error:', err);
       setError('Failed to create profile. Please check your connection and try again.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const inputStyle = {
+    background: 'rgba(255,255,255,0.12)',
+    border: '1.5px solid rgba(255,255,255,0.2)',
+    color: 'white',
   };
 
   return (
@@ -105,34 +111,24 @@ export default function ProfileSetupScreen({ user, onProfileCreated }: ProfileSe
         {/* Mascot */}
         <div className="flex justify-center mb-4"
           style={{ filter: 'drop-shadow(0 6px 20px rgba(0,0,0,0.5))' }}>
-          <svg width="90" height="90" viewBox="0 0 512 512">
-            <ellipse cx="256" cy="260" rx="110" ry="145" fill="#FFFFFF" stroke="#e5e5e5" strokeWidth="4"/>
-            <path d="M170 120 Q256 55 342 120 L342 150 L170 150 Z" fill="#DC2626"/>
-            <ellipse cx="256" cy="150" rx="105" ry="18" fill="#b91c1c"/>
-            <ellipse cx="256" cy="112" rx="45" ry="20" fill="#FFF8DC" stroke="#DC2626" strokeWidth="2"/>
-            <text x="256" y="118" fontSize="18" fontWeight="bold" textAnchor="middle" fill="#DC2626">BEST</text>
-            <ellipse cx="225" cy="235" rx="22" ry="34" fill="white"/>
-            <ellipse cx="287" cy="235" rx="22" ry="34" fill="white"/>
-            <circle cx="225" cy="240" r="10" fill="#6B3E26"/>
-            <circle cx="287" cy="240" r="10" fill="#6B3E26"/>
-            <circle cx="228" cy="237" r="3" fill="white"/>
-            <circle cx="290" cy="237" r="3" fill="white"/>
-            <path d="M210 305 Q256 340 302 305" stroke="#ccc" strokeWidth="5" fill="none" strokeLinecap="round"/>
-          </svg>
+          <img
+            src="/THUMBS_POSE__Egg_-removebg-preview.png"
+            alt="SKM Egg"
+            className="w-24 h-auto object-contain"
+          />
         </div>
 
         {/* Card */}
         <div className="rounded-3xl p-6"
           style={{ background: 'rgba(255,255,255,0.10)', border: '1.5px solid rgba(255,255,255,0.2)', backdropFilter: 'blur(12px)' }}>
 
+          {/* Header */}
           <div className="text-center mb-5">
             <h1 className="text-white font-black text-xl uppercase tracking-tight"
               style={{ fontFamily: '"Arial Black", Impact, sans-serif' }}>
               Welcome to SKM Egg Runner
             </h1>
-            <p className="text-white/60 text-xs font-mono mt-1">
-              {user.email}
-            </p>
+            <p className="text-white/50 text-xs font-mono mt-1">{user.email}</p>
             <div className="mt-2 flex items-center justify-center gap-2">
               <div className="h-px w-8 bg-yellow-400/40"/>
               <p className="text-yellow-300 text-[10px] font-bold tracking-[0.25em] uppercase">Create Your Profile</p>
@@ -141,38 +137,68 @@ export default function ProfileSetupScreen({ user, onProfileCreated }: ProfileSe
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+
+            {/* Player Name */}
             <div>
               <label className="text-white/50 text-[10px] font-mono uppercase tracking-widest block mb-1.5">
-                Player Name
+                Player Name <span className="text-red-400">*</span>
               </label>
               <input
                 type="text"
                 value={name}
                 onChange={e => { setName(e.target.value); setError(''); }}
-                placeholder="Enter your name"
+                placeholder="Enter your player name"
                 minLength={NAME_MIN}
                 maxLength={NAME_MAX}
                 required
                 autoFocus
                 className="w-full py-3 px-4 rounded-xl font-bold text-sm text-center focus:outline-none transition placeholder-white/20 uppercase"
-                style={{
-                  background: 'rgba(255,255,255,0.12)',
-                  border: '1.5px solid rgba(255,255,255,0.2)',
-                  color: 'white',
-                  letterSpacing: '0.1em',
-                }}
+                style={{ ...inputStyle, letterSpacing: '0.08em' }}
                 onFocus={e => (e.target.style.borderColor = 'rgba(252,211,77,0.7)')}
                 onBlur={e => (e.target.style.borderColor = 'rgba(255,255,255,0.2)')}
               />
-              <p className="text-white/30 text-[10px] font-mono text-right mt-1">
+              <p className="text-white/25 text-[10px] font-mono text-right mt-0.5">
                 {name.trim().length}/{NAME_MAX}
               </p>
             </div>
 
+            {/* Phone Number */}
+            <div>
+              <label className="text-white/50 text-[10px] font-mono uppercase tracking-widest block mb-1.5">
+                Mobile Number <span className="text-white/30 normal-case">(optional)</span>
+              </label>
+              <div className="flex gap-2">
+                {/* Country code badge */}
+                <div className="flex items-center justify-center px-3 rounded-xl shrink-0 font-mono text-sm font-bold"
+                  style={{ ...inputStyle, border: '1.5px solid rgba(255,255,255,0.2)', color: '#FCD34D' }}>
+                  🇮🇳 +91
+                </div>
+                <input
+                  type="tel"
+                  inputMode="numeric"
+                  value={phone}
+                  onChange={e => { setPhone(e.target.value.replace(/\D/g, '').slice(0, 10)); setError(''); }}
+                  placeholder="9876543210"
+                  maxLength={10}
+                  className="flex-1 py-3 px-4 rounded-xl font-mono text-sm focus:outline-none transition placeholder-white/20"
+                  style={inputStyle}
+                  onFocus={e => (e.target.style.borderColor = 'rgba(252,211,77,0.7)')}
+                  onBlur={e => (e.target.style.borderColor = 'rgba(255,255,255,0.2)')}
+                />
+              </div>
+              {phone.length > 0 && (
+                <p className="text-white/25 text-[10px] font-mono text-right mt-0.5">
+                  {phone.length}/10
+                </p>
+              )}
+            </div>
+
+            {/* Error */}
             {error && (
               <p className="text-yellow-300 text-xs font-mono text-center leading-relaxed">{error}</p>
             )}
 
+            {/* Submit */}
             <button
               type="submit"
               disabled={loading || name.trim().length < NAME_MIN}
@@ -192,6 +218,7 @@ export default function ProfileSetupScreen({ user, onProfileCreated }: ProfileSe
               )}
               {loading ? 'Creating Profile…' : 'Create Profile'}
             </button>
+
           </form>
         </div>
       </div>
