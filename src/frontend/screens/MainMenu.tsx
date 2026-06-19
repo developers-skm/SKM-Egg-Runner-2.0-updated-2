@@ -1,7 +1,7 @@
 import React from 'react';
 import { PlayerStats } from '../../types';
 import { soundManager } from '../../audio';
-import { Play, ShoppingCart, Trophy, ListOrdered, Calendar, Award, Backpack, Settings } from 'lucide-react';
+import { Play, ShoppingCart, Trophy, ListOrdered, Calendar, Award, Backpack, Settings, UserCircle } from 'lucide-react';
 
 interface MainMenuProps {
   stats: PlayerStats;
@@ -11,6 +11,7 @@ interface MainMenuProps {
   onOpenLeaderboard: () => void;
   onOpenBag: () => void;
   onOpenSettings: (initialView: 'SETTINGS' | 'DEV_LOGIN') => void;
+  onOpenProfile: () => void;
   onClaimDailyReward: (rewardType: 'feeds' | 'gems', value: number) => void;
 }
 
@@ -32,6 +33,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   onOpenLeaderboard,
   onOpenBag,
   onOpenSettings,
+  onOpenProfile,
   onClaimDailyReward
 }) => {
   // Determine if daily reward can be claimed
@@ -152,8 +154,18 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         <div className="flex flex-col items-end gap-2">
 
 
-          {/* Quick Settings Button */}
+          {/* Settings + Profile buttons */}
           <div className="flex gap-1">
+            {/* Profile Button */}
+            <button
+              id="btn_toggle_profile"
+              onClick={() => { soundManager.playClick(); onOpenProfile(); }}
+              className="p-2.5 rounded-xl border border-slate-800 bg-slate-900/90 hover:bg-slate-850 hover:scale-105 transition-all duration-300 backdrop-blur shadow-lg cursor-pointer flex items-center justify-center"
+              title="View Profile"
+            >
+              <UserCircle className="w-4 h-4 text-sky-400" />
+            </button>
+
             <button
               id="btn_toggle_settings"
               onClick={handleSettingsClick}

@@ -5,6 +5,8 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { ShieldAlert } from 'lucide-react';
+import { useAuth } from './auth/AuthProvider';
+import ProfileModal from './auth/ProfileModal';
 import SKMRunnerEngine from './gameEngine';
 import { soundManager } from './audio';
 import {
@@ -32,17 +34,20 @@ import {
 } from './frontend';
 import { syncConfigWithServer, addDebugLog, getActiveLiveConfig } from './liveConfig';
 
-const STORAGE_STATS_KEY = 'skm_chicken_run_stats_v1';
-const STORAGE_MISSIONS_KEY = 'skm_chicken_run_missions_v1';
-const STORAGE_ACHIEVEMENTS_KEY = 'skm_chicken_run_achievements_v1';
-const STORAGE_LEADERBOARD_KEY = 'skm_chicken_run_leaderboard_v1';
+// Storage keys are scoped per Firebase UID so each account has isolated data.
+// getUid() is resolved inside App() where useAuth() is available.
+const storageKey = (uid: string, suffix: string) => `skm_${uid}_${suffix}`;
+const STATS_SUFFIX        = 'stats_v1';
+const MISSIONS_SUFFIX     = 'missions_v1';
+const ACHIEVEMENTS_SUFFIX = 'achievements_v1';
+const LEADERBOARD_SUFFIX  = 'leaderboard_v1';
 
 const seedLeaderboard: LeaderboardEntry[] = [];
 
 const DEFAULT_STATS: PlayerStats = {
-  totalFeeds: 150, // a little gift starter for customization
-  totalGems: 8,    // enough for one revive right off the bat!
-  totalEggs: 50,   // a warm starter nest of eggs
+  totalFeeds: 0,
+  totalGems: 0,
+  totalEggs: 0,
   highscore: 0,
   level: 1,
   xp: 0,
@@ -125,6 +130,14 @@ const DEFAULT_ACHIEVEMENTS: Achievement[] = [
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const engineRef = useRef<SKMRunnerEngine | null>(null);
+  const { user, logout } = useAuth();
+  const uid = user?.uid ?? 'guest';
+
+  // UID-scoped storage keys — each Firebase account has isolated data
+  const STORAGE_STATS_KEY        = storageKey(uid, STATS_SUFFIX);
+  const STORAGE_MISSIONS_KEY     = storageKey(uid, MISSIONS_SUFFIX);
+  const STORAGE_ACHIEVEMENTS_KEY = storageKey(uid, ACHIEVEMENTS_SUFFIX);
+  const STORAGE_LEADERBOARD_KEY  = storageKey(uid, LEADERBOARD_SUFFIX);
 
   // Navigation Panel States
   const [gameState, setGameState] = useState<'MENU' | 'PLAYING' | 'PAUSED' | 'GAMEOVER'>('MENU');
@@ -135,6 +148,7 @@ export default function App() {
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
   const [isBagOpen, setIsBagOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isProfileOpen,  setIsProfileOpen]  = useState(false);
   const [settingsInitialView, setSettingsInitialView] = useState<'SETTINGS' | 'DEV_LOGIN'>('SETTINGS');
   const [showDevExprToast, setShowDevExprToast] = useState(false);
   const hasDecrementedThisRunRef = useRef(false);
@@ -193,13 +207,15 @@ export default function App() {
   const [currentWeather, setCurrentWeather] = useState<string>('SUNNY');
   const [isWeatherCtrlOpen, setIsWeatherCtrlOpen] = useState(false);
 
-  // Player Profile Name and Toast notifications
+  // Player name — UID-scoped, populated by ProfileSetupScreen
   const [playerName, setPlayerName] = useState<string>(() => {
-    return localStorage.getItem('skm_player_name') || '';
+    const u = user?.uid ?? 'guest';
+    return localStorage.getItem(`skm_player_name_${u}`)
+      ?? user?.displayName
+      ?? '';
   });
-  const [isNamePromptOpen, setIsNamePromptOpen] = useState<boolean>(() => {
-    return !localStorage.getItem('skm_player_name');
-  });
+  // Name prompt is handled by ProfileSetupScreen in main.tsx — never show it here
+  const [isNamePromptOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
@@ -834,6 +850,7 @@ export default function App() {
             setSettingsInitialView(view);
             setIsSettingsOpen(true);
           }}
+          onOpenProfile={() => setIsProfileOpen(true)}
           onClaimDailyReward={handleClaimDailyReward}
         />
       )}
@@ -943,6 +960,7 @@ export default function App() {
             setIsSettingsOpen(false);
             handleStartGame();
           }}
+          onLogout={logout}
           engine={engineRef.current}
           stats={stats}
           setStats={setStats}
@@ -1004,6 +1022,23 @@ export default function App() {
         />
       )}
 
+      {/* PROFILE MODAL */}
+      {isProfileOpen && user && (
+        <ProfileModal
+          isOpen={isProfileOpen}
+          onClose={() => setIsProfileOpen(false)}
+          user={user}
+          stats={stats}
+          onLogout={logout}
+          onDataDeleted={() => {
+            // Clear all UID-scoped data then reload to login screen
+            [STORAGE_STATS_KEY, STORAGE_MISSIONS_KEY, STORAGE_ACHIEVEMENTS_KEY, STORAGE_LEADERBOARD_KEY].forEach(k => localStorage.removeItem(k));
+            localStorage.removeItem(`skm_player_name_${uid}`);
+            window.location.reload();
+          }}
+        />
+      )}
+
       {/* TOAST SYSTEM (Sleek floating bubble notification with modern backdrop-blur) */}
       {toastMessage && (
         <div 
@@ -1015,239 +1050,8 @@ export default function App() {
         </div>
       )}
 
-      {/* FIRST LAUNCH PLAYER NAME PROMPT OVERLAY (High fidelity Subway Surfers-style menu blocking card) */}
-      {isNamePromptOpen && (
-        <div 
-          id="first_launch_name_modal"
-          className="fixed inset-0 bg-slate-950/95 backdrop-blur-lg flex items-center justify-center p-4 z-55"
-        >
-          <div className="bg-slate-900 border-2 border-yellow-500 rounded-3xl p-6 shadow-2xl w-full max-w-sm text-center relative animate-fade-in">
-            <div className="mx-auto w-12 h-12 bg-yellow-500/10 border border-yellow-500/30 rounded-2xl flex items-center justify-center text-yellow-500 mb-3 shadow-lg">
-              <span className="text-xl">🥚</span>
-            </div>
-            
-            <h3 className="text-xl font-black text-white font-sans uppercase tracking-tight">
-              Enter Poultry Champion Hall
-            </h3>
-            <p className="text-xs text-slate-400 font-mono mt-1 mb-5">
-              Choose your official runner nickname to sync your high scores onto the daily and weekly rankings!
-            </p>
+      {/* Name prompt replaced by ProfileSetupScreen in main.tsx */}
 
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                const form = e.currentTarget;
-                const input = form.elements.namedItem('nickname') as HTMLInputElement;
-                const val = input.value.trim();
-                if (val.length < 2) {
-                  return;
-                }
-                soundManager.playLevelUp();
-                localStorage.setItem('skm_player_name', val);
-                setPlayerName(val);
-                setIsNamePromptOpen(false);
-                showToast(`Welcome ${val}! Your poultry profile is synchronized! 🌾`);
-              }}
-              className="space-y-4"
-            >
-              <input
-                id="inp_player_nickname"
-                name="nickname"
-                type="text"
-                autoComplete="off"
-                placeholder="PRO PUMPKIN RUNNER"
-                maxLength={20}
-                required
-                className="w-full bg-slate-950 border border-slate-800 text-white font-black text-center text-sm tracking-widest uppercase placeholder-slate-700 py-3 px-4 rounded-xl focus:border-yellow-500 focus:outline-none focus:ring-1 focus:ring-yellow-500"
-              />
-
-              <button
-                id="btn_confirm_nickname"
-                type="submit"
-                className="w-full bg-yellow-500 hover:bg-yellow-400 text-slate-950 font-black py-3 rounded-xl shadow-lg transition duration-200 text-xs uppercase cursor-pointer tracking-wider"
-              >
-                Confirm Nickname & Play!
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Living World Weather and Day/Night Cycle Coantroller Panel (Sized down for elegant non-blocking premium UI) */}
-      <div className="fixed top-20 left-4 z-40 pointer-events-auto origin-top-left scale-[0.58]">
-        {!isWeatherCtrlOpen ? (
-          <button
-            onClick={() => setIsWeatherCtrlOpen(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-neutral-900/95 border border-white/5 hover:border-yellow-400 text-white rounded-full shadow-lg text-[10px] font-medium backdrop-blur-md transition-all duration-300 hover:scale-105 active:scale-95 group cursor-pointer"
-            title="Open Dynamic Weather & Cycle Controller"
-            id="weather_btn_expand"
-          >
-          </button>
-        ) : (
-          <div className="w-[280px] bg-neutral-950/95 border border-white/10 text-white rounded-2xl shadow-2xl p-4 backdrop-blur-md transition-all duration-300">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-white/10 pb-2.5 mb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-base animate-pulse">🌍</span>
-                <div>
-                  <h3 className="font-bold text-xs tracking-tight text-white m-0">Living World Controller</h3>
-                  <p className="text-[9px] text-zinc-400 m-0">Real-time dynamic simulation</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsWeatherCtrlOpen(false)}
-                className="text-zinc-400 hover:text-white p-1 rounded-full hover:bg-white/10 text-xs transition-colors cursor-pointer"
-                id="weather_btn_collapse"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Time of Day Display Widget */}
-            <div className="bg-gradient-to-r from-zinc-900 via-zinc-950 to-zinc-900 border border-white/5 rounded-xl p-3 mb-3">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[9px] text-zinc-500 uppercase tracking-widest font-black">Simulation Time</span>
-                <span className="text-[8px] bg-white/10 text-white font-mono px-1.5 py-0.5 rounded">
-                  Cycle: {engineRef.current ? `${engineRef.current.timeScale}x` : 'Paused'}
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between">
-                <span className="text-lg font-black font-mono tracking-wider text-yellow-300">
-                  {(() => {
-                    const totalMinutes = Math.floor(timeOfDay * 60);
-                    const hours = Math.floor(totalMinutes / 60);
-                    const minutes = totalMinutes % 60;
-                    const ampm = hours >= 12 ? 'PM' : 'AM';
-                    const displayHours = hours % 12 === 0 ? 12 : hours % 12;
-                    const displayMinutes = minutes < 10 ? `0${minutes}` : minutes;
-                    return `${displayHours}:${displayMinutes} ${ampm}`;
-                  })()}
-                </span>
-                <span className="text-[9px] font-bold text-teal-400 bg-teal-950/60 border border-teal-800/50 px-2 py-0.5 rounded-full">
-                  {(() => {
-                    if (timeOfDay >= 5.0 && timeOfDay < 7.0) return '🌅 Dawn';
-                    if (timeOfDay >= 7.0 && timeOfDay < 11.0) return '☀️ Morning';
-                    if (timeOfDay >= 11.0 && timeOfDay < 15.0) return '☀️ Noon';
-                    if (timeOfDay >= 15.0 && timeOfDay < 17.0) return '⛅ Afternoon';
-                    if (timeOfDay >= 17.0 && timeOfDay < 19.5) return '🌇 Sunset';
-                    if (timeOfDay >= 19.5 && timeOfDay < 21.5) return '🌌 Dusk';
-                    return '🌙 Midnight';
-                  })()}
-                </span>
-              </div>
-
-              {/* Slider simulation track indicator */}
-              <div className="relative mt-2.5 h-1 bg-zinc-800 rounded-full overflow-hidden">
-                <div
-                  className="absolute top-0 bottom-0 left-0 bg-yellow-400 rounded-full"
-                  style={{ width: `${(timeOfDay / 24) * 100}%` }}
-                />
-              </div>
-            </div>
-
-            {/* Time Presets Overrides */}
-            <div className="mb-3">
-              <span className="text-[9px] text-zinc-500 uppercase tracking-widest font-black block mb-2">Set Time Preset</span>
-              <div className="grid grid-cols-4 gap-1.5">
-                {[
-                  { label: 'Dawn', hour: 6.0, icon: '🌅' },
-                  { label: 'Noon', hour: 12.0, icon: '☀️' },
-                  { label: 'Sunset', hour: 18.0, icon: '🌇' },
-                  { label: 'Midnight', hour: 23.5, icon: '🌙' },
-                ].map((p) => (
-                  <button
-                    key={p.label}
-                    onClick={() => {
-                      if (engineRef.current) {
-                        engineRef.current.timeOfDay = p.hour;
-                        setTimeOfDay(p.hour);
-                      }
-                    }}
-                    className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-lg border text-[10px] transition-all cursor-pointer ${
-                      Math.abs(timeOfDay - p.hour) < 1.0
-                        ? 'bg-yellow-400 text-neutral-950 border-yellow-400 font-bold scale-102'
-                        : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700 text-zinc-300'
-                    }`}
-                  >
-                    <span>{p.icon}</span>
-                    <span className="truncate max-w-full text-[8px] mt-0.5">{p.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Weather Style Presets Overrides */}
-            <div className="mb-3">
-              <span className="text-[9px] text-zinc-500 uppercase tracking-widest font-black block mb-2">Set Weather Override</span>
-              <div className="grid grid-cols-3 gap-1.5">
-                {[
-                  { id: 'SUNNY', label: 'Sunny', icon: '☀️' },
-                  { id: 'CLOUDY', label: 'Cloudy', icon: '☁️' },
-                  { id: 'LIGHT_RAIN', label: 'Rain', icon: '🌧' },
-                  { id: 'THUNDERSTORM', label: 'Storm', icon: '⛈️' },
-                  { id: 'FOGGY', label: 'Foggy', icon: '🌫️' },
-                  { id: 'RAIN_SUNSHINE', label: 'Sun Rain', icon: '🌦️' },
-                ].map((w) => (
-                  <button
-                    key={w.id}
-                    onClick={() => {
-                      if (engineRef.current) {
-                        engineRef.current.setWeather(w.id);
-                        setCurrentWeather(w.id);
-                      }
-                    }}
-                    className={`flex flex-col items-center justify-center py-1.5 px-0.5 rounded-lg border text-[10px] transition-all cursor-pointer ${
-                      currentWeather === w.id
-                        ? 'bg-blue-500 text-white border-blue-500 font-bold scale-102'
-                        : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700 text-zinc-300'
-                    }`}
-                  >
-                    <span className="text-[11px]">{w.icon}</span>
-                    <span className="truncate max-w-full text-[8px] mt-0.5">{w.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Interactive Thunder Strike / Speed Sliders */}
-            <div className="border-t border-white/10 pt-3">
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    if (engineRef.current) {
-                      engineRef.current.triggerLightningStrike();
-                    }
-                  }}
-                  disabled={currentWeather !== 'THUNDERSTORM'}
-                  className={`flex-1 flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all active:scale-95 cursor-pointer ${
-                    currentWeather === 'THUNDERSTORM'
-                      ? 'bg-amber-500 hover:bg-amber-600 border border-amber-400 text-neutral-950 shadow-md shadow-amber-500/20'
-                      : 'bg-zinc-900 border border-zinc-850 text-zinc-600 cursor-not-allowed opacity-50'
-                  }`}
-                  title={currentWeather === 'THUNDERSTORM' ? 'Trigger instant thunderstorm lightning!' : 'Requires Storm weather state'}
-                >
-                  <span>⚡</span>
-                  <span className="text-[9px]">Lightning Flash</span>
-                </button>
-
-                <button
-                  onClick={() => {
-                    if (engineRef.current) {
-                      const nextScale = engineRef.current.timeScale === 0.08 ? 0.35 : 0.08;
-                      engineRef.current.timeScale = nextScale;
-                      setTimeOfDay(prev => (prev + 0.0001) % 24.0);
-                    }
-                  }}
-                  className="py-1.5 px-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-lg text-[9px] font-semibold text-zinc-400 hover:text-white cursor-pointer"
-                  title="Accelerate day/night cycle speed"
-                >
-                  🚀 Speed Cycle
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
 
     </div>
   );

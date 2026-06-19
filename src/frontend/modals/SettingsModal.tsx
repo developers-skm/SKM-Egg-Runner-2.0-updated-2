@@ -46,6 +46,7 @@ interface SettingsModalProps {
   onToggleSound: () => void;
   onToggleMusic: () => void;
   onStartGame: () => void;
+  onLogout?: () => Promise<void>;
   initialView?: SettingsView;
   engine?: any;
   stats?: any;
@@ -71,6 +72,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onToggleSound,
   onToggleMusic,
   onStartGame,
+  onLogout,
   initialView = 'SETTINGS',
   engine,
   stats,
@@ -800,14 +802,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </p>
             <div className="flex gap-2.5 pt-2">
               <button
-                _id="default_config_confirm_yes"
+                id="default_config_confirm_yes"
                 onClick={handleConfirmRestoreDefault}
                 className="flex-1 bg-amber-600 hover:bg-amber-500 text-white text-[10px] uppercase font-mono font-bold py-2 px-4 rounded-xl border border-amber-550 cursor-pointer shadow-md shadow-slate-950/40 transition"
               >
                 Yes
               </button>
               <button
-                _id="default_config_confirm_no"
+                id="default_config_confirm_no"
                 onClick={handleCancelRestoreDefault}
                 className="flex-1 bg-slate-850 hover:bg-slate-750 text-slate-300 text-[10px] uppercase font-mono font-bold py-2 px-4 rounded-xl border border-slate-750 cursor-pointer transition"
               >
@@ -928,6 +930,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 Close Panel
               </button>
             </div>
+
+            {/* Logout */}
+            {onLogout && (
+              <button
+                id="btn_settings_logout"
+                onClick={async () => {
+                  soundManager.playClick();
+                  if (confirm('Sign out and return to the Welcome screen?')) {
+                    onClose();
+                    await onLogout();
+                  }
+                }}
+                className="w-full mt-1 flex items-center justify-center gap-2 bg-transparent border border-slate-700/50 hover:border-orange-500/50 text-slate-500 hover:text-orange-400 font-bold py-2 rounded-xl transition text-[10px] uppercase font-mono tracking-wider cursor-pointer"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+                Sign Out
+              </button>
+            )}
           </div>
         )}
 

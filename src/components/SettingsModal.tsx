@@ -800,14 +800,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </p>
             <div className="flex gap-2.5 pt-2">
               <button
-                _id="default_config_confirm_yes"
+                id="default_config_confirm_yes"
                 onClick={handleConfirmRestoreDefault}
                 className="flex-1 bg-amber-600 hover:bg-amber-500 text-white text-[10px] uppercase font-mono font-bold py-2 px-4 rounded-xl border border-amber-550 cursor-pointer shadow-md shadow-slate-950/40 transition"
               >
                 Yes
               </button>
               <button
-                _id="default_config_confirm_no"
+                id="default_config_confirm_no"
                 onClick={handleCancelRestoreDefault}
                 className="flex-1 bg-slate-850 hover:bg-slate-750 text-slate-300 text-[10px] uppercase font-mono font-bold py-2 px-4 rounded-xl border border-slate-750 cursor-pointer transition"
               >
