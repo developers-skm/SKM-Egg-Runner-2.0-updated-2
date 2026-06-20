@@ -14,6 +14,7 @@ interface GameOverScreenProps {
   eggDropRarity: 'COMMON' | 'RARE' | 'VERY RARE' | 'NONE';
   luckyEventName: string | null;
   luckyEventEggs: number;
+  remainingAttempts: number;
   onContinueWithGems: () => void;
   onRestart: () => void;
   onHome: () => void;
@@ -45,12 +46,13 @@ export const GameOverScreen: React.FC<GameOverScreenProps> = ({
   eggDropRarity,
   luckyEventName,
   luckyEventEggs,
+  remainingAttempts,
   onContinueWithGems,
   onRestart,
   onHome
 }) => {
   const isNewHighscore = score > highscore;
-  const canContinue = playerGemsBalance >= 3;
+  const canContinue = playerGemsBalance >= 3 && remainingAttempts > 0;
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Confetti system for 3 golden eggs milestone
@@ -69,15 +71,19 @@ export const GameOverScreen: React.FC<GameOverScreenProps> = ({
 
   // Handle continuous gameplay revival
   const handleReviveClick = () => {
+    if (remainingAttempts <= 0) {
+      soundManager.playClick();
+      setErrorMessage('⛔ Session expired. Scan a new QR to continue.');
+      setTimeout(() => setErrorMessage(null), 3000);
+      return;
+    }
     if (canContinue) {
       soundManager.playClick();
       onContinueWithGems();
     } else {
       soundManager.playClick();
       setErrorMessage(`Need 3 Crystal Eggs. You have: 🥚 ${playerGemsBalance}`);
-      setTimeout(() => {
-        setErrorMessage(null);
-      }, 3000);
+      setTimeout(() => setErrorMessage(null), 3000);
     }
   };
 
@@ -372,6 +378,18 @@ export const GameOverScreen: React.FC<GameOverScreenProps> = ({
         {/* BUTTONS CONTROLLER (BOTTOM OF CARD) */}
         <div className="mt-3.5 px-2 flex flex-col gap-2 relative z-10 w-full">
 
+          {/* Session expired banner */}
+          {remainingAttempts === 0 && (
+            <div className="w-full bg-red-950/80 border border-red-500/40 rounded-2xl py-2.5 px-4 text-center mb-1">
+              <p className="text-red-300 text-[11px] font-black font-mono uppercase tracking-wide">
+                ⛔ Your 2 play attempts have been used.
+              </p>
+              <p className="text-red-400/80 text-[10px] font-semibold font-mono mt-0.5">
+                Please scan a QR code again to continue.
+              </p>
+            </div>
+          )}
+
           {/* Bottom Action Bar: Horizontal circular button row */}
           <div className="flex items-center justify-center gap-6 mt-1 mb-1 relative z-10 w-full">
             {/* Left Circular Button (Refresh/Retry ↻) */}
@@ -381,7 +399,8 @@ export const GameOverScreen: React.FC<GameOverScreenProps> = ({
                 soundManager.playClick();
                 onRestart();
               }}
-              className="w-16 h-16 md:w-[72px] md:h-[72px] relative group transition-all duration-300 transform active:scale-90 hover:scale-105 cursor-pointer flex items-center justify-center rounded-full shrink-0"
+              disabled={remainingAttempts === 0}
+              className={`w-16 h-16 md:w-[72px] md:h-[72px] relative group transition-all duration-300 transform active:scale-90 hover:scale-105 flex items-center justify-center rounded-full shrink-0 ${remainingAttempts === 0 ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
             >
               {/* 3D shadow depth layer */}
               <div className="absolute inset-0 bg-[#D48C00] rounded-full translate-y-1.5 transition-all group-active:translate-y-0.5" />

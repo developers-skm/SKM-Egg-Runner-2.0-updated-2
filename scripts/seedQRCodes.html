@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SKM — Seed QR Codes</title>
+  <style>
+    body { font-family: monospace; background: #0f172a; color: #e2e8f0; padding: 32px; max-width: 640px; margin: 0 auto; }
+    h1 { color: #facc15; }
+    button { background: #facc15; color: #0f172a; font-weight: 900; border: none; padding: 12px 28px; border-radius: 10px; font-size: 15px; cursor: pointer; margin-top: 16px; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    #log { margin-top: 24px; background: #1e293b; border-radius: 10px; padding: 20px; white-space: pre-wrap; line-height: 1.9; font-size: 13px; min-height: 160px; }
+    .ok   { color: #4ade80; }
+    .skip { color: #facc15; }
+    .err  { color: #f87171; }
+    .info { color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <h1>SKM EGG RUNNER — Seed QR Codes</h1>
+  <p class="info">Sign in with the Google account you use to manage the Firebase project.<br>
+  Then click <strong>Seed QR Codes</strong> to create the <code>qrCodes</code> collection.</p>
+
+  <button id="btnLogin" onclick="login()">🔐 Sign in with Google</button>
+  <button id="btnSeed"  onclick="seed()" style="display:none">🌱 Seed QR Codes</button>
+
+  <div id="log"><span class="info">Press Sign in with Google to begin…</span></div>
+
+  <script type="module">
+    import { initializeApp }                                    from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+    import { getAuth, signInWithPopup, GoogleAuthProvider }    from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+    import { getFirestore, doc, getDoc, setDoc, serverTimestamp }
+                                                                from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+
+    const firebaseConfig = {
+      apiKey:            "AIzaSyBcGsQCma6dB3yDSZxhPAiwJtNR3CofcJc",
+      authDomain:        "skm-egg-runner.firebaseapp.com",
+      projectId:         "skm-egg-runner",
+      storageBucket:     "skm-egg-runner.firebasestorage.app",
+      messagingSenderId: "635492295830",
+      appId:             "1:635492295830:web:d572a5d8b35e42ef8f4eb7",
+    };
+
+    const app      = initializeApp(firebaseConfig);
+    const auth     = getAuth(app);
+    const db       = getFirestore(app);
+    const provider = new GoogleAuthProvider();
+
+    const QR_CODES = [
+      'EGG-0001','EGG-0002','EGG-0003','EGG-0004','EGG-0005',
+      'EGG-0006','EGG-0007','EGG-0008','EGG-0009','EGG-0010',
+    ];
+
+    function log(msg, cls = 'info') {
+      const el = document.getElementById('log');
+      el.innerHTML += `<span class="${cls}">${msg}</span>\n`;
+    }
+
+    window.login = async function () {
+      document.getElementById('log').innerHTML = '';
+      log('Opening Google sign-in popup…');
+      try {
+        const result = await signInWithPopup(auth, provider);
+        log(`✅ Signed in as: ${result.user.email}`, 'ok');
+        document.getElementById('btnLogin').style.display = 'none';
+        document.getElementById('btnSeed').style.display  = 'inline-block';
+        log('\nReady — click Seed QR Codes to create the collection.', 'info');
+      } catch (e) {
+        log(`❌ Sign-in failed: ${e.message}`, 'err');
+      }
+    };
+
+    window.seed = async function () {
+      const btn = document.getElementById('btnSeed');
+      btn.disabled = true;
+      document.getElementById('log').innerHTML = '';
+      log(`📦 Seeding ${QR_CODES.length} documents into Firestore → qrCodes/\n`);
+
+      let created = 0, skipped = 0;
+
+      for (const code of QR_CODES) {
+        log(`  🔍 Checking qrCodes/${code}…`);
+        try {
+          const ref  = doc(db, 'qrCodes', code);
+          const snap = await getDoc(ref);
+
+          if (snap.exists()) {
+            const d = snap.data();
+            log(`  ⏭  ${code} already exists — playCount: ${d.playCount}/${d.maxPlays} (skipped)`, 'skip');
+            skipped++;
+          } else {
+            await setDoc(ref, {
+              code,
+              active:    true,
+              playCount: 0,
+              maxPlays:  2,
+              createdAt: serverTimestamp(),
+            });
+            log(`  ✅ ${code} created  { active: true, playCount: 0, maxPlays: 2 }`, 'ok');
+            created++;
+          }
+        } catch (e) {
+          log(`  ❌ ${code} FAILED: ${e.message}`, 'err');
+        }
+      }
+
+      log(`\n🎉 Done!  Created: ${created}   Skipped: ${skipped}`, 'ok');
+      log('You can now close this page.', 'info');
+      btn.disabled = false;
+    };
+  </script>
+</body>
+</html>

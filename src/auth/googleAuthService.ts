@@ -51,27 +51,42 @@ export async function checkRedirectResult(): Promise<GoogleAuthResult> {
 
 export async function signInWithGoogle(): Promise<GoogleAuthResult> {
   const isMobile = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  console.log('[AUTH] Login started — mobile:', isMobile);
 
   if (isMobile) {
     try {
       await signInWithRedirect(auth, provider);
+      // Page will reload — onAuthStateChanged fires after redirect completes
       return { success: false, redirectInitiated: true };
     } catch (err) {
+      console.error('[AUTH] signInWithRedirect error:', err);
       return { success: false, error: mapError((err as AuthError).code) };
     }
   }
 
+  // Desktop: popup flow
   try {
     const credential = await signInWithPopup(auth, provider);
-    // Update lastLogin timestamp for returning users (merge so new users are unaffected)
-    await setDoc(doc(db, 'users', credential.user.uid), { lastLogin: serverTimestamp() }, { merge: true });
+    console.log('[AUTH] Google popup success — uid:', credential.user.uid, '| email:', credential.user.email);
+
+    // Update lastLogin only — do NOT create the full profile here.
+    // Profile creation is handled by ProfileSetupScreen in main.tsx.
+    await setDoc(
+      doc(db, 'users', credential.user.uid),
+      { lastLogin: serverTimestamp() },
+      { merge: true }
+    ).catch(e => console.warn('[AUTH] lastLogin update failed (non-fatal):', e?.message));
+
     return { success: true, user: credential.user };
   } catch (err) {
     const error = err as AuthError;
+    console.error('[AUTH] signInWithPopup error:', error.code);
+
     if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
       return { success: false, error: '' };
     }
     if (error.code === 'auth/popup-blocked') {
+      console.log('[AUTH] Popup blocked — falling back to redirect');
       try {
         await signInWithRedirect(auth, provider);
         return { success: false, redirectInitiated: true };

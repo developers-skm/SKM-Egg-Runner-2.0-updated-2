@@ -1,43 +1,91 @@
-import { StrictMode, useState, useEffect } from 'react';
+import { StrictMode, useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import { AuthProvider, useAuth } from './auth/AuthProvider.tsx';
 import WelcomeScreen from './auth/WelcomeScreen.tsx';
 import ProfileSetupScreen from './auth/ProfileSetupScreen.tsx';
-import { doc, getDoc } from 'firebase/firestore';
+import ModuleSelectScreen from './auth/ModuleSelectScreen.tsx';
+import ProteinTrackerScreen from './auth/ProteinTrackerScreen.tsx';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './services/firebase/firebase.ts';
 import './index.css';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Flow:
-//   Loading → Login → Profile Setup (new users only) → Game
+//   Loading → Login → Profile Setup (new users only) → Module Select → Module
 //
-// Data isolation: every new account gets ProfileSetupScreen,
-// which writes a zero-value Firestore document at users/{uid}.
-// App.tsx uses UID-scoped localStorage keys so no two accounts share data.
+// Auth navigation is driven exclusively by onAuthStateChanged in AuthProvider.
+// WelcomeScreen's onAuthSuccess is intentionally a no-op — the user state
+// change fires automatically and AppRoot re-renders into the correct screen.
+//
+// Profile status:
+//   CHECKING  — waiting for Firestore read
+//   NEEDED    — doc missing, show ProfileSetupScreen
+//   READY     — doc exists, show ModuleSelectScreen
 // ─────────────────────────────────────────────────────────────────────────────
 
 type ProfileStatus = 'CHECKING' | 'NEEDED' | 'READY';
+type AppScreen     = 'MODULE_SELECT' | 'GAME' | 'PROTEIN_TRACKER';
 
 function AppRoot() {
   const { user } = useAuth();
   const [profileStatus, setProfileStatus] = useState<ProfileStatus>('CHECKING');
+  const [screen,        setScreen]        = useState<AppScreen>('MODULE_SELECT');
+  // Track the last UID we checked so re-renders don't re-fire the Firestore read
+  const checkedUidRef = useRef<string | null>(null);
 
-  // When Firebase resolves a user, check if their Firestore profile exists
   useEffect(() => {
-    if (!user) { setProfileStatus('CHECKING'); return; }
+    // user === undefined  → Firebase hasn't resolved yet (initial load)
+    // user === null       → definitely logged out
+    // user = User object  → logged in
 
+    if (!user) {
+      // Reset so next login re-checks profile
+      checkedUidRef.current = null;
+      setProfileStatus('CHECKING');
+      return;
+    }
+
+    // Already checked this UID this session — don't re-run
+    if (checkedUidRef.current === user.uid) return;
+    checkedUidRef.current = user.uid;
+
+    console.log('[AUTH] User UID:', user.uid, '| Email:', user.email);
     setProfileStatus('CHECKING');
+
     getDoc(doc(db, 'users', user.uid))
-      .then(snap => setProfileStatus(snap.exists() ? 'READY' : 'NEEDED'))
-      .catch(() => setProfileStatus('NEEDED')); // treat Firestore error as new user
+      .then(snap => {
+        console.log('[AUTH] User document exists:', snap.exists());
+        if (snap.exists()) {
+          setProfileStatus('READY');
+          console.log('[AUTH] Redirecting to module selection');
+        } else {
+          // New user — show profile setup
+          setProfileStatus('NEEDED');
+          console.log('[AUTH] Profile needed — showing ProfileSetupScreen');
+        }
+      })
+      .catch(err => {
+        // Firestore error (offline, rules, etc.) — treat as READY so the user
+        // is never stuck on the login screen due to a Firestore permission issue.
+        // Profile creation will happen lazily when they next reach ProfileSetup.
+        console.warn('[AUTH] Firestore read failed, treating as READY:', err?.message);
+        setProfileStatus('READY');
+      });
   }, [user]);
+
+  // Reset screen to MODULE_SELECT when a different user logs in
+  useEffect(() => {
+    if (user?.uid) setScreen('MODULE_SELECT');
+  }, [user?.uid]);
 
   // ── Loading splash ────────────────────────────────────────────────────────
   if (user === undefined || (user && profileStatus === 'CHECKING')) {
     return (
-      <div className="fixed inset-0 flex items-center justify-center"
-        style={{ background: 'linear-gradient(160deg,#7f0000 0%,#b91c1c 35%,#991b1b 65%,#7f1d1d 100%)' }}>
+      <div
+        className="fixed inset-0 flex items-center justify-center"
+        style={{ background: 'linear-gradient(160deg,#7f0000 0%,#b91c1c 35%,#991b1b 65%,#7f1d1d 100%)' }}
+      >
         <div className="flex flex-col items-center gap-5">
           <svg width="72" height="72" viewBox="0 0 512 512" className="animate-pulse"
             style={{ filter: 'drop-shadow(0 0 20px rgba(252,211,77,0.5))' }}>
@@ -64,7 +112,12 @@ function AppRoot() {
 
   // ── Not logged in → login screen ─────────────────────────────────────────
   if (user === null) {
-    return <WelcomeScreen onAuthSuccess={() => {}} />;
+    console.log('[AUTH] Login started — showing WelcomeScreen');
+    return (
+      // onAuthSuccess is a no-op: navigation is driven by onAuthStateChanged
+      // firing in AuthProvider, which updates `user` and re-renders AppRoot.
+      <WelcomeScreen onAuthSuccess={() => {}} />
+    );
   }
 
   // ── Logged in, new user → profile setup ──────────────────────────────────
@@ -73,16 +126,35 @@ function AppRoot() {
       <ProfileSetupScreen
         user={user}
         onProfileCreated={(playerName) => {
-          // Save player name into UID-scoped localStorage so App.tsx picks it up
           localStorage.setItem(`skm_player_name_${user.uid}`, playerName);
+          console.log('[AUTH] Profile created for', user.uid, '— redirecting to module selection');
           setProfileStatus('READY');
         }}
       />
     );
   }
 
-  // ── Logged in, profile exists → game ─────────────────────────────────────
-  return <App />;
+  // ── Module selection ──────────────────────────────────────────────────────
+  if (screen === 'MODULE_SELECT') {
+    return (
+      <ModuleSelectScreen
+        onSelectGame={()    => setScreen('GAME')}
+        onSelectTracker={() => setScreen('PROTEIN_TRACKER')}
+      />
+    );
+  }
+
+  // ── Protein Tracker ───────────────────────────────────────────────────────
+  if (screen === 'PROTEIN_TRACKER') {
+    return (
+      <ProteinTrackerScreen
+        onBack={() => setScreen('MODULE_SELECT')}
+      />
+    );
+  }
+
+  // ── Game ──────────────────────────────────────────────────────────────────
+  return <App onBackToMenu={() => setScreen('MODULE_SELECT')} />;
 }
 
 createRoot(document.getElementById('root')!).render(

@@ -127,7 +127,7 @@ const DEFAULT_ACHIEVEMENTS: Achievement[] = [
   }
 ];
 
-export default function App() {
+export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const engineRef = useRef<SKMRunnerEngine | null>(null);
   const { user, logout } = useAuth();
@@ -141,6 +141,20 @@ export default function App() {
 
   // Navigation Panel States
   const [gameState, setGameState] = useState<'MENU' | 'PLAYING' | 'PAUSED' | 'GAMEOVER'>('MENU');
+
+  // QR Play Session — persisted in sessionStorage so page refresh keeps state
+  const [playSession, setPlaySession] = useState<{ remainingAttempts: number } | null>(() => {
+    try {
+      const saved = sessionStorage.getItem('skm_play_session');
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  });
+
+  const updateSession = (session: { remainingAttempts: number } | null) => {
+    setPlaySession(session);
+    if (session) sessionStorage.setItem('skm_play_session', JSON.stringify(session));
+    else sessionStorage.removeItem('skm_play_session');
+  };
   
   // Modals overlay triggers
   const [isShopOpen, setIsShopOpen] = useState(false);
@@ -556,18 +570,31 @@ export default function App() {
   };
 
   const handleRestart = () => {
-    handleStartGame();
+    if (playSession && playSession.remainingAttempts > 0) {
+      handleStartGame();
+    } else {
+      if (engineRef.current) engineRef.current.resetToShowcase();
+      updateSession(null);
+      setGameState('MENU');
+    }
   };
 
   const handleHome = () => {
     if (engineRef.current) {
       engineRef.current.resetToShowcase();
     }
-    setGameState('MENU');
+    updateSession(null);
+    if (onBackToMenu) {
+      onBackToMenu();
+    } else {
+      setGameState('MENU');
+    }
   };
 
   // Run over crashes
   const handleRunGameOver = () => {
+    const next = playSession ? { remainingAttempts: Math.max(0, playSession.remainingAttempts - 1) } : null;
+    updateSession(next);
     setGameState('GAMEOVER');
     
     // Core RANDOM EGG REWARD SYSTEM values determination
@@ -688,6 +715,7 @@ export default function App() {
   // Resurrect / continue by spending 3 gems
   const handleContinueWithGems = () => {
     if (stats.totalGems < 3) return;
+    if (!playSession || playSession.remainingAttempts <= 0) return;
 
     soundManager.playLevelUp();
     
@@ -841,7 +869,10 @@ export default function App() {
       {gameState === 'MENU' && (
         <MainMenu
           stats={stats}
-          onStartGame={handleStartGame}
+          onStartGame={() => {
+            updateSession({ remainingAttempts: 2 });
+            handleStartGame();
+          }}
           onOpenShop={() => setIsShopOpen(true)}
           onOpenMissions={() => setIsMissionsOpen(true)}
           onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
@@ -914,6 +945,7 @@ export default function App() {
           score={runStats.score}
           feeds={runStats.feeds}
           distance={runStats.distance}
+          remainingAttempts={playSession?.remainingAttempts ?? 0}
           onResume={handleResume}
           onRestart={handleRestart}
           onHome={handleHome}
@@ -933,6 +965,7 @@ export default function App() {
           eggDropRarity={lastEggDropRarity}
           luckyEventName={lastLuckyEventName}
           luckyEventEggs={lastLuckyEventEggs}
+          remainingAttempts={playSession?.remainingAttempts ?? 0}
           onContinueWithGems={handleContinueWithGems}
           onRestart={handleRestart}
           onHome={handleHome}
@@ -958,7 +991,7 @@ export default function App() {
           onClose={() => setIsSettingsOpen(false)}
           onStartGame={() => {
             setIsSettingsOpen(false);
-            handleStartGame();
+            setGameState('MENU');
           }}
           onLogout={logout}
           engine={engineRef.current}

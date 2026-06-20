@@ -9,6 +9,8 @@ import {
   getAuth,
   Auth,
   connectAuthEmulator,
+  browserLocalPersistence,
+  setPersistence,
 } from 'firebase/auth';
 import {
   getFirestore,
@@ -35,8 +37,11 @@ const app: FirebaseApp = getApps().length === 0
   ? initializeApp(firebaseConfig)
   : getApp();
 
-// Auth instance
+// Auth instance — persisted across page reloads
 export const auth: Auth = getAuth(app);
+setPersistence(auth, browserLocalPersistence).catch(() => {
+  // Silently ignore — falls back to session persistence
+});
 
 // Firestore instance
 export const db: Firestore = getFirestore(app);

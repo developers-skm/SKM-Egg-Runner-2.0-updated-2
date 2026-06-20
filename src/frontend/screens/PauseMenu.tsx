@@ -6,6 +6,7 @@ interface PauseMenuProps {
   score: number;
   feeds: number;
   distance: number;
+  remainingAttempts: number;
   onResume: () => void;
   onRestart: () => void;
   onHome: () => void;
@@ -15,6 +16,7 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
   score,
   feeds,
   distance,
+  remainingAttempts,
   onResume,
   onRestart,
   onHome
@@ -61,12 +63,19 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
 
           <button
             id="btn_restart_run"
+            disabled={remainingAttempts <= 0}
             onClick={() => { soundManager.playClick(); onRestart(); }}
-            className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold py-3 rounded-xl transition flex items-center justify-center gap-2 text-sm cursor-pointer"
+            className={`w-full font-bold py-3 rounded-xl transition flex items-center justify-center gap-2 text-sm ${remainingAttempts <= 0 ? 'bg-slate-800/40 text-slate-600 cursor-not-allowed' : 'bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer'}`}
           >
             <RotateCcw className="w-4 h-4" />
-            Restart Match
+            {remainingAttempts <= 0 ? 'No Attempts Left' : 'Restart Match'}
           </button>
+
+          {remainingAttempts <= 0 && (
+            <p className="text-red-400 text-[10px] font-mono text-center">
+              ⛔ Session expired. Return home to scan a new QR.
+            </p>
+          )}
 
           <button
             id="btn_home_menu"
