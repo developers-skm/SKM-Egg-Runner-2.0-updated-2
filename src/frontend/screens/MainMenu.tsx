@@ -208,6 +208,16 @@ export const MainMenu: React.FC<MainMenuProps> = ({
               )}
             </button>
           </div>
+
+          {/* Dummy Button */}
+          <button
+            id="btn_dummy"
+            onClick={() => soundManager.playClick()}
+            className="p-2.5 rounded-xl border border-slate-800 bg-slate-900/90 hover:bg-slate-800 text-slate-400 hover:scale-105 transition-all duration-300 backdrop-blur shadow-lg cursor-pointer flex items-center justify-center"
+            title="Dummy"
+          >
+            <Award className="w-4 h-4 text-slate-400" />
+          </button>
         </div>
       </div>
 
