@@ -1,7 +1,7 @@
 import React from 'react';
 import { PlayerStats } from '../../types';
 import { soundManager } from '../../audio';
-import { Play, ShoppingCart, Trophy, ListOrdered, Calendar, Award, Backpack, Settings, UserCircle } from 'lucide-react';
+import { Play, ShoppingCart, Trophy, ListOrdered, Calendar, Backpack, Settings, UserCircle } from 'lucide-react';
 
 interface MainMenuProps {
   stats: PlayerStats;
@@ -171,15 +171,6 @@ export const MainMenu: React.FC<MainMenuProps> = ({
               )}
             </button>
           </div>
-
-          <button
-            id="btn_dummy"
-            onClick={() => soundManager.playClick()}
-            className="p-2.5 rounded-xl border border-slate-800 bg-slate-900/90 hover:bg-slate-800 text-slate-400 hover:scale-105 transition-all duration-300 backdrop-blur shadow-lg cursor-pointer flex items-center justify-center"
-            title="Dummy"
-          >
-            <Award className="w-4 h-4 text-slate-400" />
-          </button>
         </div>
       </div>
 
