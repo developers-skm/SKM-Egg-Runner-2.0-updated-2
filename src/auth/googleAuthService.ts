@@ -50,27 +50,14 @@ export async function checkRedirectResult(): Promise<GoogleAuthResult> {
 // that is handled by ProfileSetupScreen after first login.
 
 export async function signInWithGoogle(): Promise<GoogleAuthResult> {
-  const isMobile = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-  console.log('[AUTH] Login started — mobile:', isMobile);
+  // Always use popup — redirect flow loses session state in many browsers/environments.
+  // On mobile browsers that block popups, we catch auth/popup-blocked and fall back to redirect.
+  console.log('[AUTH] Google sign-in via popup');
 
-  if (isMobile) {
-    try {
-      await signInWithRedirect(auth, provider);
-      // Page will reload — onAuthStateChanged fires after redirect completes
-      return { success: false, redirectInitiated: true };
-    } catch (err) {
-      console.error('[AUTH] signInWithRedirect error:', err);
-      return { success: false, error: mapError((err as AuthError).code) };
-    }
-  }
-
-  // Desktop: popup flow
   try {
     const credential = await signInWithPopup(auth, provider);
     console.log('[AUTH] Google popup success — uid:', credential.user.uid, '| email:', credential.user.email);
 
-    // Update lastLogin only — do NOT create the full profile here.
-    // Profile creation is handled by ProfileSetupScreen in main.tsx.
     await setDoc(
       doc(db, 'users', credential.user.uid),
       { lastLogin: serverTimestamp() },
@@ -85,7 +72,9 @@ export async function signInWithGoogle(): Promise<GoogleAuthResult> {
     if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
       return { success: false, error: '' };
     }
+
     if (error.code === 'auth/popup-blocked') {
+      // Only fall back to redirect when popup is explicitly blocked by the browser
       console.log('[AUTH] Popup blocked — falling back to redirect');
       try {
         await signInWithRedirect(auth, provider);
@@ -94,6 +83,7 @@ export async function signInWithGoogle(): Promise<GoogleAuthResult> {
         return { success: false, error: mapError((r as AuthError).code) };
       }
     }
+
     return { success: false, error: mapError(error.code) };
   }
 }

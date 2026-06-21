@@ -32,16 +32,16 @@ const CONFIG_BOUNDS: Record<keyof Pick<
   | 'achievementRewards' | 'envRotationRate' | 'obstacleDensity'
   | 'trafficDensity'
 >, [number, number]> = {
-  feedSpawnRate:       [0.1, 5.0],
-  obstacleSpawnRate:   [0.1, 5.0],
-  vehicleSpawnRate:    [0.1, 5.0],
+  feedSpawnRate:       [0, 5.0],   // 0 = zero feed spawning
+  obstacleSpawnRate:   [0, 5.0],   // 0 = zero obstacle spawning
+  vehicleSpawnRate:    [0, 5.0],   // 0 = zero vehicle spawning
   runSpeedMultiplier:  [0.5, 3.0],
-  crystalEggRewards:   [0.1, 10.0],
-  missionRewards:      [0.1, 10.0],
-  achievementRewards:  [0.1, 10.0],
-  envRotationRate:     [0.1, 5.0],
-  obstacleDensity:     [0.1, 5.0],
-  trafficDensity:      [0.1, 5.0],
+  crystalEggRewards:   [0, 10.0],
+  missionRewards:      [0, 10.0],
+  achievementRewards:  [0, 10.0],
+  envRotationRate:     [0, 5.0],
+  obstacleDensity:     [0, 5.0],   // 0 = zero obstacle density
+  trafficDensity:      [0, 5.0],   // 0 = zero traffic density
 };
 
 const DOC_REF = () => doc(db, 'gameConfig', 'active');

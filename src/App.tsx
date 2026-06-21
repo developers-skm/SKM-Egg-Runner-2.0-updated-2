@@ -143,17 +143,29 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
   const [gameState, setGameState] = useState<'MENU' | 'PLAYING' | 'PAUSED' | 'GAMEOVER'>('MENU');
 
   // QR Play Session — persisted in sessionStorage so page refresh keeps state
-  const [playSession, setPlaySession] = useState<{ remainingAttempts: number } | null>(() => {
+  // unlimited: true means Golden QR — no play count limit, no decrement
+  const [playSession, setPlaySession] = useState<{ remainingAttempts: number; unlimited?: boolean } | null>(() => {
     try {
       const saved = sessionStorage.getItem('skm_play_session');
-      return saved ? JSON.parse(saved) : null;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Re-attach unlimited flag from Golden QR marker if present
+        if (sessionStorage.getItem('skm_golden_qr') === 'true') {
+          parsed.unlimited = true;
+        }
+        return parsed;
+      }
+      return null;
     } catch { return null; }
   });
 
-  const updateSession = (session: { remainingAttempts: number } | null) => {
+  const updateSession = (session: { remainingAttempts: number; unlimited?: boolean } | null) => {
     setPlaySession(session);
     if (session) sessionStorage.setItem('skm_play_session', JSON.stringify(session));
-    else sessionStorage.removeItem('skm_play_session');
+    else {
+      sessionStorage.removeItem('skm_play_session');
+      sessionStorage.removeItem('skm_golden_qr');
+    }
   };
   
   // Modals overlay triggers
@@ -570,9 +582,15 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
   };
 
   const handleRestart = () => {
-    if (playSession && playSession.remainingAttempts > 0) {
+    if (playSession?.unlimited) {
+      // Golden QR — unlimited retry, no checks needed
+      console.log('[RETRY] Golden QR bypass active — starting new run');
+      handleStartGame();
+    } else if (playSession && playSession.remainingAttempts > 0) {
+      console.log('[RETRY] Normal QR play count check — remaining:', playSession.remainingAttempts);
       handleStartGame();
     } else {
+      console.log('[RETRY] No remaining attempts — returning to menu');
       if (engineRef.current) engineRef.current.resetToShowcase();
       updateSession(null);
       setGameState('MENU');
@@ -593,7 +611,24 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
 
   // Run over crashes
   const handleRunGameOver = () => {
-    const next = playSession ? { remainingAttempts: Math.max(0, playSession.remainingAttempts - 1) } : null;
+    // Read directly from sessionStorage to avoid stale closure —
+    // the engine's onCrash callback is created once and captures the
+    // initial playSession value (null), so we must read fresh state here.
+    const isGolden = sessionStorage.getItem('skm_golden_qr') === 'true';
+    let savedSession: { remainingAttempts: number; unlimited?: boolean } | null = null;
+    try {
+      const raw = sessionStorage.getItem('skm_play_session');
+      if (raw) savedSession = JSON.parse(raw);
+    } catch { /* ignore */ }
+
+    let next: { remainingAttempts: number; unlimited?: boolean } | null;
+    if (isGolden) {
+      next = { remainingAttempts: 999, unlimited: true };
+      console.log('[RETRY] Golden QR bypass active — play count not decremented');
+    } else {
+      next = savedSession ? { remainingAttempts: Math.max(0, savedSession.remainingAttempts - 1) } : null;
+      console.log('[RETRY] Normal QR play count check — remaining after this run:', next?.remainingAttempts ?? 0);
+    }
     updateSession(next);
     setGameState('GAMEOVER');
     
@@ -870,7 +905,14 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
         <MainMenu
           stats={stats}
           onStartGame={() => {
-            updateSession({ remainingAttempts: 2 });
+            const isGolden = sessionStorage.getItem('skm_golden_qr') === 'true';
+            if (isGolden) {
+              console.log('[QR] Golden QR detected — unlimited retry enabled');
+              updateSession({ remainingAttempts: 999, unlimited: true });
+            } else {
+              console.log('[QR] Normal QR detected — 2 play limit set');
+              updateSession({ remainingAttempts: 2 });
+            }
             handleStartGame();
           }}
           onOpenShop={() => setIsShopOpen(true)}
@@ -946,6 +988,7 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
           feeds={runStats.feeds}
           distance={runStats.distance}
           remainingAttempts={playSession?.remainingAttempts ?? 0}
+          unlimited={playSession?.unlimited === true}
           onResume={handleResume}
           onRestart={handleRestart}
           onHome={handleHome}
@@ -966,6 +1009,7 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
           luckyEventName={lastLuckyEventName}
           luckyEventEggs={lastLuckyEventEggs}
           remainingAttempts={playSession?.remainingAttempts ?? 0}
+          unlimited={playSession?.unlimited === true}
           onContinueWithGems={handleContinueWithGems}
           onRestart={handleRestart}
           onHome={handleHome}

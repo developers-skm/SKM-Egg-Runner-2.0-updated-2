@@ -4,6 +4,7 @@
  */
 
 import React, { useState } from 'react';
+import type { ConfirmationResult } from 'firebase/auth';
 import { sendOtp } from './mobileAuthService';
 import OtpScreen from './OtpScreen';
 
@@ -24,27 +25,30 @@ const COUNTRY_CODES = [
 ];
 
 export default function LoginScreen({ onBack, onAuthSuccess }: LoginScreenProps) {
-  const [selectedCountry,  setSelectedCountry]  = useState(COUNTRY_CODES[0]);
-  const [phoneNumber,      setPhoneNumber]       = useState('');
-  const [isLoading,        setIsLoading]         = useState(false);
-  const [error,            setError]             = useState('');
-  const [showCountryPicker,setShowCountryPicker] = useState(false);
-  const [verificationId,   setVerificationId]    = useState('');
-  const [showOtp,          setShowOtp]           = useState(false);
+  const [selectedCountry,   setSelectedCountry]   = useState(COUNTRY_CODES[0]);
+  const [phoneNumber,       setPhoneNumber]        = useState('');
+  const [isLoading,         setIsLoading]          = useState(false);
+  const [error,             setError]              = useState('');
+  const [showCountryPicker, setShowCountryPicker]  = useState(false);
+  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
 
   const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    if (phoneNumber.trim().length < 7) {
+
+    const digits = phoneNumber.trim();
+    if (digits.length < 6) {
       setError('Please enter a valid mobile number.');
       return;
     }
+
+    const fullNumber = selectedCountry.code + digits;
     setIsLoading(true);
+
     try {
-      const result = await sendOtp(selectedCountry.code + phoneNumber.trim());
-      if (result.success && result.verificationId) {
-        setVerificationId(result.verificationId);
-        setShowOtp(true);
+      const result = await sendOtp(fullNumber);
+      if (result.success && result.confirmationResult) {
+        setConfirmationResult(result.confirmationResult);
       } else {
         setError(result.error ?? 'Failed to send OTP. Please try again.');
       }
@@ -55,12 +59,16 @@ export default function LoginScreen({ onBack, onAuthSuccess }: LoginScreenProps)
     }
   };
 
-  if (showOtp) {
+  if (confirmationResult) {
     return (
       <OtpScreen
         phoneNumber={selectedCountry.code + phoneNumber.trim()}
-        verificationId={verificationId}
-        onBack={() => setShowOtp(false)}
+        confirmationResult={confirmationResult}
+        onBack={() => {
+          setConfirmationResult(null);
+          setPhoneNumber('');
+          setError('');
+        }}
         onAuthSuccess={onAuthSuccess}
       />
     );
@@ -99,7 +107,7 @@ export default function LoginScreen({ onBack, onAuthSuccess }: LoginScreenProps)
           </button>
           <div>
             <h2 className="text-base font-black text-white uppercase tracking-tight">Enter Mobile Number</h2>
-            <p className="text-white/50 text-[11px] font-mono">We'll send a verification code</p>
+            <p className="text-white/50 text-[11px] font-mono">We'll send a verification code via SMS</p>
           </div>
         </div>
 
@@ -156,12 +164,12 @@ export default function LoginScreen({ onBack, onAuthSuccess }: LoginScreenProps)
                 )}
               </div>
 
-              {/* Number */}
+              {/* Number input */}
               <input
                 type="tel" inputMode="numeric"
                 placeholder="9876543210"
                 value={phoneNumber}
-                onChange={e => setPhoneNumber(e.target.value.replace(/\D/g, ''))}
+                onChange={e => { setPhoneNumber(e.target.value.replace(/\D/g, '')); setError(''); }}
                 maxLength={12} required
                 className="flex-1 h-12 font-mono text-sm px-4 rounded-xl focus:outline-none transition placeholder-white/25"
                 style={{
@@ -175,11 +183,16 @@ export default function LoginScreen({ onBack, onAuthSuccess }: LoginScreenProps)
             </div>
           </div>
 
-          {error && <p className="text-yellow-300 text-xs font-mono text-center">{error}</p>}
+          {error && (
+            <div className="rounded-xl px-3 py-2.5 text-center"
+              style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)' }}>
+              <p className="text-yellow-300 text-xs font-mono leading-relaxed">{error}</p>
+            </div>
+          )}
 
           <button
             type="submit"
-            disabled={isLoading || phoneNumber.trim().length < 7}
+            disabled={isLoading || phoneNumber.trim().length < 6}
             className="w-full flex items-center justify-center gap-2 font-black py-3.5 rounded-2xl text-sm uppercase tracking-wide transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{
               background: 'linear-gradient(135deg,#FCD34D,#F59E0B)',
@@ -199,7 +212,7 @@ export default function LoginScreen({ onBack, onAuthSuccess }: LoginScreenProps)
         </form>
 
         <p className="text-center text-white/25 text-[10px] font-mono mt-4">
-          Standard message rates may apply
+          Standard SMS rates may apply
         </p>
       </div>
     </div>

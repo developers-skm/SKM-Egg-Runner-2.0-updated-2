@@ -21,7 +21,11 @@ const PHONE_RE = /^[6-9]\d{9}$/; // Indian mobile: starts 6-9, 10 digits
 
 export default function ProfileSetupScreen({ user, onProfileCreated }: ProfileSetupScreenProps) {
   const [name,    setName]    = useState('');
-  const [phone,   setPhone]   = useState('');
+  // Pre-fill phone for phone-auth users (strip country code if Indian +91)
+  const [phone,   setPhone]   = useState(() => {
+    const p = user.phoneNumber ?? '';
+    return p.startsWith('+91') ? p.slice(3) : p.replace(/^\+\d{1,3}/, '');
+  });
   const [error,   setError]   = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -54,12 +58,15 @@ export default function ProfileSetupScreen({ user, onProfileCreated }: ProfileSe
         return;
       }
 
+      const provider = user.providerData[0]?.providerId ?? 'unknown';
       await setDoc(ref, {
         uid:              user.uid,
         playerName:       trimmedName,
         email:            user.email ?? '',
         photoURL:         user.photoURL ?? '',
+        phoneNumber:      user.phoneNumber ?? (trimmedPhone ? `+91${trimmedPhone}` : ''),
         phone:            trimmedPhone,
+        provider,
         // Game stats — all zero
         bestScore:        0,
         bestDistance:     0,
@@ -128,7 +135,9 @@ export default function ProfileSetupScreen({ user, onProfileCreated }: ProfileSe
               style={{ fontFamily: '"Arial Black", Impact, sans-serif' }}>
               Welcome to SKM Egg Runner
             </h1>
-            <p className="text-white/50 text-xs font-mono mt-1">{user.email}</p>
+            <p className="text-white/50 text-xs font-mono mt-1">
+              {user.email ?? user.phoneNumber ?? ''}
+            </p>
             <div className="mt-2 flex items-center justify-center gap-2">
               <div className="h-px w-8 bg-yellow-400/40"/>
               <p className="text-yellow-300 text-[10px] font-bold tracking-[0.25em] uppercase">Create Your Profile</p>

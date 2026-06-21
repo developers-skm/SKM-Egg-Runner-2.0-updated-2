@@ -6,7 +6,7 @@
 
 import React, { useState } from 'react';
 import { doc, deleteDoc, updateDoc, serverTimestamp, collection, getDocs } from 'firebase/firestore';
-import { deleteUser, updateProfile } from 'firebase/auth';
+import { deleteUser, updateProfile, reauthenticateWithPopup, GoogleAuthProvider, reauthenticateWithPhoneNumber, RecaptchaVerifier } from 'firebase/auth';
 import { db, auth } from '../services/firebase/firebase';
 import type { User } from 'firebase/auth';
 import type { PlayerStats } from '../types';
@@ -68,35 +68,94 @@ export default function ProfileModal({
   const handleDeleteForever = async () => {
     setDelLoading(true);
     setDelErr('');
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setDelErr('No authenticated user found. Please log in again.');
+      setDelLoading(false);
+      return;
+    }
+
     try {
-      const uid = user.uid;
-      // Delete all Firestore docs for this user
-      const paths = [
+      // Step 1: Re-authenticate so Firebase accepts the deleteUser call
+      const provider = currentUser.providerData[0]?.providerId ?? '';
+      if (provider === 'google.com') {
+        await reauthenticateWithPopup(currentUser, new GoogleAuthProvider());
+      } else if (provider === 'phone') {
+        // For phone users: re-send OTP then confirm — use a temp invisible reCAPTCHA
+        const tempDiv = document.createElement('div');
+        tempDiv.id = 'reauth-recaptcha-' + Date.now();
+        tempDiv.style.display = 'none';
+        document.body.appendChild(tempDiv);
+        try {
+          const verifier = new RecaptchaVerifier(auth, tempDiv.id, { size: 'invisible' });
+          const confirmResult = await reauthenticateWithPhoneNumber(currentUser, currentUser.phoneNumber!, verifier);
+          verifier.clear();
+          document.body.removeChild(tempDiv);
+          // Prompt the user for the OTP code
+          const code = window.prompt('Enter the OTP sent to ' + currentUser.phoneNumber + ' to confirm deletion:');
+          if (!code) {
+            setDelErr('OTP is required to delete your account.');
+            setDelLoading(false);
+            return;
+          }
+          await confirmResult.confirm(code.trim());
+        } catch (reAuthErr) {
+          try { document.body.removeChild(tempDiv); } catch { /* already removed */ }
+          throw reAuthErr;
+        }
+      }
+      // For any other provider, attempt deleteUser directly (will work if session is fresh)
+
+      // Step 2: Delete Firestore data
+      const uid = currentUser.uid;
+      const topLevelDocs = [
         `users/${uid}`,
         `settings/${uid}`,
+        `login_streaks/${uid}`,
+        `tracker_settings/${uid}`,
+        `tracker_rewards/${uid}`,
+        `tracker_leaderboard/${uid}`,
+        `leaderboard/${uid}`,
+        `streak_shields/${uid}`,
       ];
-      for (const p of paths) {
-        try { await deleteDoc(doc(db, p)); } catch { /* doc may not exist */ }
-      }
-      // Delete sub-collections
-      for (const sub of ['daily']) {
-        try {
-          const snap = await getDocs(collection(db, 'missions', uid, sub));
-          await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
-        } catch { /* ignore */ }
-      }
-      for (const sub of ['list']) {
-        try {
-          const snap = await getDocs(collection(db, 'achievements', uid, sub));
-          await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
-        } catch { /* ignore */ }
-      }
-      // Delete Firebase Auth account
-      try { await deleteUser(auth.currentUser!); } catch { /* may need re-auth */ }
+      await Promise.allSettled(topLevelDocs.map(p => deleteDoc(doc(db, p))));
+
+      // Sub-collections
+      const subColPaths: [string, string][] = [
+        ['missions', 'daily'],
+        ['achievements', 'list'],
+        ['protein_logs', 'entries'],
+        ['daily_stats', 'days'],
+        ['tracker_achievements', 'list'],
+        ['tracker_challenges', 'list'],
+        ['daily_missions', 'days'],
+        ['weekly_missions', 'weeks'],
+        ['login_streaks', 'claims'],
+        ['game_rewards', 'unlocked'],
+      ];
+      await Promise.allSettled(
+        subColPaths.map(async ([col, sub]) => {
+          const snap = await getDocs(collection(db, col, uid, sub));
+          return Promise.allSettled(snap.docs.map(d => deleteDoc(d.ref)));
+        })
+      );
+
+      // Step 3: Delete Firebase Auth account
+      await deleteUser(currentUser);
+
       onDataDeleted();
-    } catch (err) {
-      console.error(err);
-      setDelErr('Deletion failed. Please logout and log back in, then try again.');
+    } catch (err: unknown) {
+      console.error('[DELETE]', err);
+      const code = (err as { code?: string }).code ?? '';
+      if (code === 'auth/requires-recent-login') {
+        setDelErr('Session expired. Please log out, log back in, and try again.');
+      } else if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        setDelErr('Re-authentication cancelled. Please try again.');
+      } else if (code === 'auth/invalid-verification-code') {
+        setDelErr('Incorrect OTP. Please try again.');
+      } else {
+        setDelErr('Deletion failed. Please try again.');
+      }
       setDelLoading(false);
     }
   };

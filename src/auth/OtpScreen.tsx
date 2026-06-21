@@ -4,29 +4,47 @@
  */
 
 import React, { useRef, useState, useEffect } from 'react';
-import { verifyOtp, sendOtp } from './mobileAuthService';
+import type { ConfirmationResult } from 'firebase/auth';
+import { confirmOtp, sendOtp } from './mobileAuthService';
 
 interface OtpScreenProps {
   phoneNumber: string;
-  verificationId: string;
+  confirmationResult: ConfirmationResult;
   onBack: () => void;
   onAuthSuccess: () => void;
 }
 
-export default function OtpScreen({ phoneNumber, verificationId, onBack, onAuthSuccess }: OtpScreenProps) {
-  const [digits,    setDigits]    = useState(['','','','','','']);
-  const [isVerifying, setIsVerifying] = useState(false);
-  const [error,     setError]     = useState('');
-  const [resendCooldown, setResendCooldown] = useState(30);
-  const [isResending,    setIsResending]    = useState(false);
-  const [currentVid,     setCurrentVid]     = useState(verificationId);
+const RESEND_SECONDS = 30;
+
+export default function OtpScreen({
+  phoneNumber,
+  confirmationResult: initialConfirmation,
+  onBack,
+  onAuthSuccess,
+}: OtpScreenProps) {
+  const [digits,         setDigits]         = useState(['', '', '', '', '', '']);
+  const [isVerifying,    setIsVerifying]     = useState(false);
+  const [error,          setError]           = useState('');
+  const [resendCooldown, setResendCooldown]  = useState(RESEND_SECONDS);
+  const [isResending,    setIsResending]     = useState(false);
+  const [currentResult,  setCurrentResult]   = useState<ConfirmationResult>(initialConfirmation);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
+  // Countdown timer
   useEffect(() => {
-    const interval = setInterval(() => {
-      setResendCooldown(p => { if (p <= 1) { clearInterval(interval); return 0; } return p - 1; });
+    if (resendCooldown <= 0) return;
+    const id = setInterval(() => {
+      setResendCooldown(p => {
+        if (p <= 1) { clearInterval(id); return 0; }
+        return p - 1;
+      });
     }, 1000);
-    return () => clearInterval(interval);
+    return () => clearInterval(id);
+  }, [resendCooldown]);
+
+  // Auto-focus first box on mount
+  useEffect(() => {
+    inputRefs.current[0]?.focus();
   }, []);
 
   const handleDigitChange = (index: number, value: string) => {
@@ -39,13 +57,15 @@ export default function OtpScreen({ phoneNumber, verificationId, onBack, onAuthS
   };
 
   const handleKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Backspace' && !digits[index] && index > 0) inputRefs.current[index - 1]?.focus();
+    if (e.key === 'Backspace' && !digits[index] && index > 0) {
+      inputRefs.current[index - 1]?.focus();
+    }
   };
 
   const handlePaste = (e: React.ClipboardEvent) => {
     e.preventDefault();
     const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
-    const next = ['','','','','',''];
+    const next = ['', '', '', '', '', ''];
     for (let i = 0; i < pasted.length; i++) next[i] = pasted[i];
     setDigits(next);
     inputRefs.current[Math.min(pasted.length, 5)]?.focus();
@@ -54,16 +74,19 @@ export default function OtpScreen({ phoneNumber, verificationId, onBack, onAuthS
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
     const code = digits.join('');
-    if (code.length !== 6) { setError('Please enter the complete 6-digit code.'); return; }
+    if (code.length !== 6) {
+      setError('Please enter the complete 6-digit code.');
+      return;
+    }
     setIsVerifying(true);
     setError('');
     try {
-      const result = await verifyOtp(currentVid, code);
+      const result = await confirmOtp(currentResult, code);
       if (result.success) {
         onAuthSuccess();
       } else {
         setError(result.error ?? 'Invalid code. Please try again.');
-        setDigits(['','','','','','']);
+        setDigits(['', '', '', '', '', '']);
         inputRefs.current[0]?.focus();
       }
     } catch {
@@ -79,10 +102,10 @@ export default function OtpScreen({ phoneNumber, verificationId, onBack, onAuthS
     setError('');
     try {
       const result = await sendOtp(phoneNumber);
-      if (result.success && result.verificationId) {
-        setCurrentVid(result.verificationId);
-        setDigits(['','','','','','']);
-        setResendCooldown(30);
+      if (result.success && result.confirmationResult) {
+        setCurrentResult(result.confirmationResult);
+        setDigits(['', '', '', '', '', '']);
+        setResendCooldown(RESEND_SECONDS);
         inputRefs.current[0]?.focus();
       } else {
         setError(result.error ?? 'Failed to resend. Please try again.');
@@ -94,7 +117,7 @@ export default function OtpScreen({ phoneNumber, verificationId, onBack, onAuthS
     }
   };
 
-  const masked = phoneNumber.replace(/(\+\d{1,3})(\d{3})(\d+)(\d{3})/, '$1 $2 *** $4');
+  const masked = phoneNumber.replace(/(\+\d{1,3})(\d{3})(\d+)(\d{2})$/, '$1 $2•••$4');
 
   return (
     <div
@@ -126,11 +149,11 @@ export default function OtpScreen({ phoneNumber, verificationId, onBack, onAuthS
           </button>
           <div>
             <h2 className="text-base font-black text-white uppercase tracking-tight">Verify OTP</h2>
-            <p className="text-white/50 text-[11px] font-mono">Code sent to {masked}</p>
+            <p className="text-white/50 text-[11px] font-mono">SMS sent to {masked}</p>
           </div>
         </div>
 
-        {/* Egg icon */}
+        {/* Shield / verified icon */}
         <div className="flex justify-center mb-5">
           <div className="w-14 h-16 rounded-[50%_50%_50%_50%_/_60%_60%_40%_40%] flex items-center justify-center"
             style={{ background: 'white', boxShadow: '0 0 20px rgba(252,211,77,0.25)' }}
@@ -141,10 +164,12 @@ export default function OtpScreen({ phoneNumber, verificationId, onBack, onAuthS
           </div>
         </div>
 
-        <p className="text-white/60 text-xs font-mono text-center mb-5">Enter the 6-digit verification code</p>
+        <p className="text-white/60 text-xs font-mono text-center mb-5">
+          Enter the 6-digit verification code
+        </p>
 
         <form onSubmit={handleVerify} className="space-y-5">
-          {/* OTP boxes */}
+          {/* OTP digit boxes */}
           <div className="flex gap-2 justify-center" onPaste={handlePaste}>
             {digits.map((digit, i) => (
               <input
@@ -154,7 +179,6 @@ export default function OtpScreen({ phoneNumber, verificationId, onBack, onAuthS
                 value={digit}
                 onChange={e => handleDigitChange(i, e.target.value)}
                 onKeyDown={e => handleKeyDown(i, e)}
-                autoFocus={i === 0}
                 className="w-11 text-center text-xl font-black rounded-xl focus:outline-none transition-all"
                 style={{
                   height: '52px',
@@ -162,13 +186,18 @@ export default function OtpScreen({ phoneNumber, verificationId, onBack, onAuthS
                   border: digit ? '2px solid rgba(252,211,77,0.8)' : '2px solid rgba(255,255,255,0.2)',
                   color: 'white',
                 }}
-                onFocus={e => (e.target.style.borderColor='rgba(252,211,77,0.7)')}
+                onFocus={e => (e.target.style.borderColor = 'rgba(252,211,77,0.7)')}
                 onBlur={e => (e.target.style.borderColor = digit ? 'rgba(252,211,77,0.8)' : 'rgba(255,255,255,0.2)')}
               />
             ))}
           </div>
 
-          {error && <p className="text-yellow-300 text-xs font-mono text-center">{error}</p>}
+          {error && (
+            <div className="rounded-xl px-3 py-2.5 text-center"
+              style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)' }}>
+              <p className="text-yellow-300 text-xs font-mono leading-relaxed">{error}</p>
+            </div>
+          )}
 
           <button
             type="submit"
@@ -191,13 +220,17 @@ export default function OtpScreen({ phoneNumber, verificationId, onBack, onAuthS
           </button>
         </form>
 
-        <div className="text-center mt-4">
+        {/* Resend */}
+        <div className="text-center mt-5">
           {resendCooldown > 0 ? (
             <p className="text-white/40 text-xs font-mono">
-              Resend in <span className="text-yellow-300 font-bold">{resendCooldown}s</span>
+              Resend OTP in{' '}
+              <span className="text-yellow-300 font-bold tabular-nums">{resendCooldown}s</span>
             </p>
           ) : (
-            <button onClick={handleResend} disabled={isResending}
+            <button
+              onClick={handleResend}
+              disabled={isResending}
               className="text-yellow-300 hover:text-yellow-200 text-xs font-bold transition cursor-pointer disabled:opacity-50"
             >
               {isResending ? 'Resending…' : 'Resend OTP'}

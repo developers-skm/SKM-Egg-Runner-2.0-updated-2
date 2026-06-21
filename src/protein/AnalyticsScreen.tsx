@@ -115,7 +115,46 @@ export default function AnalyticsScreen({ user, refreshKey }: AnalyticsScreenPro
           ))}
         </div>
 
-        {/* Bar chart */}
+        {/* Egg consumption bar chart */}
+        <div style={{ background: '#fff', borderRadius: 20, padding: 18, margin: '12px 16px 0', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <p style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A', margin: 0 }}>
+              Egg Consumption — {period === 'week' ? '7 Days' : '30 Days'}
+            </p>
+            <span style={{ fontSize: 11, fontWeight: 800, color: '#D71920' }}>
+              {totalEggs30} total (30d)
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: period === 'month' ? 4 : 8, height: 80, overflowX: 'auto' }}>
+            {data.map(d => {
+              const maxEggs = Math.max(...data.map(x => x.totalEggs), 1);
+              const barH = Math.max(3, Math.round((d.totalEggs / maxEggs) * 64));
+              const isToday = d.dateKey === todayKey();
+              return (
+                <div key={d.dateKey + '-egg'} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, minWidth: period === 'month' ? 10 : 28 }}>
+                  <div style={{ height: 64, display: 'flex', alignItems: 'flex-end', width: '100%', position: 'relative' }}>
+                    <div style={{
+                      width: '100%', height: barH, borderRadius: '3px 3px 0 0',
+                      background: d.totalEggs > 0 ? (isToday ? 'linear-gradient(180deg,#F59E0B,#D97706)' : 'linear-gradient(180deg,#FCD34D,#F59E0B)') : '#F0F0F0',
+                      outline: isToday ? '2px solid #D97706' : 'none', outlineOffset: 1,
+                      transition: 'height 400ms ease',
+                    }} />
+                  </div>
+                  {period === 'week' && (
+                    <span style={{ fontSize: 9, fontWeight: 700, color: d.totalEggs > 0 ? '#D97706' : '#ccc', marginTop: 3 }}>
+                      {d.totalEggs > 0 ? d.totalEggs : d.dayLabel}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <p style={{ fontSize: 10, color: '#bbb', margin: '8px 0 0', fontWeight: 500 }}>
+            Average: {data.length > 0 ? (data.reduce((s, d) => s + d.totalEggs, 0) / data.length).toFixed(1) : 0} eggs/day
+          </p>
+        </div>
+
+        {/* Protein bar chart */}
         <div style={{ background: '#fff', borderRadius: 20, padding: 18, margin: '12px 16px 0', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
           <p style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A', margin: '0 0 14px' }}>
             Protein Trend — {period === 'week' ? '7 Days' : '30 Days'}
@@ -218,11 +257,13 @@ export default function AnalyticsScreen({ user, refreshKey }: AnalyticsScreenPro
         <div style={{ background: '#fff', borderRadius: 20, padding: 18, margin: '12px 16px 0', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
           <p style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A', margin: '0 0 12px' }}>Summary</p>
           {[
-            { label: 'Best Day',        value: `${bestDay?.dayLabel} (${bestDay?.totalProtein ?? 0}g)` },
-            { label: 'Current Streak',  value: `${streak.currentStreak} days` },
-            { label: 'Best Streak',     value: `${streak.bestStreak} days` },
-            { label: 'Daily Goal',      value: `${goal}g protein` },
-            { label: 'Avg Protein/Day', value: `${avgProtein}g` },
+            { label: 'Best Day',          value: `${bestDay?.dayLabel} (${bestDay?.totalProtein ?? 0}g)` },
+            { label: 'Most Eggs/Day',     value: `${Math.max(...data.map(d => d.totalEggs), 0)} eggs` },
+            { label: 'Total Eggs (30d)',  value: `${totalEggs30} eggs` },
+            { label: 'Current Streak',    value: `${streak.currentStreak} days` },
+            { label: 'Best Streak',       value: `${streak.bestStreak} days` },
+            { label: 'Daily Goal',        value: `${goal}g protein` },
+            { label: 'Avg Protein/Day',   value: `${avgProtein}g` },
           ].map(r => (
             <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 10, marginBottom: 10, borderBottom: '1px solid #F5F5F5' }}>
               <span style={{ fontSize: 12, color: '#666', fontWeight: 500 }}>{r.label}</span>

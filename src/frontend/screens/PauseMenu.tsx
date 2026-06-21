@@ -7,6 +7,7 @@ interface PauseMenuProps {
   feeds: number;
   distance: number;
   remainingAttempts: number;
+  unlimited?: boolean;
   onResume: () => void;
   onRestart: () => void;
   onHome: () => void;
@@ -17,10 +18,12 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
   feeds,
   distance,
   remainingAttempts,
+  unlimited = false,
   onResume,
   onRestart,
   onHome
 }) => {
+  const canRetry = unlimited || remainingAttempts > 0;
   return (
     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-40">
       <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm p-6 shadow-2xl relative text-center">
@@ -63,17 +66,22 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
 
           <button
             id="btn_restart_run"
-            disabled={remainingAttempts <= 0}
+            disabled={!canRetry}
             onClick={() => { soundManager.playClick(); onRestart(); }}
-            className={`w-full font-bold py-3 rounded-xl transition flex items-center justify-center gap-2 text-sm ${remainingAttempts <= 0 ? 'bg-slate-800/40 text-slate-600 cursor-not-allowed' : 'bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer'}`}
+            className={`w-full font-bold py-3 rounded-xl transition flex items-center justify-center gap-2 text-sm ${!canRetry ? 'bg-slate-800/40 text-slate-600 cursor-not-allowed' : 'bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer'}`}
           >
             <RotateCcw className="w-4 h-4" />
-            {remainingAttempts <= 0 ? 'No Attempts Left' : 'Restart Match'}
+            {!canRetry ? 'No Attempts Left' : 'Restart Match'}
           </button>
 
-          {remainingAttempts <= 0 && (
+          {!canRetry && (
             <p className="text-red-400 text-[10px] font-mono text-center">
               ⛔ Session expired. Return home to scan a new QR.
+            </p>
+          )}
+          {unlimited && (
+            <p className="text-yellow-400 text-[10px] font-mono text-center">
+              ✨ Golden QR — Unlimited plays active.
             </p>
           )}
 

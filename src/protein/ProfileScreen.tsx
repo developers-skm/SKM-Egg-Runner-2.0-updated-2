@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import type { User } from 'firebase/auth';
 import { doc, getDoc, updateDoc, deleteDoc, serverTimestamp, collection, getDocs } from 'firebase/firestore';
-import { updateProfile, deleteUser } from 'firebase/auth';
+import { updateProfile, deleteUser, reauthenticateWithPopup, GoogleAuthProvider, reauthenticateWithPhoneNumber, RecaptchaVerifier } from 'firebase/auth';
 import { db, auth } from '../services/firebase/firebase';
 import {
   getTrackerSettings, saveTrackerSettings, getStreakInfo, getRewardWallet, calcLevel, DEFAULT_DAILY_GOAL,
@@ -121,20 +121,71 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
   // ── Delete account ─────────────────────────────────────────
   const handleDelete = async () => {
     setDelLoading(true); setDelErr('');
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setDelErr('No authenticated user. Please log in again.');
+      setDelLoading(false);
+      return;
+    }
     try {
-      const uid = user.uid;
-      for (const p of ['users', 'settings', 'tracker_settings', 'tracker_rewards']) {
-        try { await deleteDoc(doc(db, p, uid)); } catch { /* ignore */ }
-      }
-      for (const [col, sub] of [['missions','daily'],['achievements','list'],['tracker_achievements','list'],['tracker_challenges','list']]) {
+      // Re-authenticate first so Firebase accepts deleteUser
+      const provider = currentUser.providerData[0]?.providerId ?? '';
+      if (provider === 'google.com') {
+        await reauthenticateWithPopup(currentUser, new GoogleAuthProvider());
+      } else if (provider === 'phone') {
+        const tempDiv = document.createElement('div');
+        tempDiv.id = 'reauth-recaptcha-' + Date.now();
+        tempDiv.style.display = 'none';
+        document.body.appendChild(tempDiv);
         try {
-          const snap = await getDocs(collection(db, col, uid, sub));
-          await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
-        } catch { /* ignore */ }
+          const verifier = new RecaptchaVerifier(auth, tempDiv.id, { size: 'invisible' });
+          const confirmResult = await reauthenticateWithPhoneNumber(currentUser, currentUser.phoneNumber!, verifier);
+          verifier.clear();
+          document.body.removeChild(tempDiv);
+          const code = window.prompt('Enter the OTP sent to ' + currentUser.phoneNumber + ' to confirm deletion:');
+          if (!code) { setDelErr('OTP is required to delete your account.'); setDelLoading(false); return; }
+          await confirmResult.confirm(code.trim());
+        } catch (e) {
+          try { document.body.removeChild(tempDiv); } catch { /* already removed */ }
+          throw e;
+        }
       }
-      try { await deleteUser(auth.currentUser!); } catch { /* may need re-auth */ }
+
+      // Delete all Firestore data
+      const uid = currentUser.uid;
+      const topLevel = ['users', 'settings', 'tracker_settings', 'tracker_rewards',
+        'login_streaks', 'tracker_leaderboard', 'leaderboard', 'streak_shields'];
+      await Promise.allSettled(topLevel.map(p => deleteDoc(doc(db, p, uid))));
+
+      const subCols: [string, string][] = [
+        ['missions','daily'], ['achievements','list'],
+        ['tracker_achievements','list'], ['tracker_challenges','list'],
+        ['protein_logs','entries'], ['daily_stats','days'],
+        ['daily_missions','days'], ['weekly_missions','weeks'],
+        ['login_streaks','claims'], ['game_rewards','unlocked'],
+      ];
+      await Promise.allSettled(subCols.map(async ([col, sub]) => {
+        const snap = await getDocs(collection(db, col, uid, sub));
+        return Promise.allSettled(snap.docs.map(d => deleteDoc(d.ref)));
+      }));
+
+      // Delete Firebase Auth account
+      await deleteUser(currentUser);
       onDataDeleted();
-    } catch { setDelErr('Delete failed. Log out and back in, then try again.'); setDelLoading(false); }
+    } catch (err: unknown) {
+      console.error('[DELETE]', err);
+      const code = (err as { code?: string }).code ?? '';
+      if (code === 'auth/requires-recent-login') {
+        setDelErr('Session expired. Please log out, log back in, then try again.');
+      } else if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        setDelErr('Re-authentication cancelled. Please try again.');
+      } else if (code === 'auth/invalid-verification-code') {
+        setDelErr('Incorrect OTP. Please try again.');
+      } else {
+        setDelErr('Deletion failed. Please try again.');
+      }
+      setDelLoading(false);
+    }
   };
 
   if (loading) return (

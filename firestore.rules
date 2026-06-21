@@ -7,6 +7,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ── Core auth helpers ────────────────────────────────────
     function isAuth() {
       return request.auth != null;
     }
@@ -19,16 +20,28 @@ service cloud.firestore {
       return request.resource.data.keys().hasOnly(allowed);
     }
 
+    // ── Developer role check ─────────────────────────────────
+    // Reads the authenticated user's own document and checks role == "developer".
+    // This is safe: it only reads the caller's own doc, and only if authenticated.
+    function isDeveloper() {
+      return isAuth()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'developer';
+    }
+
     // ── GAME COLLECTIONS ────────────────────────────────────
 
     match /users/{uid} {
-      allow read:   if isOwner(uid);
+      // Owner reads their own doc; developers read any user doc for analytics
+      allow read:   if isOwner(uid) || isDeveloper();
       allow create: if isOwner(uid)
                     && request.resource.data.uid == uid
                     && request.resource.data.playerName is string
                     && request.resource.data.playerName.size() >= 2
                     && request.resource.data.playerName.size() <= 30;
-      allow update: if isOwner(uid);
+      // Owner updates own fields; developer may set role field on any user
+      allow update: if isOwner(uid)
+                    || (isDeveloper() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role','updatedAt']));
       allow delete: if false;
     }
 
@@ -47,7 +60,7 @@ service cloud.firestore {
     }
 
     match /missions/{uid}/daily/{missionId} {
-      allow read:   if isOwner(uid);
+      allow read:   if isOwner(uid) || isDeveloper();
       allow create: if isOwner(uid);
       allow update: if isOwner(uid)
                     && request.resource.data.progress <= resource.data.target
@@ -57,7 +70,7 @@ service cloud.firestore {
     }
 
     match /achievements/{uid}/list/{achievementId} {
-      allow read:   if isOwner(uid);
+      allow read:   if isOwner(uid) || isDeveloper();
       allow create: if isOwner(uid);
       allow update: if isOwner(uid)
                     && request.resource.data.progress >= 0
@@ -66,7 +79,7 @@ service cloud.firestore {
     }
 
     match /settings/{uid} {
-      allow read:  if isOwner(uid);
+      allow read:  if isOwner(uid) || isDeveloper();
       allow write: if isOwner(uid)
                    && onlyFields(['uid','musicEnabled','sfxEnabled','vibrationEnabled','reminderEnabled','reminderTimes','updatedAt']);
     }
@@ -83,14 +96,21 @@ service cloud.firestore {
 
     match /gameConfig/{docId} {
       allow read:  if isAuth();
-      allow write: if isAuth() && request.auth.uid == 'YOUR_DEVELOPER_UID';
+      // Developer may write config; fallback UID kept for backward compat
+      allow write: if isDeveloper()
+                   || (isAuth() && request.auth.uid == 'YOUR_DEVELOPER_UID');
+    }
+
+    // Game missions (subcollection used by game engine)
+    match /game_missions/{uid}/{document=**} {
+      allow read:   if isOwner(uid) || isDeveloper();
+      allow write:  if isOwner(uid);
     }
 
     // ── PROTEIN TRACKER COLLECTIONS ─────────────────────────
 
-    // Log entries
     match /protein_logs/{uid}/entries/{entryId} {
-      allow read:   if isOwner(uid);
+      allow read:   if isOwner(uid) || isDeveloper();
       allow create: if isOwner(uid)
                     && request.resource.data.uid == uid
                     && request.resource.data.protein is number
@@ -99,43 +119,37 @@ service cloud.firestore {
       allow delete: if isOwner(uid);
     }
 
-    // Daily aggregates
     match /daily_stats/{uid}/days/{dateKey} {
-      allow read:   if isOwner(uid);
+      allow read:   if isOwner(uid) || isDeveloper();
       allow create: if isOwner(uid) && request.resource.data.uid == uid;
       allow update: if isOwner(uid);
       allow delete: if false;
     }
 
-    // Achievements
     match /tracker_achievements/{uid}/list/{achievementId} {
-      allow read:   if isOwner(uid);
+      allow read:   if isOwner(uid) || isDeveloper();
       allow create: if isOwner(uid);
       allow update: if isOwner(uid);
       allow delete: if false;
     }
 
-    // Challenges
     match /tracker_challenges/{uid}/list/{challengeId} {
-      allow read:   if isOwner(uid);
+      allow read:   if isOwner(uid) || isDeveloper();
       allow create: if isOwner(uid);
       allow update: if isOwner(uid);
       allow delete: if false;
     }
 
-    // Settings & goals
     match /tracker_settings/{uid} {
-      allow read:  if isOwner(uid);
+      allow read:  if isOwner(uid) || isDeveloper();
       allow write: if isOwner(uid);
     }
 
-    // Reward wallet (coins, XP)
     match /tracker_rewards/{uid} {
-      allow read:  if isOwner(uid);
+      allow read:  if isOwner(uid) || isDeveloper();
       allow write: if isOwner(uid);
     }
 
-    // Protein tracker leaderboard (public-read)
     match /tracker_leaderboard/{uid} {
       allow read:   if isAuth();
       allow create: if isOwner(uid) && request.resource.data.uid == uid;
@@ -145,43 +159,38 @@ service cloud.firestore {
 
     // ── RETENTION COLLECTIONS ─────────────────────────────────
 
-    // Daily login reward streak
     match /login_streaks/{uid} {
-      allow read:  if isOwner(uid);
+      allow read:  if isOwner(uid) || isDeveloper();
       allow write: if isOwner(uid);
     }
     match /login_streaks/{uid}/claims/{claimId} {
-      allow read:  if isOwner(uid);
+      allow read:  if isOwner(uid) || isDeveloper();
       allow create: if isOwner(uid);
       allow update: if false;
       allow delete: if false;
     }
 
-    // Daily missions (3 per day)
     match /daily_missions/{uid}/days/{missionId} {
-      allow read:   if isOwner(uid);
+      allow read:   if isOwner(uid) || isDeveloper();
       allow create: if isOwner(uid);
       allow update: if isOwner(uid);
       allow delete: if false;
     }
 
-    // Weekly missions
     match /weekly_missions/{uid}/weeks/{missionId} {
-      allow read:   if isOwner(uid);
+      allow read:   if isOwner(uid) || isDeveloper();
       allow create: if isOwner(uid);
       allow update: if isOwner(uid);
       allow delete: if false;
     }
 
-    // Streak shields
     match /streak_shields/{uid} {
-      allow read:  if isOwner(uid);
+      allow read:  if isOwner(uid) || isDeveloper();
       allow write: if isOwner(uid);
     }
 
-    // Game rewards unlocked by protein tracker
     match /game_rewards/{uid}/unlocked/{rewardId} {
-      allow read:   if isOwner(uid);
+      allow read:   if isOwner(uid) || isDeveloper();
       allow create: if isOwner(uid);
       allow update: if isOwner(uid);
       allow delete: if false;

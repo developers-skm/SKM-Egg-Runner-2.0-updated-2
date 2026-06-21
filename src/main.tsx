@@ -6,9 +6,14 @@ import WelcomeScreen from './auth/WelcomeScreen.tsx';
 import ProfileSetupScreen from './auth/ProfileSetupScreen.tsx';
 import ModuleSelectScreen from './auth/ModuleSelectScreen.tsx';
 import ProteinTrackerScreen from './auth/ProteinTrackerScreen.tsx';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './services/firebase/firebase.ts';
+import { startRealtimeConfigSync } from './liveConfig.ts';
 import './index.css';
+
+// Start Firestore real-time config sync as soon as the app loads.
+// This ensures every client gets live developer config updates instantly.
+startRealtimeConfigSync();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Flow:
@@ -59,6 +64,9 @@ function AppRoot() {
         if (snap.exists()) {
           setProfileStatus('READY');
           console.log('[AUTH] Redirecting to module selection');
+          // Update lastLogin for every sign-in (non-Google providers don't do this elsewhere)
+          updateDoc(doc(db, 'users', user.uid), { lastLogin: serverTimestamp() })
+            .catch(() => { /* non-fatal */ });
         } else {
           // New user — show profile setup
           setProfileStatus('NEEDED');

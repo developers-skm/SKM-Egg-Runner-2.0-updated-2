@@ -28,15 +28,18 @@ import {
   Wrench
 } from 'lucide-react';
 import { soundManager } from '../../audio';
-import { 
-  getActiveLiveConfig, 
-  syncConfigWithServer, 
-  LiveConfig, 
-  DEFAULT_LIVE_CONFIG, 
-  addDebugLog, 
-  getDebugLogs, 
-  DebugLogEntry 
+import {
+  getActiveLiveConfig,
+  syncConfigWithServer,
+  saveConfigLocally,
+  publishConfigToFirestore,
+  LiveConfig,
+  DEFAULT_LIVE_CONFIG,
+  addDebugLog,
+  getDebugLogs,
+  DebugLogEntry
 } from '../../liveConfig';
+import { runDevQuery, runDailySummary, checkDevPermissions, DevAnswer, DevCard, QUICK_COMMANDS } from '../../services/dev/devAssistantService';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -62,7 +65,14 @@ const ENCODED_DEV_NAME = "REVWRUxPUEVS"; // base64 for "DEVELOPER"
 const ENCODED_DEV_PASS = "bnBtIHJ1biBkZXY="; // base64 for "npm run dev"
 
 type SettingsView = 'SETTINGS' | 'DEV_LOGIN' | 'DEV_PANEL';
-type DevTab = 'BALANCING' | 'DIAGNOSTICS' | 'TESTING' | 'LOGS';
+type DevTab = 'BALANCING' | 'DIAGNOSTICS' | 'TESTING' | 'LOGS' | 'DEV_AI';
+
+interface ChatMessage {
+  role: 'user' | 'dev';
+  text: string;
+  answer?: DevAnswer;
+  ts: number;
+}
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
@@ -140,6 +150,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // Sliders/Draft live configuration
   const [draftConfig, setDraftConfig] = useState<LiveConfig>(DEFAULT_LIVE_CONFIG);
 
+  // DEV AI Assistant state
+  const [chatMessages,  setChatMessages]  = useState<ChatMessage[]>([
+    { role: 'dev', text: 'DEV online. Real-Time System Intelligence active. Type "help" to see all commands.', ts: Date.now() },
+  ]);
+  const [chatInput,     setChatInput]     = useState('');
+  const [chatLoading,   setChatLoading]   = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
   // Custom status feedback notice toast
   const [noticeToast, setNoticeToast] = useState<string | null>(null);
   const [diagResults, setDiagResults] = useState<any>(null);
@@ -169,6 +187,52 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       };
     }
   }, [view]);
+
+  // DEV home screen: auto-load daily summary + permission check when tab opens
+  useEffect(() => {
+    if (activeTab !== 'DEV_AI') return;
+    if (chatMessages.length > 1) return; // already loaded
+
+    const loadHome = async () => {
+      // 1. Check permissions
+      const perm = await checkDevPermissions().catch(() => null);
+      if (!perm) return;
+
+      if (!perm.isDeveloper) {
+        setChatMessages(prev => [...prev, {
+          role: 'dev',
+          text: `Access limited. Your role is "${perm.role}".`,
+          answer: {
+            text: `Access limited. Your role is "${perm.role}".`,
+            error: 'Run "grant dev access" to enable developer analytics, then reload the DEV tab.',
+            cards: [
+              { label: 'Email', value: perm.email || 'N/A',          color: 'white'  },
+              { label: 'Role',  value: perm.role,                    color: 'red'    },
+              { label: 'Fix',   value: 'Type: grant dev access',     color: 'yellow' },
+            ],
+          },
+          ts: Date.now(),
+        }]);
+        return;
+      }
+
+      // 2. Load daily executive summary as home screen
+      setChatLoading(true);
+      try {
+        const summary = await runDailySummary();
+        setChatMessages(prev => [...prev, {
+          role: 'dev',
+          text: summary.text,
+          answer: summary,
+          ts: Date.now(),
+        }]);
+      } catch { /* ignore */ }
+      finally { setChatLoading(false); }
+    };
+
+    loadHome();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   // Live Metrics Periodic update (every 1s)
   useEffect(() => {
@@ -333,39 +397,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // CONFIGURATION ACTIONS
   const handleSaveDraftConfig = () => {
     soundManager.playClick();
-    localStorage.setItem('skm_local_client_config', JSON.stringify(draftConfig));
-    addDebugLog('CONFIG', 'Draft layout parameters saved locally.');
-    window.dispatchEvent(new CustomEvent('skm_config_updated'));
+    saveConfigLocally(draftConfig);
+    addDebugLog('CONFIG', `Config saved locally - Traffic=${draftConfig.trafficDensity}x Obstacle=${draftConfig.obstacleSpawnRate}x Feed=${draftConfig.feedSpawnRate}x`);
     if (engine && typeof engine.applyLiveConfig === 'function') {
       engine.applyLiveConfig();
+      console.log('[TRAFFIC UPDATED]', draftConfig.trafficDensity, '[OBSTACLE UPDATED]', draftConfig.obstacleSpawnRate);
     }
-    triggerToast('Config Saved and Sync’d');
+    triggerToast('Config Saved & Applied');
     setTimeout(() => { runValidationNow(); }, 150);
   };
 
   const handleApplyConfig = () => {
     soundManager.playClick();
-    localStorage.setItem('skm_local_client_config', JSON.stringify(draftConfig));
-    addDebugLog('CONFIG', 'Draft parameters applied live.');
-    
-    if (engine) {
-      if (typeof engine.applyLiveConfig === 'function') {
-        engine.applyLiveConfig();
-      } else if (Array.isArray(engine.obstacles)) {
-        let removedCount = 0;
-        engine.obstacles.forEach((o: any) => {
-          if (o.active && o.mesh && o.mesh.position && engine.playerZ && o.mesh.position.z < engine.playerZ - 30.0) {
-            o.active = false;
-            o.mesh.visible = false;
-            o.mesh.position.set(0, -500, -1000);
-            removedCount++;
-          }
-        });
-        addDebugLog('SYSTEM', `Cleaned up ${removedCount} future obstacles to let new rates take effect immediately.`);
-      }
+    saveConfigLocally(draftConfig);
+    addDebugLog('CONFIG', `Config applied live - Traffic=${draftConfig.trafficDensity}x Obstacle=${draftConfig.obstacleSpawnRate}x Feed=${draftConfig.feedSpawnRate}x Speed=${draftConfig.runSpeedMultiplier}x`);
+    console.log('[DEV CONFIG UPDATED] Apply live:', draftConfig);
+    console.log('[TRAFFIC UPDATED]', draftConfig.vehicleSpawnRate, draftConfig.trafficDensity);
+    console.log('[OBSTACLE UPDATED]', draftConfig.obstacleSpawnRate, draftConfig.obstacleDensity);
+    console.log('[EVOLUTION UPDATED]', draftConfig.stage1EvolutionReq, draftConfig.stage2EvolutionReq);
+
+    if (engine && typeof engine.applyLiveConfig === 'function') {
+      engine.applyLiveConfig();
     }
-    
-    window.dispatchEvent(new CustomEvent('skm_config_updated'));
     triggerToast('Config Applied Live!');
     setTimeout(() => { runValidationNow(); }, 150);
   };
@@ -391,14 +444,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handlePublishConfig = () => {
     soundManager.playClick();
-    
-    // Save previous active configuration for rollback recovery
-    const currentActive = localStorage.getItem('skm_local_client_config') || JSON.stringify(DEFAULT_LIVE_CONFIG);
-    localStorage.setItem('skm_server_config_backup', currentActive);
 
-    // Increment configurations version number
-    const currentVer = draftConfig.configVersion;
-    const segments = currentVer.replace('v', '').split('.');
+    // Increment version number
+    const segments = draftConfig.configVersion.replace('v', '').split('.');
     const patch = parseInt(segments[2] || '0', 10) + 1;
     const nextVer = `v${segments[0]}.${segments[1]}.${patch}`;
 
@@ -407,22 +455,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       configVersion: nextVer,
       updatedBy: 'DEVELOPER',
       lastUpdated: new Date().toISOString().split('T')[0],
-      isActive: true
+      isActive: true,
     };
 
     setDraftConfig(updated);
-    
-    // Write parameters to database (simulate remote server store)
-    localStorage.setItem('skm_server_database_config', JSON.stringify(updated));
-    localStorage.setItem('skm_local_client_config', JSON.stringify(updated));
-    
-    window.dispatchEvent(new CustomEvent('skm_config_updated'));
+    saveConfigLocally(updated);
+
+    // Push to Firestore - all connected clients get it via onSnapshot instantly
+    publishConfigToFirestore(updated).then(() => {
+      triggerToast(`Published ${nextVer} to Firebase ✓`);
+    }).catch(() => {
+      triggerToast(`Published ${nextVer} locally (offline)`);
+    });
+
     if (engine && typeof engine.applyLiveConfig === 'function') {
       engine.applyLiveConfig();
     }
-    
-    addDebugLog('CONFIG', `PUBLISHED NEW CONFIGURATION ${nextVer} successfully to client-sync tables.`);
-    triggerToast(`Published Config ${nextVer} successfully`);
+
+    addDebugLog('CONFIG', `PUBLISHED ${nextVer} - Traffic=${updated.trafficDensity}x Obstacle=${updated.obstacleSpawnRate}x Feed=${updated.feedSpawnRate}x`);
+    console.log('[DEV CONFIG UPDATED] Published:', updated);
+    console.log('[TRAFFIC UPDATED]', updated.vehicleSpawnRate, updated.trafficDensity);
+    console.log('[OBSTACLE UPDATED]', updated.obstacleSpawnRate);
+    console.log('[EVOLUTION UPDATED]', updated.stage1EvolutionReq, updated.stage2EvolutionReq);
+    console.log('[MISSION UPDATED]', updated.missionRewards);
+
     setTimeout(() => { runValidationNow(); }, 150);
   };
 
@@ -433,34 +489,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleConfirmRestoreDefault = () => {
     soundManager.playClick();
-    
-    // Load default configuration
+
     setDraftConfig({ ...DEFAULT_LIVE_CONFIG });
-    
-    // Save configuration
-    localStorage.setItem('skm_local_client_config', JSON.stringify(DEFAULT_LIVE_CONFIG));
-    localStorage.setItem('skm_server_database_config', JSON.stringify(DEFAULT_LIVE_CONFIG));
-    
-    addDebugLog('CONFIG', 'Default configuration restored successfully.');
-    
-    // Refresh all active systems / UI
-    window.dispatchEvent(new CustomEvent('skm_config_updated'));
-    
-    // Apply instantly
+    saveConfigLocally(DEFAULT_LIVE_CONFIG);
+
+    // Also push defaults to Firestore so all clients reset
+    publishConfigToFirestore(DEFAULT_LIVE_CONFIG).catch(() => {});
+
     if (engine && typeof engine.applyLiveConfig === 'function') {
       engine.applyLiveConfig();
     }
-    
-    // Refresh runtime values
+
+    addDebugLog('CONFIG', 'Default configuration restored and published.');
+    console.log('[DEV CONFIG UPDATED] Restored defaults');
     setTimeout(() => { runValidationNow(); }, 150);
-    
     setShowDefaultConfirm(false);
-    
-    // Show confirmation message for 2 seconds
     setRestoreSuccessActive(true);
-    setTimeout(() => {
-      setRestoreSuccessActive(false);
-    }, 2000);
+    setTimeout(() => setRestoreSuccessActive(false), 2000);
   };
 
   const handleCancelRestoreDefault = () => {
@@ -770,6 +815,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     localStorage.setItem('skm_target_fps', limit);
     addDebugLog('SYSTEM', `Throttled engine refresh rate limit to ${limit} FPS.`);
     triggerToast(`FPS Capped: ${limit}`);
+  };
+
+  // DEV AI — send a question and get a Firebase-backed answer
+  const handleChatSend = async (question?: string) => {
+    const q = (question ?? chatInput).trim();
+    if (!q || chatLoading) return;
+    setChatInput('');
+    setChatLoading(true);
+
+    const userMsg: ChatMessage = { role: 'user', text: q, ts: Date.now() };
+    setChatMessages(prev => [...prev, userMsg]);
+
+    // Scroll to bottom after user message
+    setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+
+    try {
+      const answer = await runDevQuery(q);
+      const devMsg: ChatMessage = { role: 'dev', text: answer.text, answer, ts: Date.now() };
+      setChatMessages(prev => [...prev, devMsg]);
+    } catch {
+      setChatMessages(prev => [...prev, {
+        role: 'dev', text: 'Query failed. Firebase may be unreachable.', ts: Date.now(),
+      }]);
+    } finally {
+      setChatLoading(false);
+      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+    }
   };
 
   return (
@@ -1095,13 +1167,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <button
                 onClick={() => { soundManager.playClick(); setActiveTab('LOGS'); }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition whitespace-nowrap cursor-pointer ${
-                  activeTab === 'LOGS' 
-                    ? 'bg-emerald-950/40 border-emerald-500 text-emerald-300' 
+                  activeTab === 'LOGS'
+                    ? 'bg-emerald-950/40 border-emerald-500 text-emerald-300'
                     : 'bg-slate-950/20 border-slate-850 hover:border-slate-800 text-slate-400 hover:text-slate-200'
                 }`}
               >
                 <FileCode className="w-3.5 h-3.5" />
                 Event Logs
+              </button>
+              <button
+                onClick={() => { soundManager.playClick(); setActiveTab('DEV_AI'); }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition whitespace-nowrap cursor-pointer ${
+                  activeTab === 'DEV_AI'
+                    ? 'bg-red-950/60 border-red-500 text-red-300'
+                    : 'bg-slate-950/20 border-slate-850 hover:border-red-900 text-slate-400 hover:text-red-300'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                DEV
               </button>
             </div>
 
@@ -1843,6 +1926,219 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       </div>
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* TAB 5: DEV AI ASSISTANT */}
+              {activeTab === 'DEV_AI' && (
+                <div className="flex flex-col" style={{ minHeight: '400px', height: '100%' }}>
+
+                  {/* Header */}
+                  <div className="flex items-center gap-2 mb-3 pb-2 border-b border-red-900/40 shrink-0">
+                    <div className="w-8 h-8 rounded-lg flex items-center justify-center"
+                      style={{ background: 'rgba(215,25,32,0.2)', border: '1px solid rgba(215,25,32,0.4)' }}>
+                      <Sparkles className="w-4 h-4 text-red-400" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-black text-red-300 uppercase tracking-widest leading-none font-mono">DEV</p>
+                      <p className="text-[9px] text-slate-500 font-mono">Real-Time Analytics Engine</p>
+                    </div>
+                    <div className="ml-auto flex items-center gap-3">
+                      <span className="text-[8px] text-slate-500 font-mono">{chatMessages.length - 1} queries</span>
+                      <div className="flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                        <span className="text-[9px] text-green-400 font-mono font-bold">LIVE</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Quick command chips */}
+                  <div className="flex flex-wrap gap-1 mb-2 shrink-0">
+                    {QUICK_COMMANDS.map(({ label, cmd }) => (
+                      <button key={cmd} onClick={() => handleChatSend(cmd)}
+                        disabled={chatLoading}
+                        className="text-[8px] font-mono font-bold px-2 py-1 rounded-lg cursor-pointer disabled:opacity-40 transition active:scale-95"
+                        style={{ background: 'rgba(215,25,32,0.12)', border: '1px solid rgba(215,25,32,0.25)', color: '#fca5a5' }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Chat history */}
+                  <div className="flex-1 overflow-y-auto space-y-3 pr-1 mb-2" style={{ minHeight: 0, maxHeight: '340px' }}>
+                    {chatMessages.map((msg, i) => {
+                      const colorMap: Record<string, string> = {
+                        red: '#ef4444', green: '#22c55e', yellow: '#eab308',
+                        blue: '#3b82f6', white: '#94a3b8', purple: '#a855f7',
+                      };
+                      return (
+                        <div key={i} className={`flex flex-col gap-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+
+                          {/* Message bubble */}
+                          <div
+                            className="max-w-[90%] rounded-2xl px-3 py-2 text-xs font-mono"
+                            style={msg.role === 'user'
+                              ? { background: 'rgba(215,25,32,0.2)', border: '1px solid rgba(215,25,32,0.35)', color: '#fff' }
+                              : { background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.09)', color: '#e2e8f0' }
+                            }
+                          >
+                            {msg.role === 'dev' && (
+                              <span className="text-[8px] text-red-400 font-black uppercase tracking-widest block mb-1">DEV</span>
+                            )}
+                            <p className="leading-relaxed break-words">{msg.text}</p>
+                          </div>
+
+                          {/* Error detail */}
+                          {msg.answer?.error && (
+                            <div className="max-w-[90%] rounded-xl px-3 py-1.5 text-[8px] font-mono"
+                              style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', color: '#fca5a5' }}>
+                              <span className="font-black text-red-400 uppercase">Error: </span>{msg.answer.error}
+                            </div>
+                          )}
+
+                          {/* Analytics cards */}
+                          {msg.answer?.cards && msg.answer.cards.length > 0 && (
+                            <div className="max-w-full w-full grid gap-1.5 mt-1"
+                              style={{ gridTemplateColumns: `repeat(${Math.min(msg.answer.cards.length, 3)}, 1fr)` }}
+                            >
+                              {msg.answer.cards.map((card: DevCard, ci: number) => {
+                                const c = colorMap[card.color ?? 'white'] ?? '#94a3b8';
+                                return (
+                                  <div key={ci} className="rounded-xl p-2 text-center"
+                                    style={{ background: 'rgba(255,255,255,0.03)', border: `1px solid ${c}2a` }}>
+                                    <p className="text-[7px] font-bold uppercase tracking-wider font-mono mb-0.5" style={{ color: c + '80' }}>
+                                      {card.label}
+                                    </p>
+                                    <p className="text-sm font-black break-all leading-tight" style={{ color: c }}>
+                                      {card.value}
+                                    </p>
+                                    {card.sub && <p className="text-[7px] text-slate-500 font-mono mt-0.5">{card.sub}</p>}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* Table */}
+                          {msg.answer?.table && (
+                            <div className="max-w-full w-full overflow-x-auto mt-1">
+                              <table className="w-full text-[8px] font-mono border-collapse">
+                                <thead>
+                                  <tr style={{ background: 'rgba(215,25,32,0.08)' }}>
+                                    {msg.answer.table.headers.map((h, hi) => (
+                                      <th key={hi} className="text-left px-2 py-1.5 text-red-400 font-black uppercase tracking-wide border-b border-red-900/30">
+                                        {h}
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {msg.answer.table.rows.map((row, ri) => {
+                                    // Color last column based on value for health/diagnostic tables
+                                    const isStatusTable = msg.answer?.type === 'health' || msg.answer?.type === 'diagnostic';
+                                    return (
+                                      <tr key={ri} style={{ background: ri % 2 === 0 ? 'rgba(255,255,255,0.015)' : 'transparent' }}>
+                                        {row.map((cell, ci) => {
+                                          let cellColor = '#94a3b8';
+                                          const isLastCol = ci === row.length - 1;
+                                          if (isStatusTable && isLastCol) {
+                                            if (['OK','ACCESSIBLE','SIGNED IN','CONFIRMED','DEVELOPER'].some(v => cell.includes(v))) cellColor = '#22c55e';
+                                            else if (['ERROR','DENIED','BLOCKED','NO SESSION','MISSING'].some(v => cell.includes(v))) cellColor = '#ef4444';
+                                            else if (['WARNING','PARTIAL'].some(v => cell.includes(v))) cellColor = '#eab308';
+                                          }
+                                          return (
+                                            <td key={ci} className="px-2 py-1 font-mono" style={{ color: cellColor }}>
+                                              {cell}
+                                            </td>
+                                          );
+                                        })}
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+
+                          {/* Metadata footer */}
+                          {msg.answer?.meta && (
+                            <div className="flex flex-wrap gap-2 text-[7px] font-mono mt-0.5"
+                              style={{ color: 'rgba(148,163,184,0.4)' }}>
+                              <span>src: {msg.answer.meta.source}</span>
+                              <span>docs: {msg.answer.meta.records}</span>
+                              <span>{msg.answer.meta.execMs}ms</span>
+                              <span>{msg.answer.meta.timestamp}</span>
+                              <span style={{ color: msg.answer.meta.confidence === '100%' ? '#22c55e70' : msg.answer.meta.confidence === 'ERROR' ? '#ef444470' : '#eab30870' }}>
+                                {msg.answer.meta.confidence}
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Suggestion chips — shown after DEV answers */}
+                          {msg.role === 'dev' && msg.answer?.suggestions && msg.answer.suggestions.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1 max-w-full">
+                              {msg.answer.suggestions.map((s) => (
+                                <button key={s} onClick={() => handleChatSend(s)}
+                                  disabled={chatLoading}
+                                  className="text-[7px] font-mono px-2 py-0.5 rounded-full cursor-pointer disabled:opacity-40 transition active:scale-95"
+                                  style={{ background: 'rgba(215,25,32,0.08)', border: '1px solid rgba(215,25,32,0.2)', color: '#fca5a580' }}
+                                >
+                                  {s}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
+                          {!msg.answer?.meta && (
+                            <span className="text-[7px] text-slate-700 font-mono">
+                              {new Date(msg.ts).toLocaleTimeString()}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {/* Typing indicator */}
+                    {chatLoading && (
+                      <div className="flex items-start">
+                        <div className="rounded-2xl px-3 py-2 text-xs font-mono"
+                          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.09)' }}>
+                          <span className="text-[8px] text-red-400 font-black uppercase tracking-widest block mb-1">DEV</span>
+                          <span className="flex gap-1 items-center">
+                            <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                            <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                            <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                    <div ref={chatEndRef} />
+                  </div>
+
+                  {/* Input bar */}
+                  <form
+                    onSubmit={e => { e.preventDefault(); handleChatSend(); }}
+                    className="flex gap-2 shrink-0"
+                  >
+                    <input
+                      type="text"
+                      value={chatInput}
+                      onChange={e => setChatInput(e.target.value)}
+                      placeholder='Type command or "help"...'
+                      disabled={chatLoading}
+                      className="flex-1 bg-slate-950 border border-slate-800 text-white font-mono text-[10px] px-3 py-2 rounded-xl focus:border-red-600 focus:outline-none disabled:opacity-50"
+                    />
+                    <button
+                      type="submit"
+                      disabled={chatLoading || !chatInput.trim()}
+                      className="px-4 py-2 rounded-xl font-black text-[10px] uppercase font-mono transition active:scale-95 disabled:opacity-40 cursor-pointer shrink-0"
+                      style={{ background: 'linear-gradient(135deg,#D71920,#8B0000)', color: 'white', minWidth: 44 }}
+                    >
+                      {chatLoading ? '...' : 'Run'}
+                    </button>
+                  </form>
+
                 </div>
               )}
 

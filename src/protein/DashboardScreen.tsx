@@ -3,6 +3,7 @@ import type { User } from 'firebase/auth';
 import {
   getTodayStats, getStreakInfo, getWeeklyData, getTrackerSettings,
   getRecentEntries, getRewardWallet, calcLevel,
+  PROTEIN_PER_EGG,
   type DailyStats, type StreakInfo, type WeeklyData, type ProteinLogEntry,
   type TrackerSettings, type RewardWallet,
   todayKey,
@@ -157,11 +158,26 @@ export default function DashboardScreen({
           </div>
         </div>
 
-        {/* Smart motivation — rotating */}
-        <div style={{ background: 'rgba(255,255,255,0.12)', borderRadius: 14, padding: '10px 14px', backdropFilter: 'blur(8px)', minHeight: 40, display: 'flex', alignItems: 'center' }}>
-          <p style={{ fontSize: 12, color: '#fff', margin: 0, fontWeight: 500, lineHeight: 1.55, transition: 'opacity 300ms ease' }} key={motivationIdx}>
-            {motivations[motivationIdx] ?? 'Scan your first SKM egg today!'}
-          </p>
+        {/* Data-driven insight card with exact egg count */}
+        <div style={{ background: 'rgba(255,255,255,0.12)', borderRadius: 14, padding: '10px 14px', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ flex: 1 }}>
+            <p style={{ fontSize: 12, color: '#fff', margin: 0, fontWeight: 500, lineHeight: 1.55 }} key={motivationIdx}>
+              {motivations[motivationIdx] ?? 'Scan your first SKM egg today!'}
+            </p>
+          </div>
+          {remaining > 0 && (
+            <button onClick={onScanQR} style={{ background: 'rgba(255,255,255,0.25)', borderRadius: 10, padding: '5px 10px', border: 'none', cursor: 'pointer', textAlign: 'center', flexShrink: 0 }}>
+              <p style={{ fontSize: 15, fontWeight: 900, color: '#fff', margin: 0, lineHeight: 1 }}>
+                {Math.ceil(remaining / PROTEIN_PER_EGG)}
+              </p>
+              <p style={{ fontSize: 8, color: 'rgba(255,255,255,0.75)', margin: 0, fontWeight: 700, whiteSpace: 'nowrap' }}>eggs to goal</p>
+            </button>
+          )}
+          {remaining === 0 && (
+            <div style={{ background: 'rgba(34,197,94,0.3)', borderRadius: 10, padding: '5px 10px', flexShrink: 0 }}>
+              <p style={{ fontSize: 10, fontWeight: 900, color: '#86efac', margin: 0 }}>Goal met!</p>
+            </div>
+          )}
         </div>
       </div>
 

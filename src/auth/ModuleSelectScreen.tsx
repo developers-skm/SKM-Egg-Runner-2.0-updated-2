@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom';
 import { Html5Qrcode } from 'html5-qrcode';
 import { validateAndUseQR } from '../services/qr/qrService';
 import { EggIcon, GamepadIcon, TargetIcon, FlameIcon, TrendUpIcon, ZapIcon, AwardIcon, CheckIcon } from '../protein/Icons';
+import { SettingsModal } from '../frontend/modals/SettingsModal';
 
 interface ModuleSelectScreenProps {
   onSelectGame:    () => void;
@@ -11,6 +12,200 @@ interface ModuleSelectScreenProps {
 
 const LAST_MODULE_KEY  = 'skm_last_module';
 const QR_ELEMENT_ID    = 'module-select-qr-reader';
+
+// ─────────────────────────────────────────────────────────────
+// System Update Gate — developer authentication modal
+// Shown after 12 secret taps. Renders via portal over everything.
+// ─────────────────────────────────────────────────────────────
+
+const ENCODED_DEV_NAME = 'REVWRUxPUEVS'; // base64 → "DEVELOPER"
+const ENCODED_DEV_PASS = 'bnBtIHJ1biBkZXY='; // base64 → "npm run dev"
+
+function SystemUpdateGate({
+  onAccessGranted,
+  onCancel,
+}: {
+  onAccessGranted: () => void;
+  onCancel: () => void;
+}) {
+  const [visible,   setVisible]   = useState(false);
+  const [devId,     setDevId]     = useState('');
+  const [devPass,   setDevPass]   = useState('');
+  const [error,     setError]     = useState('');
+  const [loading,   setLoading]   = useState(false);
+  const idRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const t = requestAnimationFrame(() => setVisible(true));
+    setTimeout(() => idRef.current?.focus(), 300);
+    return () => cancelAnimationFrame(t);
+  }, []);
+
+  const closeWith = (cb?: () => void) => {
+    setVisible(false);
+    setTimeout(() => cb?.(), 250);
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    setTimeout(() => {
+      try {
+        const validId   = btoa(devId.trim())   === ENCODED_DEV_NAME;
+        const validPass = btoa(devPass.trim())  === ENCODED_DEV_PASS;
+        if (validId && validPass) {
+          closeWith(onAccessGranted);
+        } else {
+          setError('Access Denied — Invalid credentials.');
+          setDevPass('');
+        }
+      } catch {
+        setError('Access Denied — Invalid credentials.');
+      }
+      setLoading(false);
+    }, 400);
+  };
+
+  const overlay: React.CSSProperties = {
+    opacity:    visible ? 1 : 0,
+    transition: 'opacity 250ms ease',
+  };
+  const card: React.CSSProperties = {
+    transform:  visible ? 'scale(1)' : 'scale(0.88)',
+    opacity:    visible ? 1 : 0,
+    transition: 'transform 250ms cubic-bezier(0.34,1.56,0.64,1), opacity 250ms ease',
+  };
+
+  return ReactDOM.createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center pointer-events-auto" style={overlay}>
+      {/* Blurred backdrop */}
+      <div
+        className="absolute inset-0"
+        style={{ backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', background: 'rgba(0,0,0,0.65)' }}
+        onClick={() => closeWith(onCancel)}
+      />
+
+      {/* Gate card */}
+      <div
+        className="relative z-10 w-full mx-5 rounded-3xl overflow-hidden shadow-2xl"
+        style={{
+          ...card,
+          maxWidth: 360,
+          background: 'linear-gradient(160deg,#1a0000 0%,#2d0000 40%,#1a0000 100%)',
+          boxShadow: '0 0 0 1.5px rgba(215,25,32,0.5), 0 32px 80px rgba(0,0,0,0.8)',
+        }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Glassmorphism highlight */}
+        <div className="absolute inset-0 pointer-events-none rounded-3xl"
+          style={{ background: 'linear-gradient(135deg,rgba(215,25,32,0.18) 0%,rgba(255,255,255,0.03) 55%,transparent 100%)' }}
+        />
+
+        <div className="relative p-6">
+          {/* Header */}
+          <div className="text-center mb-6">
+            {/* Shield icon */}
+            <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center"
+              style={{ background: 'rgba(215,25,32,0.2)', border: '1.5px solid rgba(215,25,32,0.4)' }}>
+              <svg className="w-8 h-8" fill="none" stroke="#D71920" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/>
+              </svg>
+            </div>
+            <p className="text-[10px] font-black tracking-[0.3em] uppercase font-mono mb-1"
+              style={{ color: 'rgba(215,25,32,0.8)' }}>
+              RESTRICTED ACCESS
+            </p>
+            <h2 className="text-xl font-black text-white tracking-tight">SYSTEM UPDATE GATE</h2>
+            <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
+              Authorized Developer Access Required
+            </p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-3">
+            {/* Developer ID */}
+            <div>
+              <label className="block text-[10px] font-bold uppercase tracking-widest mb-1.5"
+                style={{ color: 'rgba(255,255,255,0.4)', fontFamily: 'monospace' }}>
+                Developer ID
+              </label>
+              <input
+                ref={idRef}
+                type="text"
+                value={devId}
+                onChange={e => { setDevId(e.target.value); setError(''); }}
+                placeholder="Enter Developer ID"
+                autoComplete="off"
+                className="w-full px-4 py-3 rounded-xl font-mono text-sm focus:outline-none transition"
+                style={{
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1.5px solid rgba(255,255,255,0.12)',
+                  color: 'white',
+                }}
+                onFocus={e => (e.target.style.borderColor = 'rgba(215,25,32,0.7)')}
+                onBlur={e => (e.target.style.borderColor = 'rgba(255,255,255,0.12)')}
+              />
+            </div>
+
+            {/* Password */}
+            <div>
+              <label className="block text-[10px] font-bold uppercase tracking-widest mb-1.5"
+                style={{ color: 'rgba(255,255,255,0.4)', fontFamily: 'monospace' }}>
+                Password
+              </label>
+              <input
+                type="password"
+                value={devPass}
+                onChange={e => { setDevPass(e.target.value); setError(''); }}
+                placeholder="Enter Password"
+                autoComplete="current-password"
+                className="w-full px-4 py-3 rounded-xl font-mono text-sm focus:outline-none transition"
+                style={{
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1.5px solid rgba(255,255,255,0.12)',
+                  color: 'white',
+                }}
+                onFocus={e => (e.target.style.borderColor = 'rgba(215,25,32,0.7)')}
+                onBlur={e => (e.target.style.borderColor = 'rgba(255,255,255,0.12)')}
+              />
+            </div>
+
+            {/* Error */}
+            {error && (
+              <div className="rounded-xl px-4 py-2.5 text-center"
+                style={{ background: 'rgba(215,25,32,0.15)', border: '1px solid rgba(215,25,32,0.3)' }}>
+                <p className="text-xs font-bold font-mono" style={{ color: '#ff6b6b' }}>{error}</p>
+              </div>
+            )}
+
+            {/* Buttons */}
+            <div className="flex gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => closeWith(onCancel)}
+                className="flex-1 py-3 rounded-2xl font-bold text-sm uppercase tracking-wide transition active:scale-95 cursor-pointer"
+                style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.6)', border: '1px solid rgba(255,255,255,0.12)' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={loading || !devId.trim() || !devPass.trim()}
+                className="flex-1 py-3 rounded-2xl font-black text-sm uppercase tracking-wide transition active:scale-95 disabled:opacity-50 cursor-pointer"
+                style={{ background: 'linear-gradient(135deg,#D71920,#8B0000)', color: 'white', boxShadow: '0 4px 16px rgba(215,25,32,0.4)' }}
+              >
+                {loading ? (
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block" />
+                ) : 'Access Controller'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
 
 // ─────────────────────────────────────────────────────────────
 // QR Access Modal
@@ -85,8 +280,16 @@ function QRAccessModal({
           setScanMsg('Validating…');
           const result = await validateAndUseQR(decoded);
           if (result.ok === true) {
+            // Persist Golden QR status so App.tsx can enable unlimited retry
+            if (result.unlimited) {
+              sessionStorage.setItem('skm_golden_qr', 'true');
+              console.log('[QR] Golden QR detected — unlimited retry enabled');
+            } else {
+              sessionStorage.removeItem('skm_golden_qr');
+              console.log('[QR] Normal QR detected — remaining:', result.remaining);
+            }
             setScanSuccess(true);
-            setScanMsg('QR Verified — Starting game…');
+            setScanMsg(result.unlimited ? 'Golden QR Verified — Unlimited Access!' : 'QR Verified — Starting game…');
             setScanError(null);
             closeWith(onConfirm);
           } else {
@@ -274,11 +477,36 @@ function QRAccessModal({
 // Module Select Screen
 // ─────────────────────────────────────────────────────────────
 
+const TAP_REQUIRED  = 12;
+const TAP_INTERVAL  = 1500; // ms max between taps
+
 export default function ModuleSelectScreen({ onSelectGame, onSelectTracker }: ModuleSelectScreenProps) {
-  const [visible,      setVisible]      = useState(false);
-  const [pressing,     setPressing]     = useState<'game' | 'tracker' | null>(null);
-  const [hovering,     setHovering]     = useState<'game' | 'tracker' | null>(null);
-  const [showQRModal,  setShowQRModal]  = useState(false);
+  const [visible,        setVisible]        = useState(false);
+  const [pressing,       setPressing]       = useState<'game' | 'tracker' | null>(null);
+  const [hovering,       setHovering]       = useState<'game' | 'tracker' | null>(null);
+  const [showQRModal,    setShowQRModal]    = useState(false);
+  const [showGate,       setShowGate]       = useState(false);
+  const [showDevPanel,   setShowDevPanel]   = useState(false);
+
+  // 12-tap secret counter
+  const tapCountRef  = useRef(0);
+  const tapTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleSecretTap = () => {
+    tapCountRef.current += 1;
+
+    // Reset the inactivity timer on each tap
+    if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
+    tapTimerRef.current = setTimeout(() => {
+      tapCountRef.current = 0;
+    }, TAP_INTERVAL);
+
+    if (tapCountRef.current >= TAP_REQUIRED) {
+      tapCountRef.current = 0;
+      if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
+      setShowGate(true);
+    }
+  };
 
   useEffect(() => {
     const t = requestAnimationFrame(() => setVisible(true));
@@ -317,6 +545,7 @@ export default function ModuleSelectScreen({ onSelectGame, onSelectTracker }: Mo
       <div
         className="fixed inset-0 flex flex-col"
         style={{ background: '#F5F5F5', opacity: visible ? 1 : 0, transition: 'opacity 280ms ease' }}
+        onClick={handleSecretTap}
       >
         {/* Top red accent bar */}
         <div style={{ height: 4, background: 'linear-gradient(90deg,#D71920,#B31217,#D71920)' }} />
@@ -456,6 +685,31 @@ export default function ModuleSelectScreen({ onSelectGame, onSelectTracker }: Mo
         <QRAccessModal
           onConfirm={handleQRConfirm}
           onCancel={handleQRCancel}
+        />
+      )}
+
+      {/* System Update Gate — shown after 12 secret taps */}
+      {showGate && !showDevPanel && (
+        <SystemUpdateGate
+          onAccessGranted={() => {
+            setShowGate(false);
+            setShowDevPanel(true);
+          }}
+          onCancel={() => setShowGate(false)}
+        />
+      )}
+
+      {/* Developer Controller — full SettingsModal in DEV_PANEL mode */}
+      {showDevPanel && (
+        <SettingsModal
+          isOpen={true}
+          onClose={() => setShowDevPanel(false)}
+          soundEnabled={true}
+          musicEnabled={true}
+          onToggleSound={() => {}}
+          onToggleMusic={() => {}}
+          onStartGame={() => {}}
+          initialView="DEV_PANEL"
         />
       )}
     </>
