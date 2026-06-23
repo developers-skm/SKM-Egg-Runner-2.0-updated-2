@@ -244,38 +244,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       </div>
 
       {/* ── Bottom: Daily Reward ── */}
-      <div className="w-full flex justify-center pointer-events-auto">
-        <div className="w-full max-w-xl bg-slate-900/90 border border-slate-800 p-4 rounded-2xl backdrop-blur shadow-2xl flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500 flex-shrink-0">
-              <Calendar className="w-5 h-5" />
-            </div>
-            <div>
-              <span className="text-[10px] text-slate-400 font-mono block leading-none">DAILY BONUS</span>
-              <h4 className="text-white text-xs font-bold font-sans mt-1">
-                Day {stats.dailyRewardStreak + 1}: {currentReward.desc}
-              </h4>
-              <p className="text-[9px] text-slate-400 font-mono mt-0.5">
-                Reward: {currentReward.type === 'feeds' ? '🌾' : '🥚'} {currentReward.value}
-              </p>
-            </div>
-          </div>
-
-          <button
-            id="btn_claim_daily"
-            disabled={!canClaimDaily}
-            onClick={handleClaim}
-            className={`font-black py-2 px-5 rounded-xl text-xs uppercase font-mono tracking-wider transition ${
-              canClaimDaily
-                ? 'bg-yellow-500 hover:bg-yellow-400 text-slate-950 shadow-md cursor-pointer'
-                : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/30'
-            }`}
-          >
-            {canClaimDaily ? 'Claim Gift' : 'Claimed Today'}
-          </button>
-        </div>
-      </div>
-
+      
     </div>
   );
 };

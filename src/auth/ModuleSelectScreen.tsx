@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom';
 import { Html5Qrcode } from 'html5-qrcode';
 import { validateAndUseQR } from '../services/qr/qrService';
-import { EggIcon, GamepadIcon, TargetIcon, FlameIcon, TrendUpIcon, ZapIcon, AwardIcon, CheckIcon } from '../protein/Icons';
 import { SettingsModal } from '../frontend/modals/SettingsModal';
 
 interface ModuleSelectScreenProps {
@@ -477,30 +476,23 @@ function QRAccessModal({
 // Module Select Screen
 // ─────────────────────────────────────────────────────────────
 
-const TAP_REQUIRED  = 12;
-const TAP_INTERVAL  = 1500; // ms max between taps
+const TAP_REQUIRED = 12;
+const TAP_INTERVAL = 1500;
 
 export default function ModuleSelectScreen({ onSelectGame, onSelectTracker }: ModuleSelectScreenProps) {
-  const [visible,        setVisible]        = useState(false);
-  const [pressing,       setPressing]       = useState<'game' | 'tracker' | null>(null);
-  const [hovering,       setHovering]       = useState<'game' | 'tracker' | null>(null);
-  const [showQRModal,    setShowQRModal]    = useState(false);
-  const [showGate,       setShowGate]       = useState(false);
-  const [showDevPanel,   setShowDevPanel]   = useState(false);
+  const [visible,      setVisible]      = useState(false);
+  const [pressing,     setPressing]     = useState<'game' | 'tracker' | null>(null);
+  const [showQRModal,  setShowQRModal]  = useState(false);
+  const [showGate,     setShowGate]     = useState(false);
+  const [showDevPanel, setShowDevPanel] = useState(false);
 
-  // 12-tap secret counter
-  const tapCountRef  = useRef(0);
-  const tapTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tapCountRef = useRef(0);
+  const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleSecretTap = () => {
     tapCountRef.current += 1;
-
-    // Reset the inactivity timer on each tap
     if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
-    tapTimerRef.current = setTimeout(() => {
-      tapCountRef.current = 0;
-    }, TAP_INTERVAL);
-
+    tapTimerRef.current = setTimeout(() => { tapCountRef.current = 0; }, TAP_INTERVAL);
     if (tapCountRef.current >= TAP_REQUIRED) {
       tapCountRef.current = 0;
       if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
@@ -516,190 +508,214 @@ export default function ModuleSelectScreen({ onSelectGame, onSelectTracker }: Mo
   const handleSelectTracker = () => {
     localStorage.setItem(LAST_MODULE_KEY, 'tracker');
     setVisible(false);
-    setTimeout(() => onSelectTracker(), 280);
+    setTimeout(() => onSelectTracker(), 300);
   };
 
-  // Game card tap → open QR modal immediately (no intermediate screen)
   const handleSelectGame = () => {
     localStorage.setItem(LAST_MODULE_KEY, 'game');
     setShowQRModal(true);
   };
 
-  // QR validated → fade out → enter game
   const handleQRConfirm = () => {
     setShowQRModal(false);
     setVisible(false);
-    setTimeout(() => onSelectGame(), 280);
+    setTimeout(() => onSelectGame(), 300);
   };
 
-  // QR cancelled → just close the modal, stay on module select
-  const handleQRCancel = () => {
-    setShowQRModal(false);
-  };
-
-  const cardScale = (card: 'game' | 'tracker') =>
-    pressing === card ? 'scale(0.98)' : hovering === card ? 'scale(1.02)' : 'scale(1)';
+  const handleQRCancel = () => setShowQRModal(false);
 
   return (
     <>
+      {/* ── Page shell ── */}
       <div
-        className="fixed inset-0 flex flex-col"
-        style={{ background: '#F5F5F5', opacity: visible ? 1 : 0, transition: 'opacity 280ms ease' }}
+        style={{
+          position: 'fixed', inset: 0,
+          background: '#0D0D0D',
+          opacity: visible ? 1 : 0,
+          transition: 'opacity 300ms ease',
+          display: 'flex', flexDirection: 'column',
+          fontFamily: 'system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+          overflowY: 'auto',
+        }}
         onClick={handleSecretTap}
       >
-        {/* Top red accent bar */}
-        <div style={{ height: 4, background: 'linear-gradient(90deg,#D71920,#B31217,#D71920)' }} />
+        {/* ── Subtle background grid texture ── */}
+        <div style={{
+          position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0,
+          backgroundImage: 'radial-gradient(circle at 20% 20%, rgba(215,25,32,0.12) 0%, transparent 50%), radial-gradient(circle at 80% 80%, rgba(215,25,32,0.08) 0%, transparent 50%)',
+        }} />
 
-        {/* Header */}
-        <div className="flex-shrink-0 px-6 pt-10 pb-6 text-center">
+        {/* ── Header ── */}
+        <div style={{
+          position: 'relative', zIndex: 1, flexShrink: 0,
+          padding: '36px 24px 20px',
+          display: 'flex', alignItems: 'center', gap: 12,
+        }}>
           <img
             src="/THUMBS_POSE__Egg_-removebg-preview.png"
             alt="SKM"
-            style={{ width: 72, height: 72, objectFit: 'contain', margin: '0 auto 16px', filter: 'drop-shadow(0 4px 12px rgba(215,25,32,0.25))' }}
+            style={{ width: 38, height: 38, objectFit: 'contain', filter: 'drop-shadow(0 2px 6px rgba(215,25,32,0.5))', flexShrink: 0 }}
           />
-          <h1 style={{ fontFamily: '"Arial Black", Impact, sans-serif', fontSize: 28, fontWeight: 900, color: '#1A1A1A', letterSpacing: '-0.5px', margin: 0 }}>
-            SKM <span style={{ color: '#D71920' }}>EXPERIENCE</span>
-          </h1>
-          <p style={{ fontSize: 12, fontWeight: 700, color: '#666', letterSpacing: 3, textTransform: 'uppercase', marginTop: 6 }}>
-            Choose Your Mode
-          </p>
+          <div>
+            <p style={{ fontSize: 9, fontWeight: 800, letterSpacing: 3, textTransform: 'uppercase', color: 'rgba(215,25,32,0.8)', margin: 0, fontFamily: 'monospace' }}>
+              SKM EXPERIENCE
+            </p>
+            <h1 style={{ fontSize: 20, fontWeight: 900, color: '#fff', margin: 0, letterSpacing: '-0.3px', lineHeight: 1.15 }}>
+              Choose Your <span style={{ color: '#D71920' }}>Mode</span>
+            </h1>
+          </div>
         </div>
 
-        {/* Cards */}
-        <div
-          className="flex-1 overflow-y-auto px-4 pb-8"
-          style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 480, width: '100%', margin: '0 auto' }}
-        >
+        {/* ── Cards ── */}
+        <div style={{
+          position: 'relative', zIndex: 1,
+          flex: 1, padding: '0 16px 0',
+          display: 'flex', flexDirection: 'column', gap: 12,
+          maxWidth: 500, width: '100%', margin: '0 auto', alignSelf: 'center',
+          boxSizing: 'border-box', justifyContent: 'center',
+        }}>
 
-          {/* ── Protein Tracker Card ── */}
+          {/* ══ PROTEIN TRACKER CARD ══ */}
           <button
             onClick={handleSelectTracker}
             onPointerDown={() => setPressing('tracker')}
             onPointerUp={() => setPressing(null)}
-            onPointerLeave={() => { setPressing(null); setHovering(null); }}
-            onMouseEnter={() => setHovering('tracker')}
-            onMouseLeave={() => setHovering(null)}
+            onPointerLeave={() => setPressing(null)}
             style={{
-              background: 'linear-gradient(145deg,#D71920 0%,#B31217 100%)',
-              borderRadius: 24, padding: 0, border: 'none', cursor: 'pointer',
-              transform: cardScale('tracker'),
-              transition: 'transform 200ms ease, box-shadow 200ms ease',
-              boxShadow: hovering === 'tracker' ? '0 16px 40px rgba(215,25,32,0.45)' : '0 8px 24px rgba(215,25,32,0.3)',
-              overflow: 'hidden', textAlign: 'left', position: 'relative',
+              border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left',
+              borderRadius: 22, overflow: 'hidden', position: 'relative',
+              transform: pressing === 'tracker' ? 'scale(0.97)' : 'scale(1)',
+              transition: 'transform 160ms cubic-bezier(0.34,1.56,0.64,1), box-shadow 160ms ease',
+              boxShadow: pressing === 'tracker'
+                ? '0 4px 14px rgba(215,25,32,0.2)'
+                : '0 8px 28px rgba(215,25,32,0.4), 0 0 0 1px rgba(215,25,32,0.2)',
+              background: 'transparent',
             }}
           >
-            <div style={{ position: 'absolute', inset: 0, borderRadius: 24, pointerEvents: 'none', background: 'linear-gradient(135deg,rgba(255,255,255,0.18) 0%,rgba(255,255,255,0.04) 60%,transparent 100%)' }} />
-            <div style={{ padding: '24px 24px 20px', position: 'relative' }}>
-              <div style={{ marginBottom: 16 }}>
-                <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 2, textTransform: 'uppercase', color: 'rgba(255,255,255,0.7)', background: 'rgba(255,255,255,0.15)', padding: '4px 10px', borderRadius: 20 }}>
-                  Module 01
+            <div style={{
+              position: 'relative',
+              background: 'linear-gradient(135deg,#C0101A 0%,#7A0009 100%)',
+              height: 150,
+              display: 'flex', alignItems: 'center',
+            }}>
+              {/* Orb */}
+              <div style={{ position: 'absolute', top: -30, right: -30, width: 140, height: 140, borderRadius: '50%', background: 'rgba(255,255,255,0.06)', pointerEvents: 'none' }} />
+              {/* Glass highlight */}
+              <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', borderRadius: 22, background: 'linear-gradient(135deg,rgba(255,255,255,0.13) 0%,transparent 55%)' }} />
+
+              {/* Mascot */}
+              <img
+                src="/egg mus_Image_v5vrg3v5vrg3v5vr-removebg-preview.png"
+                alt=""
+                style={{
+                  position: 'absolute', right: -4, bottom: 0,
+                  width: 148, height: 148, objectFit: 'contain',
+                  filter: 'drop-shadow(0 4px 14px rgba(0,0,0,0.35))',
+                }}
+              />
+
+              {/* Text */}
+              <div style={{ padding: '20px 20px', position: 'relative', zIndex: 1 }}>
+                <span style={{
+                  display: 'inline-block', fontSize: 8, fontWeight: 900, letterSpacing: 2,
+                  textTransform: 'uppercase', color: 'rgba(255,255,255,0.65)',
+                  background: 'rgba(255,255,255,0.14)', padding: '3px 10px',
+                  borderRadius: 20, border: '1px solid rgba(255,255,255,0.18)', marginBottom: 10,
+                }}>
+                  Health 
                 </span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 12 }}>
-                <div style={{ width: 52, height: 52, borderRadius: 16, background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <EggIcon size={26} color="#fff" />
-                </div>
-                <div>
-                  <p style={{ fontSize: 20, fontWeight: 900, color: '#fff', margin: 0, fontFamily: '"Arial Black", Impact, sans-serif', letterSpacing: '-0.3px' }}>Protein Tracker</p>
-                  <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', margin: 0, marginTop: 2, fontWeight: 500 }}>Build healthy protein habits</p>
-                </div>
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginBottom: 18 }}>
-                {[
-                  { icon: <TargetIcon size={10} color="#fff" />, label: 'Daily Goals'  },
-                  { icon: <FlameIcon  size={10} color="#fff" />, label: 'Streaks'      },
-                  { icon: <TrendUpIcon size={10} color="#fff" />,label: 'Analytics'    },
-                  { icon: <AwardIcon  size={10} color="#fff" />, label: 'Rewards'      },
-                ].map(c => (
-                  <span key={c.label} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 700, color: '#fff', background: 'rgba(255,255,255,0.15)', padding: '5px 10px', borderRadius: 20, border: '1px solid rgba(255,255,255,0.2)' }}>
-                    {c.icon} {c.label}
-                  </span>
-                ))}
-              </div>
-              <div style={{ background: '#fff', borderRadius: 14, padding: '12px 0', textAlign: 'center', fontWeight: 900, fontSize: 13, color: '#D71920', letterSpacing: 1, textTransform: 'uppercase', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
-                Open Protein Tracker
+                <h2 style={{ fontSize: 22, fontWeight: 900, color: '#fff', margin: '0 0 5px', letterSpacing: '-0.3px', lineHeight: 1.1 }}>
+                  Protein Tracker
+                </h2>
+                <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.65)', margin: 0, fontWeight: 500, lineHeight: 1.45, maxWidth: 180 }}>
+                  Track daily protein intake and build healthy habits.
+                </p>
               </div>
             </div>
           </button>
 
-          {/* ── Game Card ── */}
+          {/* ══ SKM EGG RUNNER CARD ══ */}
           <button
             onClick={handleSelectGame}
             onPointerDown={() => setPressing('game')}
             onPointerUp={() => setPressing(null)}
-            onPointerLeave={() => { setPressing(null); setHovering(null); }}
-            onMouseEnter={() => setHovering('game')}
-            onMouseLeave={() => setHovering(null)}
+            onPointerLeave={() => setPressing(null)}
             style={{
-              background: 'linear-gradient(145deg,#1A1A1A 0%,#2D2D2D 100%)',
-              borderRadius: 24, padding: 0, border: 'none', cursor: 'pointer',
-              transform: cardScale('game'),
-              transition: 'transform 200ms ease, box-shadow 200ms ease',
-              boxShadow: hovering === 'game' ? '0 16px 40px rgba(0,0,0,0.5)' : '0 8px 24px rgba(0,0,0,0.25)',
-              overflow: 'hidden', textAlign: 'left', position: 'relative',
+              border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left',
+              borderRadius: 22, overflow: 'hidden', position: 'relative',
+              transform: pressing === 'game' ? 'scale(0.97)' : 'scale(1)',
+              transition: 'transform 160ms cubic-bezier(0.34,1.56,0.64,1), box-shadow 160ms ease',
+              boxShadow: pressing === 'game'
+                ? '0 4px 14px rgba(0,0,0,0.25)'
+                : '0 8px 28px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.06)',
+              background: 'transparent',
             }}
           >
-            <div style={{ position: 'absolute', inset: 0, borderRadius: 24, pointerEvents: 'none', background: 'linear-gradient(135deg,rgba(215,25,32,0.25) 0%,rgba(215,25,32,0.05) 50%,transparent 100%)' }} />
-            <div style={{ padding: '24px 24px 20px', position: 'relative' }}>
-              <div style={{ marginBottom: 16 }}>
-                <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 2, textTransform: 'uppercase', color: 'rgba(255,255,255,0.5)', background: 'rgba(255,255,255,0.08)', padding: '4px 10px', borderRadius: 20 }}>
-                  Module 02
+            <div style={{
+              position: 'relative',
+              background: 'linear-gradient(135deg,#1A1A1A 0%,#0A0A0A 100%)',
+              height: 150,
+              display: 'flex', alignItems: 'center',
+            }}>
+              {/* Red glow behind mascot */}
+              <div style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 120, height: 120, borderRadius: '50%', background: 'rgba(215,25,32,0.18)', filter: 'blur(22px)', pointerEvents: 'none' }} />
+              {/* Red corner accent */}
+              <div style={{ position: 'absolute', top: 0, right: 0, width: 70, height: 70, background: 'linear-gradient(225deg,rgba(215,25,32,0.3) 0%,transparent 70%)', borderTopRightRadius: 22, pointerEvents: 'none' }} />
+              {/* Glass highlight */}
+              <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', borderRadius: 22, background: 'linear-gradient(135deg,rgba(255,255,255,0.05) 0%,transparent 50%)' }} />
+
+              {/* Mascot */}
+              <img
+                src="/egg play_Image_o17lyuo17lyuo17l-removebg-preview.png"
+                alt=""
+                style={{
+                  position: 'absolute', right: 4, bottom: 0,
+                  width: 138, height: 138, objectFit: 'contain',
+                  filter: 'drop-shadow(0 4px 18px rgba(215,25,32,0.7)) drop-shadow(0 0 6px rgba(215,25,32,0.4))',
+                }}
+              />
+
+              {/* Text */}
+              <div style={{ padding: '20px 20px', position: 'relative', zIndex: 1 }}>
+                <span style={{
+                  display: 'inline-block', fontSize: 8, fontWeight: 900, letterSpacing: 2,
+                  textTransform: 'uppercase', color: 'rgba(215,25,32,0.9)',
+                  background: 'rgba(215,25,32,0.14)', padding: '3px 10px',
+                  borderRadius: 20, border: '1px solid rgba(215,25,32,0.3)', marginBottom: 10,
+                }}>
+                  Game 
                 </span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 12 }}>
-                <div style={{ width: 52, height: 52, borderRadius: 16, background: 'rgba(215,25,32,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <GamepadIcon size={26} color="#D71920" />
-                </div>
-                <div>
-                  <p style={{ fontSize: 20, fontWeight: 900, color: '#fff', margin: 0, fontFamily: '"Arial Black", Impact, sans-serif', letterSpacing: '-0.3px' }}>SKM Egg Runner</p>
-                  <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', margin: 0, marginTop: 2, fontWeight: 500 }}>Evolve from Egg to Champion</p>
-                </div>
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginBottom: 18 }}>
-                {[
-                  { icon: <ZapIcon     size={10} color="rgba(255,255,255,0.6)" />, label: 'QR Verified'     },
-                  { icon: <TrendUpIcon size={10} color="rgba(255,255,255,0.6)" />, label: 'Evolution System' },
-                  { icon: <AwardIcon   size={10} color="rgba(255,255,255,0.6)" />, label: 'Achievements'    },
-                  { icon: <CheckIcon   size={10} color="rgba(255,255,255,0.6)" />, label: 'Missions'        },
-                ].map(c => (
-                  <span key={c.label} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.7)', background: 'rgba(255,255,255,0.07)', padding: '5px 10px', borderRadius: 20, border: '1px solid rgba(255,255,255,0.1)' }}>
-                    {c.icon} {c.label}
-                  </span>
-                ))}
-              </div>
-              <div style={{ background: 'linear-gradient(90deg,#D71920,#B31217)', borderRadius: 14, padding: '12px 0', textAlign: 'center', fontWeight: 900, fontSize: 13, color: '#fff', letterSpacing: 1, textTransform: 'uppercase', boxShadow: '0 4px 12px rgba(215,25,32,0.4)' }}>
-                Play SKM Egg Runner
+                <h2 style={{ fontSize: 22, fontWeight: 900, color: '#fff', margin: '0 0 5px', letterSpacing: '-0.3px', lineHeight: 1.1 }}>
+                  SKM Egg Runner
+                </h2>
+                <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', margin: 0, fontWeight: 500, lineHeight: 1.45, maxWidth: 180 }}>
+                  Evolve from Egg to Champion.
+                </p>
               </div>
             </div>
           </button>
 
         </div>
 
-        <p style={{ textAlign: 'center', fontSize: 10, color: '#bbb', paddingBottom: 24, fontFamily: 'monospace', letterSpacing: 1 }}>
-          SKM EGG RUNNER · ALL RIGHTS RESERVED
+        {/* Footer */}
+        <p style={{
+          position: 'relative', zIndex: 1,
+          textAlign: 'center', fontSize: 9, color: 'rgba(255,255,255,0.18)',
+          padding: '16px 0 20px', margin: 0, fontFamily: 'monospace', letterSpacing: 2, textTransform: 'uppercase',
+        }}>
+          SKM © 2024 · All Rights Reserved
         </p>
       </div>
 
-      {/* QR modal mounts over everything via portal */}
-      {showQRModal && (
-        <QRAccessModal
-          onConfirm={handleQRConfirm}
-          onCancel={handleQRCancel}
-        />
-      )}
+      {showQRModal && <QRAccessModal onConfirm={handleQRConfirm} onCancel={handleQRCancel} />}
 
-      {/* System Update Gate — shown after 12 secret taps */}
       {showGate && !showDevPanel && (
         <SystemUpdateGate
-          onAccessGranted={() => {
-            setShowGate(false);
-            setShowDevPanel(true);
-          }}
+          onAccessGranted={() => { setShowGate(false); setShowDevPanel(true); }}
           onCancel={() => setShowGate(false)}
         />
       )}
 
-      {/* Developer Controller — full SettingsModal in DEV_PANEL mode */}
       {showDevPanel && (
         <SettingsModal
           isOpen={true}

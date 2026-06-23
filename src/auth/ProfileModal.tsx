@@ -317,16 +317,9 @@ export default function ProfileModal({
           <Section title="Account Information">
             <Row label="Player Name"    value={playerName}/>
             <Row label="Email"          value={user.email ?? '—'}/>
-            <Row label="Firebase UID"   value={user.uid.slice(0,16) + '…'}/>
             <Row label="Account Created" value={createdDate}/>
             <Row label="Last Login"     value={lastLogin}/>
-          </Section>
-
-          <Section title="Streak">
             <Row label="🔥 Daily Streak" value={`${stats.dailyRewardStreak} days`}/>
-            <Row label="📅 Last Claim"   value={stats.lastDailyRewardClaim
-              ? new Date(stats.lastDailyRewardClaim).toLocaleDateString('en-IN', { day:'2-digit', month:'short' })
-              : 'Never'}/>
           </Section>
 
           {/* Account Actions */}

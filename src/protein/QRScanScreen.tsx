@@ -9,7 +9,7 @@
  * Flow:
  *   idle → camera open → scanning → QR detected →
  *   validateEggForProtein (read-only Firestore) →
- *   logEggScan (writes protein_logs + daily_stats + streak + rewards) →
+ *   logEggScan (writes protein_logs + daily_stats + streak) →
  *   success screen
  */
 
@@ -19,10 +19,10 @@ import type { User } from 'firebase/auth';
 import { validateEggForProtein } from '../services/qr/qrService';
 import {
   logEggScan, getRecentEntries, getTodayStats, getTrackerSettings,
-  PROTEIN_PER_EGG, COINS_PER_EGG, XP_PER_EGG,
+  PROTEIN_PER_EGG,
   type ProteinLogEntry, type DailyStats, type TrackerSettings,
 } from '../services/protein/proteinTrackerService';
-import { CameraIcon, EggIcon, CheckCircleIcon, AlertIcon, ZapIcon } from './Icons';
+import { CameraIcon, EggIcon, CheckCircleIcon, AlertIcon } from './Icons';
 
 type Phase = 'idle' | 'opening' | 'scanning' | 'processing' | 'success' | 'error';
 
@@ -33,8 +33,6 @@ interface QRScanScreenProps {
 
 interface ScanResult {
   protein: number;
-  xp: number;
-  coins: number;
   streak: number;
   todayEggs: number;
   todayProtein: number;
@@ -190,13 +188,10 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
 
       console.log('[QR VALIDATED] code accepted:', validation.eggCode);
 
-      // Step 2: Log egg scan — writes to protein_logs, daily_stats, streak, rewards
+      // Step 2: Log egg scan — writes to protein_logs, daily_stats, streak
       console.log('[PROTEIN ADDED] logging to Firebase...');
-      const { streak: streakInfo, xpEarned, coinsEarned } = await logEggScan(
-        user.uid,
-        validation.eggCode
-      );
-      console.log('[FIREBASE UPDATED] protein_logs + daily_stats + streak + rewards written');
+      const { streak: streakInfo } = await logEggScan(user.uid, validation.eggCode);
+      console.log('[FIREBASE UPDATED] protein_logs + daily_stats + streak written');
 
       // Step 3: Reload today's stats to get accurate post-scan totals
       const [ts, stg] = await Promise.all([
@@ -208,8 +203,6 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
 
       setResult({
         protein: PROTEIN_PER_EGG,
-        xp: xpEarned,
-        coins: coinsEarned,
         streak: streakInfo.currentStreak,
         todayEggs: ts?.totalEggs ?? 0,
         todayProtein: ts?.totalProtein ?? 0,
@@ -267,55 +260,52 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-      {/* ── Header with live progress ── */}
-      <div style={{
-        background: 'linear-gradient(135deg,#D71920,#B31217)',
-        padding: '18px 18px 16px', flexShrink: 0,
-        boxShadow: '0 4px 20px rgba(215,25,32,0.3)',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-          <div style={{ width: 42, height: 42, borderRadius: 13, background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <CameraIcon size={21} color="#fff" />
+      {/* ── Header — hidden during scanning so camera fills the full area ── */}
+      {phase !== 'scanning' && (
+        <div style={{
+          background: 'linear-gradient(135deg,#D71920,#B31217)',
+          padding: '18px 18px 16px', flexShrink: 0,
+          boxShadow: '0 4px 20px rgba(215,25,32,0.3)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+            <div style={{ width: 42, height: 42, borderRadius: 13, background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <CameraIcon size={21} color="#fff" />
+            </div>
+            <div style={{ flex: 1 }}>
+              <h2 style={{ fontSize: 16, fontWeight: 900, color: '#fff', margin: 0 }}>Scan SKM Egg</h2>
+              <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.65)', margin: 0, marginTop: 1 }}>
+                +{PROTEIN_PER_EGG}g protein per egg scan
+              </p>
+            </div>
           </div>
-          <div style={{ flex: 1 }}>
-            <h2 style={{ fontSize: 16, fontWeight: 900, color: '#fff', margin: 0 }}>Scan SKM Egg</h2>
-            <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.65)', margin: 0, marginTop: 1 }}>
-              +{PROTEIN_PER_EGG}g protein  +{XP_PER_EGG} XP  +{COINS_PER_EGG} coins per scan
-            </p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.75)', fontWeight: 700 }}>
+              Today: {eggs} egg{eggs !== 1 ? 's' : ''} scanned
+            </span>
+            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.75)', fontWeight: 700 }}>
+              {consumed}g / {goal}g
+            </span>
           </div>
+          <div style={{ height: 6, background: 'rgba(255,255,255,0.25)', borderRadius: 3, overflow: 'hidden' }}>
+            <div style={{
+              height: '100%', width: `${pct}%`,
+              background: pct >= 100 ? '#4ade80' : 'rgba(255,255,255,0.9)',
+              borderRadius: 3, transition: 'width 600ms ease',
+            }} />
+          </div>
+          <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.65)', margin: '4px 0 0', fontWeight: 600 }}>
+            {pct >= 100
+              ? 'Daily goal reached! Great work.'
+              : `${eggsToGoal} more egg${eggsToGoal !== 1 ? 's' : ''} (${remaining}g) to reach today's goal`}
+          </p>
         </div>
+      )}
 
-        {/* Live progress */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.75)', fontWeight: 700 }}>
-            Today: {eggs} egg{eggs !== 1 ? 's' : ''} scanned
-          </span>
-          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.75)', fontWeight: 700 }}>
-            {consumed}g / {goal}g
-          </span>
-        </div>
-        <div style={{ height: 6, background: 'rgba(255,255,255,0.25)', borderRadius: 3, overflow: 'hidden' }}>
-          <div style={{
-            height: '100%', width: `${pct}%`,
-            background: pct >= 100 ? '#4ade80' : 'rgba(255,255,255,0.9)',
-            borderRadius: 3, transition: 'width 600ms ease',
-          }} />
-        </div>
-        <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.65)', margin: '4px 0 0', fontWeight: 600 }}>
-          {pct >= 100
-            ? 'Goal reached! Keep going for bonus XP.'
-            : `${eggsToGoal} more egg${eggsToGoal !== 1 ? 's' : ''} (${remaining}g) to reach today's goal`}
-        </p>
-      </div>
-
-      {/* ── Screen content ── */}
-      <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 90 }}>
-
-        {/* IDLE */}
-        {phase === 'idle' && (
+      {/* ── IDLE ── */}
+      {phase === 'idle' && (
+        <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 90 }}>
           <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-            {/* Main scan card */}
             <div style={{ background: '#fff', borderRadius: 22, padding: 22, boxShadow: '0 4px 20px rgba(0,0,0,0.08)', textAlign: 'center' }}>
               <div style={{ width: 72, height: 72, borderRadius: 20, background: '#FCE8E8', margin: '0 auto 14px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <CameraIcon size={32} color="#D71920" />
@@ -324,29 +314,22 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
               <p style={{ fontSize: 12, color: '#666', margin: '0 0 18px', lineHeight: 1.6 }}>
                 Point your camera at the QR code on any SKM Egg package to log your protein and earn rewards.
               </p>
-
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 18 }}>
                 {[
-                  { label: '+1 Egg logged',        bg: '#FCE8E8', color: '#D71920' },
-                  { label: `+${XP_PER_EGG} XP earned`,      bg: '#FEF3C7', color: '#D97706' },
-                  { label: `+${PROTEIN_PER_EGG}g protein`,   bg: '#F0FDF4', color: '#16A34A' },
-                  { label: `+${COINS_PER_EGG} coins`,        bg: '#F5F3FF', color: '#7C3AED' },
+                  { label: '+1 Egg logged',                bg: '#FCE8E8', color: '#D71920' },
+                  { label: `+${PROTEIN_PER_EGG}g protein`, bg: '#F0FDF4', color: '#16A34A' },
                 ].map(b => (
-                  <div key={b.label} style={{ background: b.bg, borderRadius: 12, padding: '10px 8px', textAlign: 'center' }}>
+                  <div key={b.label} style={{ background: b.bg, borderRadius: 12, padding: '10px 8px' }}>
                     <span style={{ fontSize: 12, fontWeight: 800, color: b.color }}>{b.label}</span>
                   </div>
                 ))}
               </div>
-
-              <button
-                onClick={openCamera}
-                style={{
-                  width: '100%', padding: '15px 0', borderRadius: 18, border: 'none', cursor: 'pointer',
-                  background: 'linear-gradient(135deg,#D71920,#B31217)',
-                  color: '#fff', fontWeight: 900, fontSize: 15, letterSpacing: 0.5,
-                  boxShadow: '0 6px 20px rgba(215,25,32,0.4)',
-                }}
-              >
+              <button onClick={openCamera} style={{
+                width: '100%', padding: '15px 0', borderRadius: 18, border: 'none', cursor: 'pointer',
+                background: 'linear-gradient(135deg,#D71920,#B31217)',
+                color: '#fff', fontWeight: 900, fontSize: 15, letterSpacing: 0.5,
+                boxShadow: '0 6px 20px rgba(215,25,32,0.4)',
+              }}>
                 Open Camera
               </button>
             </div>
@@ -359,7 +342,6 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
                   {loadingHistory ? '...' : `${scanHistory.length} egg${scanHistory.length !== 1 ? 's' : ''}`}
                 </span>
               </div>
-
               {loadingHistory ? (
                 <div style={{ display: 'flex', justifyContent: 'center', padding: '16px 0' }}>
                   <div style={{ width: 24, height: 24, borderRadius: '50%', border: '2.5px solid #FCE8E8', borderTopColor: '#D71920', animation: 'spin 0.8s linear infinite' }} />
@@ -399,7 +381,7 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
                         </div>
                         <div style={{ textAlign: 'right' }}>
                           <p style={{ fontSize: 12, fontWeight: 900, color: '#D71920', margin: 0 }}>+{entry.protein}g</p>
-                          <p style={{ fontSize: 9, color: '#bbb', margin: 0 }}>+{XP_PER_EGG} XP</p>
+                          <p style={{ fontSize: 9, color: '#bbb', margin: 0 }}>{entry.calories} kcal</p>
                         </div>
                       </div>
                     );
@@ -423,7 +405,7 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
             {/* How it works */}
             <div style={{ background: '#fff', borderRadius: 20, padding: 18, boxShadow: '0 2px 10px rgba(0,0,0,0.06)' }}>
               <p style={{ fontSize: 11, fontWeight: 800, color: '#999', textTransform: 'uppercase', letterSpacing: 1, margin: '0 0 12px' }}>How It Works</p>
-              {['Purchase any SKM Egg product', 'Find the QR code on the packaging', 'Tap "Open Camera" and scan the code', 'Protein and rewards are added instantly'].map((step, i) => (
+              {['Purchase any SKM Egg product', 'Find the QR code on the packaging', 'Tap "Open Camera" and scan the code', 'Protein is logged instantly to your daily goal'].map((step, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: i < 3 ? 10 : 0 }}>
                   <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#D71920', color: '#fff', fontSize: 11, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{i + 1}</div>
                   <p style={{ fontSize: 12, color: '#1A1A1A', margin: 0, paddingTop: 2, lineHeight: 1.4 }}>{step}</p>
@@ -431,67 +413,103 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
               ))}
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* OPENING CAMERA */}
-        {phase === 'opening' && (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32, flexDirection: 'column', gap: 16 }}>
-            <div style={{ width: 36, height: 36, borderRadius: '50%', border: '3px solid #FCE8E8', borderTopColor: '#D71920', animation: 'spin 0.8s linear infinite' }} />
-            <p style={{ fontSize: 14, color: '#666', fontWeight: 600, margin: 0 }}>Opening camera...</p>
-            {/* Hidden mount point for scanner */}
-            <div id={QR_ELEMENT_ID} style={{ display: 'none' }} />
-          </div>
-        )}
+      {/* ── OPENING ── */}
+      {phase === 'opening' && (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16 }}>
+          <div style={{ width: 36, height: 36, borderRadius: '50%', border: '3px solid #FCE8E8', borderTopColor: '#D71920', animation: 'spin 0.8s linear infinite' }} />
+          <p style={{ fontSize: 14, color: '#666', fontWeight: 600, margin: 0 }}>Opening camera...</p>
+          <div id={QR_ELEMENT_ID} style={{ display: 'none' }} />
+        </div>
+      )}
 
-        {/* SCANNING */}
-        {phase === 'scanning' && (
-          <div style={{ padding: 14 }}>
-            <div style={{ background: '#fff', borderRadius: 22, overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-              <div style={{ position: 'relative' }}>
-                <div id={QR_ELEMENT_ID} style={{ width: '100%' }} />
-                {/* Corner frame overlay */}
-                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-                  <div style={{ position: 'relative', width: 200, height: 200 }}>
-                    {[
-                      { top: 0, left: 0,    borderTop: '3px solid #D71920', borderLeft: '3px solid #D71920',    borderTopLeftRadius: 6 },
-                      { top: 0, right: 0,   borderTop: '3px solid #D71920', borderRight: '3px solid #D71920',   borderTopRightRadius: 6 },
-                      { bottom: 0, left: 0, borderBottom: '3px solid #D71920', borderLeft: '3px solid #D71920', borderBottomLeftRadius: 6 },
-                      { bottom: 0, right: 0, borderBottom: '3px solid #D71920', borderRight: '3px solid #D71920', borderBottomRightRadius: 6 },
-                    ].map((s, i) => (
-                      <div key={i} style={{ position: 'absolute', width: 22, height: 22, ...s }} />
-                    ))}
-                    <div style={{ position: 'absolute', left: 0, right: 0, height: 2, background: 'linear-gradient(90deg,transparent,#D71920,transparent)', animation: 'scanline 2s ease-in-out infinite' }} />
-                  </div>
-                </div>
+      {/* ── SCANNING — full-screen camera ── */}
+      {phase === 'scanning' && (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#000' }}>
+
+          {/* Camera viewport — position:relative so all overlays anchor here */}
+          <div style={{ position: 'relative', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+
+            {/* html5-qrcode root — pinned to fill entire viewport via CSS below */}
+            <div id={QR_ELEMENT_ID} style={{ position: 'absolute', inset: 0 }} />
+
+            {/* Dark vignette: 4 gradient strips that darken edges, leaving centre clear */}
+            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2 }}>
+              <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, rgba(0,0,0,0.5) 0%, transparent 22%, transparent 78%, rgba(0,0,0,0.5) 100%)' }} />
+              <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to right, rgba(0,0,0,0.35) 0%, transparent 18%, transparent 82%, rgba(0,0,0,0.35) 100%)' }} />
+            </div>
+
+            {/* Scan frame — always centred, always on top */}
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 3 }}>
+              <div style={{ position: 'relative', width: 240, height: 240 }}>
+                {/* White outer brackets */}
+                <div style={{ position: 'absolute', top: 0,    left: 0,  width: 44, height: 44, borderTop: '3.5px solid #fff', borderLeft: '3.5px solid #fff',   borderTopLeftRadius: 12 }} />
+                <div style={{ position: 'absolute', top: 0,    right: 0, width: 44, height: 44, borderTop: '3.5px solid #fff', borderRight: '3.5px solid #fff',  borderTopRightRadius: 12 }} />
+                <div style={{ position: 'absolute', bottom: 0, left: 0,  width: 44, height: 44, borderBottom: '3.5px solid #fff', borderLeft: '3.5px solid #fff',  borderBottomLeftRadius: 12 }} />
+                <div style={{ position: 'absolute', bottom: 0, right: 0, width: 44, height: 44, borderBottom: '3.5px solid #fff', borderRight: '3.5px solid #fff', borderBottomRightRadius: 12 }} />
+                {/* Red inner accent corners */}
+                <div style={{ position: 'absolute', top: 0,    left: 0,  width: 22, height: 22, borderTop: '3.5px solid #D71920', borderLeft: '3.5px solid #D71920',   borderTopLeftRadius: 12 }} />
+                <div style={{ position: 'absolute', top: 0,    right: 0, width: 22, height: 22, borderTop: '3.5px solid #D71920', borderRight: '3.5px solid #D71920',  borderTopRightRadius: 12 }} />
+                <div style={{ position: 'absolute', bottom: 0, left: 0,  width: 22, height: 22, borderBottom: '3.5px solid #D71920', borderLeft: '3.5px solid #D71920',  borderBottomLeftRadius: 12 }} />
+                <div style={{ position: 'absolute', bottom: 0, right: 0, width: 22, height: 22, borderBottom: '3.5px solid #D71920', borderRight: '3.5px solid #D71920', borderBottomRightRadius: 12 }} />
+                {/* Animated scan line */}
+                <div style={{
+                  position: 'absolute', left: 12, right: 12, height: 2,
+                  background: 'linear-gradient(90deg,transparent,#D71920,#FF6666,#D71920,transparent)',
+                  boxShadow: '0 0 12px rgba(215,25,32,0.95)',
+                  animation: 'scanline 2s ease-in-out infinite',
+                }} />
               </div>
-              <div style={{ padding: '14px 18px', textAlign: 'center' }}>
-                <p style={{ fontSize: 13, fontWeight: 600, color: '#1A1A1A', margin: '0 0 12px' }}>
+            </div>
+
+            {/* Instruction pill */}
+            <div style={{
+              position: 'absolute', bottom: 22, left: 0, right: 0,
+              display: 'flex', justifyContent: 'center', pointerEvents: 'none', zIndex: 3,
+            }}>
+              <div style={{
+                background: 'rgba(0,0,0,0.62)', borderRadius: 50, padding: '9px 24px',
+                backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
+              }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: '#fff', letterSpacing: 0.2 }}>
                   Align QR code in the frame{'.'.repeat(dots)}
-                </p>
-                <button onClick={reset} style={{ width: '100%', padding: '12px 0', borderRadius: 14, border: '1.5px solid #E8E8E8', background: '#F5F5F5', color: '#666', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
-                  Cancel
-                </button>
+                </span>
               </div>
             </div>
           </div>
-        )}
 
-        {/* PROCESSING */}
-        {phase === 'processing' && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 40, gap: 16 }}>
-            <div style={{ width: 56, height: 56, borderRadius: '50%', border: '4px solid #FCE8E8', borderTopColor: '#D71920', animation: 'spin 0.8s linear infinite' }} />
-            <div style={{ textAlign: 'center' }}>
-              <p style={{ fontSize: 16, fontWeight: 800, color: '#1A1A1A', margin: '0 0 4px' }}>Logging Egg...</p>
-              <p style={{ fontSize: 12, color: '#bbb', margin: 0 }}>Saving protein, XP, and rewards</p>
-            </div>
+          {/* Cancel bar */}
+          <div style={{ flexShrink: 0, background: '#111', padding: '12px 20px 18px', display: 'flex', justifyContent: 'center' }}>
+            <button onClick={reset} style={{
+              width: '100%', maxWidth: 300, padding: '14px 0', borderRadius: 14,
+              border: '1.5px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.1)',
+              color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer',
+              letterSpacing: 0.3,
+            }}>
+              Cancel
+            </button>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* SUCCESS */}
-        {phase === 'success' && result && (
+      {/* ── PROCESSING ── */}
+      {phase === 'processing' && (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
+          <div style={{ width: 56, height: 56, borderRadius: '50%', border: '4px solid #FCE8E8', borderTopColor: '#D71920', animation: 'spin 0.8s linear infinite' }} />
+          <div style={{ textAlign: 'center' }}>
+            <p style={{ fontSize: 16, fontWeight: 800, color: '#1A1A1A', margin: '0 0 4px' }}>Logging Egg...</p>
+            <p style={{ fontSize: 12, color: '#bbb', margin: 0 }}>Saving protein intake...</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── SUCCESS ── */}
+      {phase === 'success' && result && (
+        <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 90 }}>
           <div style={{ padding: 14 }}>
             <div style={{ background: '#fff', borderRadius: 22, padding: 22, boxShadow: '0 4px 24px rgba(0,0,0,0.1)', textAlign: 'center' }}>
-
               <div style={{
                 width: 76, height: 76, borderRadius: '50%', margin: '0 auto 14px',
                 background: 'linear-gradient(135deg,#D71920,#B31217)',
@@ -501,25 +519,16 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
               }}>
                 <CheckCircleIcon size={38} color="#fff" />
               </div>
-
               <h3 style={{ fontSize: 21, fontWeight: 900, color: '#1A1A1A', margin: '0 0 4px' }}>Egg Logged!</h3>
-              <p style={{ fontSize: 12, color: '#666', margin: '0 0 18px' }}>Protein intake recorded and rewards added.</p>
-
-              {/* Reward cards */}
+              <p style={{ fontSize: 12, color: '#666', margin: '0 0 18px' }}>Protein intake recorded successfully.</p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 14 }}>
-                <RBox label="Protein Added"  value={`+${result.protein}g`} color="#D71920" bg="#FCE8E8" />
-                <RBox label="XP Earned"      value={`+${result.xp} XP`}   color="#D97706" bg="#FEF3C7" />
-                <RBox label="Coins Earned"   value={`+${result.coins}`}   color="#7C3AED" bg="#F5F3FF" />
-                <RBox label="Day Streak"     value={`${result.streak}d`}  color="#16A34A" bg="#F0FDF4" />
+                <RBox label="Protein Added" value={`+${result.protein}g`} color="#D71920" bg="#FCE8E8" />
+                <RBox label="Day Streak"    value={`${result.streak}d`}  color="#22C55E" bg="#F0FDF4" />
               </div>
-
-              {/* Today's progress */}
               <div style={{ background: '#F8F8F8', borderRadius: 14, padding: '12px 14px', marginBottom: 14, textAlign: 'left' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                   <span style={{ fontSize: 12, fontWeight: 800, color: '#1A1A1A' }}>Today's Progress</span>
-                  <span style={{ fontSize: 12, fontWeight: 900, color: '#D71920' }}>
-                    {result.todayProtein}g / {result.goal}g
-                  </span>
+                  <span style={{ fontSize: 12, fontWeight: 900, color: '#D71920' }}>{result.todayProtein}g / {result.goal}g</span>
                 </div>
                 <div style={{ height: 8, background: '#E8E8E8', borderRadius: 4, overflow: 'hidden', marginBottom: 5 }}>
                   <div style={{
@@ -530,46 +539,38 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
                   }} />
                 </div>
                 {result.todayProtein >= result.goal ? (
-                  <p style={{ fontSize: 11, color: '#16A34A', margin: 0, fontWeight: 700 }}>
-                    Daily goal reached! Bonus XP unlocked.
-                  </p>
+                  <p style={{ fontSize: 11, color: '#16A34A', margin: 0, fontWeight: 700 }}>Daily goal reached! Great work.</p>
                 ) : (
                   <p style={{ fontSize: 11, color: '#666', margin: 0 }}>
                     {Math.max(0, Math.ceil((result.goal - result.todayProtein) / PROTEIN_PER_EGG))} more egg{Math.ceil((result.goal - result.todayProtein) / PROTEIN_PER_EGG) !== 1 ? 's' : ''} to reach today's goal
                   </p>
                 )}
               </div>
-
-              {/* Eggs today */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 18 }}>
                 <EggIcon size={15} color="#D71920" />
                 <span style={{ fontSize: 13, fontWeight: 800, color: '#1A1A1A' }}>
                   {result.todayEggs} egg{result.todayEggs !== 1 ? 's' : ''} scanned today
                 </span>
               </div>
-
               <div style={{ display: 'flex', gap: 10 }}>
                 <button onClick={scanAnother} style={{
                   flex: 1, padding: '13px 0', borderRadius: 15, border: 'none', cursor: 'pointer',
-                  background: 'linear-gradient(135deg,#D71920,#B31217)',
-                  color: '#fff', fontWeight: 900, fontSize: 13,
+                  background: 'linear-gradient(135deg,#D71920,#B31217)', color: '#fff', fontWeight: 900, fontSize: 13,
                   boxShadow: '0 4px 16px rgba(215,25,32,0.4)',
-                }}>
-                  Scan Another
-                </button>
+                }}>Scan Another</button>
                 <button onClick={onScanSuccess} style={{
                   flex: 1, padding: '13px 0', borderRadius: 15, border: '1.5px solid #E8E8E8', cursor: 'pointer',
                   background: '#F5F5F5', color: '#666', fontWeight: 700, fontSize: 13,
-                }}>
-                  Done
-                </button>
+                }}>Done</button>
               </div>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* ERROR */}
-        {phase === 'error' && (
+      {/* ── ERROR ── */}
+      {phase === 'error' && (
+        <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 90 }}>
           <div style={{ padding: 14 }}>
             <div style={{ background: '#fff', borderRadius: 22, padding: 26, boxShadow: '0 4px 20px rgba(0,0,0,0.08)', textAlign: 'center' }}>
               <div style={{ width: 76, height: 76, borderRadius: '50%', margin: '0 auto 16px', background: '#FCE8E8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -582,22 +583,74 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
                 background: 'linear-gradient(135deg,#D71920,#B31217)', color: '#fff',
                 fontWeight: 900, fontSize: 13, letterSpacing: 0.5,
                 boxShadow: '0 6px 18px rgba(215,25,32,0.4)',
-              }}>
-                Try Again
-              </button>
+              }}>Try Again</button>
             </div>
           </div>
-        )}
-
-      </div>
-
-      {/* Hidden QR reader div — always present so html5-qrcode can always find it */}
-      {(phase === 'opening') && <div id={QR_ELEMENT_ID} style={{ display: 'none' }} />}
+        </div>
+      )}
 
       <style>{`
         @keyframes spin     { to { transform: rotate(360deg); } }
-        @keyframes scanline { 0% { top:0%; } 50% { top:calc(100% - 2px); } 100% { top:0%; } }
-        @keyframes popIn    { from { transform:scale(0.5); opacity:0; } to { transform:scale(1); opacity:1; } }
+        @keyframes scanline { 0% { top: 0%; } 50% { top: calc(100% - 2px); } 100% { top: 0%; } }
+        @keyframes popIn    { from { transform: scale(0.5); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+        /* ── html5-qrcode override ─────────────────────────────
+           The library injects deeply nested divs with fixed inline
+           pixel widths. We override every level so the video
+           fills our container via object-fit: cover.              */
+
+        /* Root mount — already position:absolute via inline style */
+        #${QR_ELEMENT_ID} {
+          overflow: hidden !important;
+        }
+
+        /* Every descendant div — kill fixed sizes, kill borders */
+        #${QR_ELEMENT_ID} div {
+          width: 100% !important;
+          height: 100% !important;
+          max-width: none !important;
+          max-height: none !important;
+          min-width: 0 !important;
+          min-height: 0 !important;
+          padding: 0 !important;
+          margin: 0 !important;
+          border: none !important;
+          border-radius: 0 !important;
+          background: transparent !important;
+          box-shadow: none !important;
+          position: static !important;
+        }
+
+        /* Video: absolute fill so it covers the entire viewport */
+        #${QR_ELEMENT_ID} video {
+          position: absolute !important;
+          inset: 0 !important;
+          width: 100% !important;
+          height: 100% !important;
+          max-width: none !important;
+          max-height: none !important;
+          object-fit: cover !important;
+          object-position: center !important;
+          display: block !important;
+          border: none !important;
+          background: #000 !important;
+          z-index: 1 !important;
+        }
+
+        /* Hide all non-video chrome html5-qrcode injects */
+        #${QR_ELEMENT_ID} img,
+        #${QR_ELEMENT_ID} button,
+        #${QR_ELEMENT_ID} select,
+        #${QR_ELEMENT_ID} span,
+        #${QR_ELEMENT_ID} p,
+        #${QR_ELEMENT_ID} #qr-shaded-region,
+        #${QR_ELEMENT_ID} [id*="anchor"],
+        #${QR_ELEMENT_ID} [id*="header"],
+        #${QR_ELEMENT_ID} [id*="status"],
+        #${QR_ELEMENT_ID} [id*="torch"],
+        #${QR_ELEMENT_ID} [id*="dashboard"] {
+          display: none !important;
+        }
       `}</style>
     </div>
   );

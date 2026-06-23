@@ -148,6 +148,12 @@ export const ChevronRightIcon = ({ size = 20, color = 'currentColor', ...p }: Ic
   </svg>
 );
 
+export const ChevronLeftIcon = ({ size = 20, color = 'currentColor', ...p }: IconProps) => (
+  <svg {...base(size, color, p)}>
+    <polyline points="15 18 9 12 15 6"/>
+  </svg>
+);
+
 export const ChevronDownIcon = ({ size = 20, color = 'currentColor', ...p }: IconProps) => (
   <svg {...base(size, color, p)}>
     <polyline points="6 9 12 15 18 9"/>

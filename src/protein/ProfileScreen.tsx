@@ -4,15 +4,15 @@ import { doc, getDoc, updateDoc, deleteDoc, serverTimestamp, collection, getDocs
 import { updateProfile, deleteUser, reauthenticateWithPopup, GoogleAuthProvider, reauthenticateWithPhoneNumber, RecaptchaVerifier } from 'firebase/auth';
 import { db, auth } from '../services/firebase/firebase';
 import {
-  getTrackerSettings, saveTrackerSettings, getStreakInfo, getRewardWallet, calcLevel, DEFAULT_DAILY_GOAL,
-  type StreakInfo, type TrackerSettings, type RewardWallet,
+  getTrackerSettings, saveTrackerSettings, getStreakInfo, DEFAULT_DAILY_GOAL,
+  type StreakInfo, type TrackerSettings,
 } from '../services/protein/proteinTrackerService';
 import {
-  UserIcon, EditIcon, LogoutIcon, TrashIcon, BellIcon, ShieldIcon, TargetIcon,
-  FlameIcon, ZapIcon, CoinIcon, EggIcon, SettingsIcon, ChevronRightIcon, CheckIcon,
+  UserIcon, EditIcon, LogoutIcon, TrashIcon, BellIcon, TargetIcon,
+  FlameIcon, EggIcon, SettingsIcon, ChevronRightIcon, CheckIcon,
 } from './Icons';
 
-type View = 'profile' | 'edit_profile' | 'edit_goal' | 'notifications' | 'privacy' | 'delete_confirm';
+type View = 'profile' | 'edit_profile' | 'edit_goal' | 'delete_confirm';
 
 interface ProfileScreenProps {
   user: User;
@@ -35,30 +35,27 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
   const [view,     setView]     = useState<View>('profile');
   const [streak,   setStreak]   = useState<StreakInfo>({ currentStreak: 0, bestStreak: 0, lastActiveDate: '' });
   const [settings, setSettings] = useState<TrackerSettings | null>(null);
-  const [wallet,   setWallet]   = useState<RewardWallet | null>(null);
   const [userDoc,  setUserDoc]  = useState<Record<string, unknown>>({});
   const [loading,  setLoading]  = useState(true);
 
-  // Edit states
-  const [profile,      setProfile]      = useState<ExtendedProfile>({ playerName: '', age: '', gender: '', height: '', weight: '', goalWeight: '', phone: '' });
-  const [profileErr,   setProfileErr]   = useState('');
-  const [profileSaving,setProfileSaving]= useState(false);
-  const [newGoal,      setNewGoal]      = useState('');
-  const [goalErr,      setGoalErr]      = useState('');
-  const [goalSaving,   setGoalSaving]   = useState(false);
-  const [delLoading,   setDelLoading]   = useState(false);
-  const [delErr,       setDelErr]       = useState('');
+  const [profile,       setProfile]       = useState<ExtendedProfile>({ playerName: '', age: '', gender: '', height: '', weight: '', goalWeight: '', phone: '' });
+  const [profileErr,    setProfileErr]    = useState('');
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [newGoal,       setNewGoal]       = useState('');
+  const [goalErr,       setGoalErr]       = useState('');
+  const [goalSaving,    setGoalSaving]    = useState(false);
+  const [delLoading,    setDelLoading]    = useState(false);
+  const [delErr,        setDelErr]        = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [si, stg, wl, snap] = await Promise.all([
+      const [si, stg, snap] = await Promise.all([
         getStreakInfo(user.uid),
         getTrackerSettings(user.uid),
-        getRewardWallet(user.uid),
         getDoc(doc(db, 'users', user.uid)),
       ]);
-      setStreak(si); setSettings(stg); setWallet(wl);
+      setStreak(si); setSettings(stg);
       if (snap.exists()) setUserDoc(snap.data());
     } catch (e) { console.error('[Profile]', e); }
     finally { setLoading(false); }
@@ -67,12 +64,10 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
   useEffect(() => { load(); }, [load]);
 
   const playerName = user.displayName ?? 'Champion';
-  const levelInfo  = calcLevel(wallet?.totalXP ?? 0);
   const joinedDate = user.metadata.creationTime
     ? new Date(user.metadata.creationTime).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
     : '—';
 
-  // ── Save profile ───────────────────────────────────────────
   const handleSaveProfile = async () => {
     const name = profile.playerName.trim();
     if (name.length < 3)  { setProfileErr('Name must be at least 3 characters.'); return; }
@@ -82,35 +77,30 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
       await updateProfile(auth.currentUser!, { displayName: name });
       await updateDoc(doc(db, 'users', user.uid), {
         playerName: name,
-        ...(profile.age        ? { age:        parseInt(profile.age)        } : {}),
-        ...(profile.gender     ? { gender:      profile.gender               } : {}),
-        ...(profile.height     ? { height:      parseFloat(profile.height)   } : {}),
-        ...(profile.weight     ? { weight:      parseFloat(profile.weight)   } : {}),
-        ...(profile.goalWeight ? { goalWeight:  parseFloat(profile.goalWeight) } : {}),
-        ...(profile.phone      ? { phone:       profile.phone.trim()          } : {}),
+        ...(profile.age        ? { age:       parseInt(profile.age)          } : {}),
+        ...(profile.gender     ? { gender:    profile.gender                  } : {}),
+        ...(profile.height     ? { height:    parseFloat(profile.height)      } : {}),
+        ...(profile.weight     ? { weight:    parseFloat(profile.weight)      } : {}),
+        ...(profile.goalWeight ? { goalWeight:parseFloat(profile.goalWeight)  } : {}),
+        ...(profile.phone      ? { phone:     profile.phone.trim()            } : {}),
         updatedAt: serverTimestamp(),
       });
-      await load();
-      setView('profile');
+      await load(); setView('profile');
     } catch { setProfileErr('Failed to update. Please try again.'); }
-    finally   { setProfileSaving(false); }
+    finally { setProfileSaving(false); }
   };
 
-  // ── Save goal ──────────────────────────────────────────────
   const handleSaveGoal = async () => {
     const g = parseInt(newGoal, 10);
     if (isNaN(g) || g < 10 || g > 300) { setGoalErr('Enter a value between 10 and 300.'); return; }
     setGoalSaving(true); setGoalErr('');
     try {
       await saveTrackerSettings(user.uid, { dailyGoal: g });
-      await load();
-      setView('profile');
-      setNewGoal('');
+      await load(); setView('profile'); setNewGoal('');
     } catch { setGoalErr('Failed to save. Try again.'); }
-    finally   { setGoalSaving(false); }
+    finally { setGoalSaving(false); }
   };
 
-  // ── Toggle reminder ────────────────────────────────────────
   const handleToggleReminder = async () => {
     if (!settings) return;
     const next = !settings.reminderEnabled;
@@ -118,17 +108,11 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
     setSettings(s => s ? { ...s, reminderEnabled: next } : s);
   };
 
-  // ── Delete account ─────────────────────────────────────────
   const handleDelete = async () => {
     setDelLoading(true); setDelErr('');
     const currentUser = auth.currentUser;
-    if (!currentUser) {
-      setDelErr('No authenticated user. Please log in again.');
-      setDelLoading(false);
-      return;
-    }
+    if (!currentUser) { setDelErr('No authenticated user. Please log in again.'); setDelLoading(false); return; }
     try {
-      // Re-authenticate first so Firebase accepts deleteUser
       const provider = currentUser.providerData[0]?.providerId ?? '';
       if (provider === 'google.com') {
         await reauthenticateWithPopup(currentUser, new GoogleAuthProvider());
@@ -140,8 +124,7 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
         try {
           const verifier = new RecaptchaVerifier(auth, tempDiv.id, { size: 'invisible' });
           const confirmResult = await reauthenticateWithPhoneNumber(currentUser, currentUser.phoneNumber!, verifier);
-          verifier.clear();
-          document.body.removeChild(tempDiv);
+          verifier.clear(); document.body.removeChild(tempDiv);
           const code = window.prompt('Enter the OTP sent to ' + currentUser.phoneNumber + ' to confirm deletion:');
           if (!code) { setDelErr('OTP is required to delete your account.'); setDelLoading(false); return; }
           await confirmResult.confirm(code.trim());
@@ -151,25 +134,19 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
         }
       }
 
-      // Delete all Firestore data
       const uid = currentUser.uid;
-      const topLevel = ['users', 'settings', 'tracker_settings', 'tracker_rewards',
-        'login_streaks', 'tracker_leaderboard', 'leaderboard', 'streak_shields'];
+      const topLevel = ['users', 'settings', 'tracker_settings', 'login_streaks'];
       await Promise.allSettled(topLevel.map(p => deleteDoc(doc(db, p, uid))));
 
       const subCols: [string, string][] = [
-        ['missions','daily'], ['achievements','list'],
-        ['tracker_achievements','list'], ['tracker_challenges','list'],
-        ['protein_logs','entries'], ['daily_stats','days'],
-        ['daily_missions','days'], ['weekly_missions','weeks'],
-        ['login_streaks','claims'], ['game_rewards','unlocked'],
+        ['protein_logs', 'entries'],
+        ['daily_stats', 'days'],
       ];
       await Promise.allSettled(subCols.map(async ([col, sub]) => {
         const snap = await getDocs(collection(db, col, uid, sub));
         return Promise.allSettled(snap.docs.map(d => deleteDoc(d.ref)));
       }));
 
-      // Delete Firebase Auth account
       await deleteUser(currentUser);
       onDataDeleted();
     } catch (err: unknown) {
@@ -195,7 +172,7 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
     </div>
   );
 
-  // ── DELETE CONFIRM ────────────────────────────────────────
+  // ── DELETE CONFIRM ─────────────────────────────────────────
   if (view === 'delete_confirm') return (
     <div style={{ flex: 1, overflowY: 'auto', padding: 16, paddingBottom: 90 }}>
       <div style={{ background: '#fff', borderRadius: 24, padding: 24, boxShadow: '0 4px 20px rgba(0,0,0,0.1)', textAlign: 'center' }}>
@@ -205,7 +182,7 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
         <h3 style={{ fontSize: 18, fontWeight: 900, color: '#1A1A1A', margin: '0 0 6px' }}>Delete Account?</h3>
         <p style={{ fontSize: 13, color: '#666', margin: '0 0 16px' }}>This action is permanent and cannot be undone.</p>
         <div style={{ textAlign: 'left', marginBottom: 18 }}>
-          {['Profile and Name','Protein Logs','Daily Statistics','Streaks and Achievements','Challenges Progress','Coins and XP'].map(item => (
+          {['Profile and Name', 'Protein Logs', 'Daily Statistics', 'Scan History'].map(item => (
             <div key={item} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
               <div style={{ width: 18, height: 18, borderRadius: '50%', background: '#FCE8E8', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 <span style={{ fontSize: 9, fontWeight: 900, color: '#D71920' }}>✕</span>
@@ -225,22 +202,22 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
     </div>
   );
 
-  // ── EDIT PROFILE ──────────────────────────────────────────
+  // ── EDIT PROFILE ───────────────────────────────────────────
   if (view === 'edit_profile') return (
     <div style={{ flex: 1, overflowY: 'auto', padding: 16, paddingBottom: 90 }}>
       <div style={{ background: '#fff', borderRadius: 24, padding: 20, boxShadow: '0 4px 20px rgba(0,0,0,0.08)' }}>
         <h3 style={{ fontSize: 15, fontWeight: 900, color: '#1A1A1A', margin: '0 0 16px' }}>Edit Profile</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <InputField label="Player Name *" value={profile.playerName} onChange={v => setProfile(p => ({ ...p, playerName: v }))} placeholder={playerName} />
-          <InputField label="Phone Number" value={profile.phone} onChange={v => setProfile(p => ({ ...p, phone: v }))} placeholder="+91 9999..." type="tel" />
+          <InputField label="Name *"       value={profile.playerName} onChange={v => setProfile(p => ({ ...p, playerName: v }))} placeholder={playerName} />
+          <InputField label="Phone"        value={profile.phone}      onChange={v => setProfile(p => ({ ...p, phone: v }))}       placeholder="+91 9999..." type="tel" />
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <InputField label="Age" value={profile.age} onChange={v => setProfile(p => ({ ...p, age: v }))} placeholder="Years" type="number" />
+            <InputField label="Age"   value={profile.age}    onChange={v => setProfile(p => ({ ...p, age: v }))}    placeholder="Years"  type="number" />
             <SelectField label="Gender" value={profile.gender} onChange={v => setProfile(p => ({ ...p, gender: v }))} options={['Male','Female','Other','Prefer not to say']} />
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
-            <InputField label="Height (cm)" value={profile.height} onChange={v => setProfile(p => ({ ...p, height: v }))} placeholder="170" type="number" />
-            <InputField label="Weight (kg)" value={profile.weight} onChange={v => setProfile(p => ({ ...p, weight: v }))} placeholder="70" type="number" />
-            <InputField label="Goal (kg)" value={profile.goalWeight} onChange={v => setProfile(p => ({ ...p, goalWeight: v }))} placeholder="65" type="number" />
+            <InputField label="Height (cm)" value={profile.height}     onChange={v => setProfile(p => ({ ...p, height: v }))}     placeholder="170" type="number" />
+            <InputField label="Weight (kg)" value={profile.weight}     onChange={v => setProfile(p => ({ ...p, weight: v }))}     placeholder="70"  type="number" />
+            <InputField label="Goal (kg)"   value={profile.goalWeight} onChange={v => setProfile(p => ({ ...p, goalWeight: v }))} placeholder="65"  type="number" />
           </div>
         </div>
         {profileErr && <p style={{ fontSize: 12, color: '#D71920', textAlign: 'center', margin: '10px 0 0' }}>{profileErr}</p>}
@@ -259,9 +236,9 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
     <div style={{ flex: 1, overflowY: 'auto', padding: 16, paddingBottom: 90 }}>
       <div style={{ background: '#fff', borderRadius: 24, padding: 20, boxShadow: '0 4px 20px rgba(0,0,0,0.08)' }}>
         <h3 style={{ fontSize: 15, fontWeight: 900, color: '#1A1A1A', margin: '0 0 4px' }}>Daily Protein Goal</h3>
-        <p style={{ fontSize: 12, color: '#999', margin: '0 0 16px' }}>Current goal: {settings?.dailyGoal ?? DEFAULT_DAILY_GOAL}g</p>
+        <p style={{ fontSize: 12, color: '#999', margin: '0 0 16px' }}>Current: {settings?.dailyGoal ?? DEFAULT_DAILY_GOAL}g</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 14 }}>
-          {[30,60,90,120].map(g => (
+          {[30, 60, 90, 120].map(g => (
             <button key={g} onClick={() => setNewGoal(String(g))} style={{
               padding: '10px 4px', borderRadius: 12, border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 13,
               background: newGoal === String(g) ? '#D71920' : '#F5F5F5',
@@ -284,7 +261,7 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
     </div>
   );
 
-  // ── MAIN PROFILE ──────────────────────────────────────────
+  // ── MAIN PROFILE ───────────────────────────────────────────
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Header */}
@@ -310,27 +287,21 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
       <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 90, marginTop: -16 }}>
         <div style={{ padding: '0 16px' }}>
 
-          {/* Stats card */}
+          {/* Health stats */}
           <div style={{ background: '#fff', borderRadius: 24, padding: 18, boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 14 }}>
-              <StatTile icon={<FlameIcon size={16} color="#D71920" />} value={streak.currentStreak} label="Streak" />
-              <StatTile icon={<ZapIcon size={16} color="#D71920" />}   value={wallet?.totalXP ?? 0}   label="Total XP" />
-              <StatTile icon={<EggIcon size={16} color="#D71920" />}   value={(userDoc.lifetimeConsumption as number) ?? 0} label="Eggs" />
-            </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
-              <StatTile icon={<CoinIcon size={16} color="#D97706" />}  value={wallet?.coins ?? 0} label="Coins" color="#D97706" />
-              <StatTile icon={<TargetIcon size={16} color="#22C55E" />} value={`Lv${levelInfo.level}`} label={levelInfo.title} color="#22C55E" small />
-              <StatTile icon={<FlameIcon size={16} color="#8B5CF6" />} value={streak.bestStreak}  label="Best Streak" color="#8B5CF6" />
+              <StatTile icon={<FlameIcon size={16} color="#D71920" />} value={streak.currentStreak}                            label="Streak"      />
+              <StatTile icon={<FlameIcon size={16} color="#8B5CF6" />} value={streak.bestStreak}                               label="Best Streak" color="#8B5CF6" />
+              <StatTile icon={<EggIcon   size={16} color="#D71920" />} value={(userDoc.lifetimeConsumption as number) ?? 0}    label="Total Eggs"  />
             </div>
           </div>
 
           {/* Account info */}
           <SectionCard title="Account" style={{ marginTop: 14 }}>
-            <InfoRow label="Player Name" value={playerName} />
-            <InfoRow label="Email"       value={user.email ?? '—'} />
-            <InfoRow label="Daily Goal"  value={`${settings?.dailyGoal ?? DEFAULT_DAILY_GOAL}g protein`} highlight />
-            <InfoRow label="Level"       value={`${levelInfo.level} — ${levelInfo.title}`} />
-            {(userDoc.age as number)    && <InfoRow label="Age"    value={`${userDoc.age} years`} />}
+            <InfoRow label="Name"       value={playerName} />
+            <InfoRow label="Email"      value={user.email ?? '—'} />
+            <InfoRow label="Daily Goal" value={`${settings?.dailyGoal ?? DEFAULT_DAILY_GOAL}g protein`} highlight />
+            {(userDoc.age    as number) && <InfoRow label="Age"    value={`${userDoc.age} years`} />}
             {(userDoc.gender as string) && <InfoRow label="Gender" value={userDoc.gender as string} />}
             {(userDoc.height as number) && <InfoRow label="Height" value={`${userDoc.height} cm`} />}
             {(userDoc.weight as number) && <InfoRow label="Weight" value={`${userDoc.weight} kg`} />}
@@ -338,12 +309,23 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
 
           {/* Actions */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
-            <ActionRow icon={<EditIcon size={18} color="#D71920" />}    label="Edit Profile"          onClick={() => { setProfile({ playerName, age: String(userDoc.age ?? ''), gender: String(userDoc.gender ?? ''), height: String(userDoc.height ?? ''), weight: String(userDoc.weight ?? ''), goalWeight: String(userDoc.goalWeight ?? ''), phone: String(userDoc.phone ?? '') }); setView('edit_profile'); }} />
-            <ActionRow icon={<TargetIcon size={18} color="#D71920" />}  label="Change Daily Goal"     onClick={() => { setNewGoal(String(settings?.dailyGoal ?? DEFAULT_DAILY_GOAL)); setView('edit_goal'); }} />
-            <ActionRow icon={<BellIcon size={18} color="#D71920" />}    label={`Reminders: ${settings?.reminderEnabled ? 'On' : 'Off'}`} onClick={handleToggleReminder} right={settings?.reminderEnabled ? <CheckIcon size={16} color="#22C55E" /> : null} />
-            <ActionRow icon={<SettingsIcon size={18} color="#666" />}   label="Back to Module Select" onClick={onBackToMenu} />
-            <ActionRow icon={<LogoutIcon size={18} color="#D71920" />}  label="Logout" onClick={onLogout} variant="outline" />
-            <ActionRow icon={<TrashIcon size={18} color="#D71920" />}   label="Delete Account" onClick={() => setView('delete_confirm')} variant="danger" />
+            <ActionRow icon={<EditIcon   size={18} color="#D71920" />} label="Edit Profile"      onClick={() => { setProfile({ playerName, age: String(userDoc.age ?? ''), gender: String(userDoc.gender ?? ''), height: String(userDoc.height ?? ''), weight: String(userDoc.weight ?? ''), goalWeight: String(userDoc.goalWeight ?? ''), phone: String(userDoc.phone ?? '') }); setView('edit_profile'); }} />
+            <ActionRow icon={<TargetIcon size={18} color="#D71920" />} label="Change Daily Goal" onClick={() => { setNewGoal(String(settings?.dailyGoal ?? DEFAULT_DAILY_GOAL)); setView('edit_goal'); }} />
+          </div>
+
+          {/* Settings */}
+          <div style={{ marginTop: 14 }}>
+            <p style={{ fontSize: 10, fontWeight: 800, color: '#999', textTransform: 'uppercase', letterSpacing: 1, margin: '0 0 8px 4px' }}>Settings</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <ActionRow icon={<BellIcon     size={18} color="#D71920" />} label={`Reminders: ${settings?.reminderEnabled ? 'On' : 'Off'}`} onClick={handleToggleReminder} right={settings?.reminderEnabled ? <CheckIcon size={16} color="#22C55E" /> : null} />
+              <ActionRow icon={<SettingsIcon size={18} color="#666" />}    label="Back to Module Select"  onClick={onBackToMenu} />
+            </div>
+          </div>
+
+          {/* Account actions */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
+            <ActionRow icon={<LogoutIcon size={18} color="#D71920" />} label="Logout"         onClick={onLogout}                    variant="outline" />
+            <ActionRow icon={<TrashIcon  size={18} color="#D71920" />} label="Delete Account" onClick={() => setView('delete_confirm')} variant="danger" />
           </div>
 
         </div>
@@ -356,11 +338,11 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
 // Sub-components
 // ─────────────────────────────────────────────────────────────
 
-function StatTile({ icon, value, label, color = '#D71920', small }: { icon: React.ReactNode; value: number | string; label: string; color?: string; small?: boolean }) {
+function StatTile({ icon, value, label, color = '#D71920' }: { icon: React.ReactNode; value: number | string; label: string; color?: string }) {
   return (
     <div style={{ background: '#F8F8F8', borderRadius: 14, padding: '10px 8px', textAlign: 'center' }}>
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 4 }}>{icon}</div>
-      <p style={{ fontSize: small ? 13 : 18, fontWeight: 900, color, margin: 0, lineHeight: 1 }}>{value}</p>
+      <p style={{ fontSize: 18, fontWeight: 900, color, margin: 0, lineHeight: 1 }}>{value}</p>
       <p style={{ fontSize: 8, fontWeight: 700, color: '#bbb', textTransform: 'uppercase', letterSpacing: 0.3, margin: '3px 0 0' }}>{label}</p>
     </div>
   );
@@ -387,21 +369,20 @@ function InfoRow({ label, value, highlight }: { label: string; value: string; hi
 function ActionRow({ icon, label, onClick, variant = 'default', right }: {
   icon: React.ReactNode; label: string; onClick: () => void; variant?: 'default' | 'outline' | 'danger'; right?: React.ReactNode | null;
 }) {
-  const bgMap   = { default: '#fff', outline: '#fff', danger: '#FCE8E8' };
-  const colMap  = { default: '#1A1A1A', outline: '#D71920', danger: '#D71920' };
-  const bdrMap  = { default: 'none', outline: '1.5px solid rgba(215,25,32,0.35)', danger: 'none' };
+  const bgMap  = { default: '#fff', outline: '#fff', danger: '#FCE8E8' };
+  const colMap = { default: '#1A1A1A', outline: '#D71920', danger: '#D71920' };
+  const bdrMap = { default: 'none', outline: '1.5px solid rgba(215,25,32,0.35)', danger: 'none' };
   return (
     <button onClick={onClick} style={{
       display: 'flex', alignItems: 'center', gap: 14, width: '100%', padding: '14px 16px', borderRadius: 16,
       background: bgMap[variant], color: colMap[variant], border: bdrMap[variant],
-      fontWeight: 700, fontSize: 13, cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
-      textAlign: 'left',
+      fontWeight: 700, fontSize: 13, cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', textAlign: 'left',
     }}>
       <div style={{ width: 36, height: 36, borderRadius: 11, background: variant === 'danger' ? '#FCE8E8' : '#F5F5F5', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         {icon}
       </div>
       <span style={{ flex: 1 }}>{label}</span>
-      {right ?? <ChevronRightIcon size={16} color="#ccc" />}
+      {right !== undefined ? right : <ChevronRightIcon size={16} color="#ccc" />}
     </button>
   );
 }

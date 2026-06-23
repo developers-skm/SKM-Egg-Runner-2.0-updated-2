@@ -33,6 +33,7 @@ import {
   SettingsModal
 } from './frontend';
 import { syncConfigWithServer, addDebugLog, getActiveLiveConfig } from './liveConfig';
+import { saveRunStats } from './services/game/gameStatsService';
 
 // Storage keys are scoped per Firebase UID so each account has isolated data.
 // getUid() is resolved inside App() where useAuth() is available.
@@ -718,8 +719,22 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
         level,
         xp
       };
-      
+
       localStorage.setItem(STORAGE_STATS_KEY, JSON.stringify(updated));
+
+      // Persist run stats to Firestore so Protein Tracker can read live game data
+      if (uid && uid !== 'guest') {
+        saveRunStats(uid, {
+          distance:      Math.round(runStats.distance),
+          score:         runStats.score,
+          feedsEarned:   runStats.feeds,
+          xpEarned,
+          eggsRewarded:  totalEggsRewarded,
+          skinsUnlocked: updated.unlockedSkins.length,
+          currentLevel:  updated.level,
+        }).catch(() => { /* non-fatal */ });
+      }
+
       return updated;
     });
 
