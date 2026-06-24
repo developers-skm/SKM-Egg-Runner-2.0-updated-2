@@ -573,7 +573,7 @@ export default function ModuleSelectScreen({ onSelectGame, onSelectTracker, onSe
       <div
         style={{
           position: 'fixed', inset: 0,
-          background: '#0D0D0D',
+          background: '#FFFFFF',
           opacity: visible ? 1 : 0,
           transition: 'opacity 300ms ease',
           display: 'flex', flexDirection: 'column',
@@ -603,7 +603,7 @@ export default function ModuleSelectScreen({ onSelectGame, onSelectTracker, onSe
             <p style={{ fontSize: 9, fontWeight: 800, letterSpacing: 3, textTransform: 'uppercase', color: 'rgba(215,25,32,0.8)', margin: 0, fontFamily: 'monospace' }}>
               SKM EXPERIENCE
             </p>
-            <h1 style={{ fontSize: 20, fontWeight: 900, color: '#fff', margin: 0, letterSpacing: '-0.3px', lineHeight: 1.15 }}>
+            <h1 style={{ fontSize: 20, fontWeight: 900, color: '#1A1A1A', margin: 0, letterSpacing: '-0.3px', lineHeight: 1.15 }}>
               Choose Your <span style={{ color: '#D71920' }}>Mode</span>
             </h1>
           </div>
@@ -689,23 +689,19 @@ export default function ModuleSelectScreen({ onSelectGame, onSelectTracker, onSe
               transform: pressing === 'game' ? 'scale(0.97)' : 'scale(1)',
               transition: 'transform 160ms cubic-bezier(0.34,1.56,0.64,1), box-shadow 160ms ease',
               boxShadow: pressing === 'game'
-                ? '0 4px 14px rgba(0,0,0,0.25)'
-                : '0 8px 28px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.06)',
+                ? '0 4px 14px rgba(215,25,32,0.2)'
+                : '0 8px 28px rgba(215,25,32,0.4), 0 0 0 1px rgba(215,25,32,0.2)',
               background: 'transparent',
             }}
           >
             <div style={{
               position: 'relative',
-              background: 'linear-gradient(135deg,#1A1A1A 0%,#0A0A0A 100%)',
+              background: 'linear-gradient(135deg,#C0101A 0%,#7A0009 100%)',
               height: 150,
               display: 'flex', alignItems: 'center',
             }}>
-              {/* Red glow behind mascot */}
-              <div style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 120, height: 120, borderRadius: '50%', background: 'rgba(215,25,32,0.18)', filter: 'blur(22px)', pointerEvents: 'none' }} />
-              {/* Red corner accent */}
-              <div style={{ position: 'absolute', top: 0, right: 0, width: 70, height: 70, background: 'linear-gradient(225deg,rgba(215,25,32,0.3) 0%,transparent 70%)', borderTopRightRadius: 22, pointerEvents: 'none' }} />
               {/* Glass highlight */}
-              <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', borderRadius: 22, background: 'linear-gradient(135deg,rgba(255,255,255,0.05) 0%,transparent 50%)' }} />
+              <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', borderRadius: 22, background: 'linear-gradient(135deg,rgba(255,255,255,0.13) 0%,transparent 55%)' }} />
 
               {/* Mascot */}
               <img
@@ -722,16 +718,16 @@ export default function ModuleSelectScreen({ onSelectGame, onSelectTracker, onSe
               <div style={{ padding: '20px 20px', position: 'relative', zIndex: 1 }}>
                 <span style={{
                   display: 'inline-block', fontSize: 8, fontWeight: 900, letterSpacing: 2,
-                  textTransform: 'uppercase', color: 'rgba(215,25,32,0.9)',
-                  background: 'rgba(215,25,32,0.14)', padding: '3px 10px',
-                  borderRadius: 20, border: '1px solid rgba(215,25,32,0.3)', marginBottom: 10,
+                  textTransform: 'uppercase', color: 'rgba(255,255,255,0.65)',
+                  background: 'rgba(255,255,255,0.14)', padding: '3px 10px',
+                  borderRadius: 20, border: '1px solid rgba(255,255,255,0.18)', marginBottom: 10,
                 }}>
-                  Game 
+                  Game
                 </span>
                 <h2 style={{ fontSize: 22, fontWeight: 900, color: '#fff', margin: '0 0 5px', letterSpacing: '-0.3px', lineHeight: 1.1 }}>
                   SKM Egg Runner
                 </h2>
-                <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', margin: 0, fontWeight: 500, lineHeight: 1.45, maxWidth: 180 }}>
+                <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.65)', margin: 0, fontWeight: 500, lineHeight: 1.45, maxWidth: 180 }}>
                   Evolve from Egg to Champion.
                 </p>
               </div>
@@ -743,7 +739,7 @@ export default function ModuleSelectScreen({ onSelectGame, onSelectTracker, onSe
         {/* Footer */}
         <p style={{
           position: 'relative', zIndex: 1,
-          textAlign: 'center', fontSize: 9, color: 'rgba(255,255,255,0.18)',
+          textAlign: 'center', fontSize: 9, color: 'rgba(0,0,0,0.3)',
           padding: '16px 0 20px', margin: 0, fontFamily: 'monospace', letterSpacing: 2, textTransform: 'uppercase',
         }}>
           SKM © 2024 · All Rights Reserved
