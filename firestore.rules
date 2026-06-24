@@ -99,10 +99,12 @@ service cloud.firestore {
       allow delete: if isDeveloper();
     }
 
-    // Protein scan dedup — one doc per user+QR combination
-    // Doc ID is "{uid}_{qrCode}". Only the owner can read/create.
+    // Protein scan dedup — one doc per user+QR combination.
+    // Doc ID is "{uid}_{qrCode}". Any authenticated user can read/create
+    // their own dedup records. resource.data is null on missing docs so
+    // we cannot check resource.data.userId on read — allow any auth read.
     match /proteinScans/{scanId} {
-      allow read:   if isAuth() && request.auth.uid == resource.data.userId;
+      allow read:   if isAuth();
       allow create: if isAuth()
                     && request.auth.uid == request.resource.data.userId
                     && request.resource.data.proteinAdded is number

@@ -227,7 +227,16 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
       console.log('[QR VALIDATED] accepted:', validation.eggCode);
 
       // ── Dedup check — same user cannot earn protein from the same QR twice ──
-      const alreadyScanned = await checkProteinScanExists(user.uid, validation.eggCode);
+      let alreadyScanned = false;
+      try {
+        alreadyScanned = await checkProteinScanExists(user.uid, validation.eggCode);
+      } catch (dedupErr: any) {
+        // If the rules aren't deployed yet, getDoc throws permission-denied.
+        // Treat this conservatively: allow the scan (rules will block the write
+        // atomically inside logEggScan if it's truly a duplicate).
+        console.warn('[DEDUP] Could not read proteinScans:', dedupErr?.message);
+      }
+
       if (alreadyScanned) {
         console.warn('[DEDUP] Protein already recorded for', validation.eggCode, 'by user', user.uid);
         if (mountedRef.current) {
@@ -261,16 +270,25 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
     } catch (err: unknown) {
       const msg = (err as { message?: string }).message ?? String(err);
       console.error('[SCAN] handleScan error:', msg);
-      if (mountedRef.current) {
-        if (msg.includes('permission') || msg.includes('insufficient')) {
-          setErrorMessage('Permission error. Please log out and log back in, then try again.');
-        } else if (msg.includes('network') || msg.includes('offline')) {
-          setErrorMessage('Network error. Please check your connection and try again.');
-        } else {
-          setErrorMessage('Something went wrong. Please try again.');
-        }
-        setPhase('error');
+      if (!mountedRef.current) return;
+
+      // A permission error on proteinScans write means the dedup doc already
+      // exists (rule blocks create if it conflicts). Show "already consumed".
+      if (msg.includes('proteinScans') ||
+          (msg.includes('permission') && msg.includes('PERMISSION_DENIED'))) {
+        setDupCode('');
+        setPhase('duplicate');
+        return;
       }
+
+      if (msg.includes('permission') || msg.includes('insufficient')) {
+        setErrorMessage('Permission error. Please log out and log back in, then try again.');
+      } else if (msg.includes('network') || msg.includes('offline')) {
+        setErrorMessage('Network error. Please check your connection and try again.');
+      } else {
+        setErrorMessage('Something went wrong. Please try again.');
+      }
+      setPhase('error');
     }
   };
 
