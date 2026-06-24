@@ -22,9 +22,14 @@ import type {
 } from '../../types/qr/qrManagementTypes';
 
 const COLLECTION = 'qrCodes';
+const BASE_URL   = 'https://skm-egg-runner.vercel.app';
 
 function buildCode(prefix: string, index: number): string {
-  return `${prefix.toUpperCase()}-${String(index).padStart(4, '0')}`;
+  return `${prefix.toUpperCase()}-${String(index).padStart(6, '0')}`;
+}
+
+function buildURL(code: string): string {
+  return `${BASE_URL}/?qr=${code}`;
 }
 
 function getBatchId(): string {
@@ -80,15 +85,17 @@ export async function fetchDashboardStats(): Promise<QRDashboardStats> {
 
 // ── Generate QR Codes ──────────────────────────────────────────────────────────
 
+export interface GeneratedQR { code: string; url: string; }
+
 export async function generateQRCodes(
   prefix: string,
   quantity: number,
   maxPlays: number,
   type: QRCodeType,
-): Promise<string[]> {
+): Promise<GeneratedQR[]> {
   const batch = writeBatch(db);
   const batchId = getBatchId();
-  const codes: string[] = [];
+  const codes: GeneratedQR[] = [];
 
   // Find highest existing index for this prefix to avoid duplicates
   const existing = await getDocs(
@@ -96,16 +103,21 @@ export async function generateQRCodes(
   );
   let startIndex = existing.size + 1;
 
+  // Golden QR codes get unlimited plays
+  const effectiveMaxPlays = type === 'Golden' ? 999999 : maxPlays;
+
   for (let i = 0; i < quantity; i++) {
     const code = buildCode(prefix, startIndex + i);
-    codes.push(code);
+    const url  = buildURL(code);
+    codes.push({ code, url });
     const ref = doc(collection(db, COLLECTION), code);
     batch.set(ref, {
       code,
+      url,
       prefix:    prefix.toUpperCase(),
       batch:     batchId,
       type,
-      maxPlays,
+      maxPlays:  effectiveMaxPlays,
       playCount: 0,
       active:    true,
       dailyScans: {},
@@ -115,6 +127,7 @@ export async function generateQRCodes(
 
   await batch.commit();
   return codes;
+
 }
 
 // ── Fetch All QR Codes ────────────────────────────────────────────────────────

@@ -21,18 +21,20 @@ const inputStyle: React.CSSProperties = {
 
 interface QRPreviewItem {
   code: string;
+  url: string;
   dataUrl: string;
 }
 
 // ── Draw one QR code onto a canvas and return a PNG data URL ─────────────────
-async function renderQRtoPNG(code: string, type: QRCodeType): Promise<string> {
+// The QR matrix encodes the full URL; the code is only used for logging.
+async function renderQRtoPNG(url: string, code: string, type: QRCodeType): Promise<string> {
   const SIZE = 300;
   const MARGIN = 20;
 
   console.log('[QR DATA CREATED]', code);
 
-  // 1. Generate QR matrix data URL via qrcode lib
-  const qrDataUrl: string = await QRCode.toDataURL(code, {
+  // 1. Generate QR matrix data URL — encodes the full URL, not just the code
+  const qrDataUrl: string = await QRCode.toDataURL(url, {
     width: SIZE,
     margin: 1,
     color: {
@@ -112,11 +114,11 @@ export default function QRGenerator({ onGenerated }: Props) {
 
       // ── Step 2: Render each code to PNG ───────────────────────────────────
       const rendered: QRPreviewItem[] = [];
-      for (const code of codes) {
+      for (const { code, url } of codes) {
         try {
           log(`[QR CANVAS CREATED] Rendering ${code}…`);
-          const dataUrl = await renderQRtoPNG(code, form.type);
-          rendered.push({ code, dataUrl });
+          const dataUrl = await renderQRtoPNG(url, code, form.type);
+          rendered.push({ code, url, dataUrl });
           log(`[PREVIEW RENDERED] ${code} ready.`);
         } catch (renderErr: any) {
           log(`[ERROR] Render failed for ${code}: ${renderErr?.message}`);
