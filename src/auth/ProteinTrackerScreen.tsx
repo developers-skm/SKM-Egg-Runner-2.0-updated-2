@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { User } from 'firebase/auth';
 import { useAuth } from './AuthProvider';
 import DashboardScreen   from '../protein/DashboardScreen';
@@ -24,6 +24,11 @@ export default function ProteinTrackerScreen({ onBack }: ProteinTrackerScreenPro
   const { user, logout } = useAuth();
   const [tab,        setTab]        = useState<Tab>('dashboard');
   const [refreshKey, setRefreshKey] = useState(0);
+
+  // Preload html5-qrcode in the background so the scanner opens instantly
+  useEffect(() => {
+    import('html5-qrcode').catch(() => {});
+  }, []);
 
   const typedUser = user as User;
   if (!typedUser) return null;

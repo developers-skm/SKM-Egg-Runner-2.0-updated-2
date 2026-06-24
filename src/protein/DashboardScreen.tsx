@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import SkeletonLoader from '../auth/SkeletonLoader';
 import type { User } from 'firebase/auth';
 import {
   getTodayStats, getStreakInfo, getWeeklyData, getTrackerSettings, getRecentEntries,
@@ -56,12 +57,7 @@ export default function DashboardScreen({ user, onScanQR, onViewAnalytics, onVie
   const dashOffset = circumf - (circumf * pct) / 100;
   const maxBar    = Math.max(...weekData.map(d => d.totalProtein), goal, 1);
 
-  if (loading) return (
-    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ width: 32, height: 32, borderRadius: '50%', border: '3px solid #FCE8E8', borderTopColor: '#D71920', animation: 'spin 0.8s linear infinite' }} />
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-    </div>
-  );
+  if (loading) return <SkeletonLoader />;
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 90 }}>

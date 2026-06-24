@@ -7,6 +7,7 @@ import ProfileSetupScreen from './auth/ProfileSetupScreen.tsx';
 import ModuleSelectScreen from './auth/ModuleSelectScreen.tsx';
 import ProteinTrackerScreen from './auth/ProteinTrackerScreen.tsx';
 import QRManagementPage from './pages/qr-management/QRManagementPage.tsx';
+import LoadingScreen from './auth/LoadingScreen.tsx';
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './services/firebase/firebase.ts';
 import { startRealtimeConfigSync } from './liveConfig.ts';
@@ -102,32 +103,15 @@ function AppRoot() {
 
   // ── Loading splash ────────────────────────────────────────────────────────
   if (user === undefined || (user && profileStatus === 'CHECKING')) {
+    const dataReady = user !== undefined && profileStatus !== 'CHECKING';
     return (
-      <div
-        className="fixed inset-0 flex items-center justify-center"
-        style={{ background: 'linear-gradient(160deg,#7f0000 0%,#b91c1c 35%,#991b1b 65%,#7f1d1d 100%)' }}
-      >
-        <div className="flex flex-col items-center gap-5">
-          <svg width="72" height="72" viewBox="0 0 512 512" className="animate-pulse"
-            style={{ filter: 'drop-shadow(0 0 20px rgba(252,211,77,0.5))' }}>
-            <ellipse cx="256" cy="260" rx="110" ry="145" fill="#FFFFFF" stroke="#e5e5e5" strokeWidth="4"/>
-            <path d="M170 120 Q256 55 342 120 L342 150 L170 150 Z" fill="#DC2626"/>
-            <ellipse cx="256" cy="150" rx="105" ry="18" fill="#b91c1c"/>
-            <ellipse cx="256" cy="112" rx="45" ry="20" fill="#FFF8DC" stroke="#DC2626" strokeWidth="2"/>
-            <text x="256" y="118" fontSize="18" fontWeight="bold" textAnchor="middle" fill="#DC2626">BEST</text>
-            <ellipse cx="225" cy="235" rx="22" ry="34" fill="white"/>
-            <ellipse cx="287" cy="235" rx="22" ry="34" fill="white"/>
-            <circle cx="225" cy="240" r="10" fill="#6B3E26"/>
-            <circle cx="287" cy="240" r="10" fill="#6B3E26"/>
-            <circle cx="228" cy="237" r="3" fill="white"/>
-            <circle cx="290" cy="237" r="3" fill="white"/>
-            <path d="M210 305 Q256 340 302 305" stroke="#ccc" strokeWidth="5" fill="none" strokeLinecap="round"/>
-          </svg>
-          <p className="text-yellow-300/70 text-xs font-mono uppercase tracking-widest animate-pulse">
-            Loading…
-          </p>
-        </div>
-      </div>
+      <LoadingScreen
+        ready={dataReady}
+        onDone={() => {
+          // onDone fires after fade-out — React will re-render naturally
+          // once profileStatus leaves CHECKING, so this is a no-op.
+        }}
+      />
     );
   }
 
