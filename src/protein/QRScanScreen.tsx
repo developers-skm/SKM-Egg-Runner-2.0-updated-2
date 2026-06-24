@@ -129,7 +129,15 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
     }
 
     const rect = el.getBoundingClientRect();
-    console.log('[VIDEO ATTACHED] container:', Math.round(rect.width), 'x', Math.round(rect.height));
+    console.log('[CONTAINER SIZE] clientWidth:', el.clientWidth, 'clientHeight:', el.clientHeight);
+    console.log('[CONTAINER SIZE] rect:', Math.round(rect.width), 'x', Math.round(rect.height));
+
+    // If height is still 0, force an explicit height before handing to html5-qrcode
+    if (el.clientHeight === 0) {
+      console.warn('[CONTAINER SIZE] height=0 — forcing 320px');
+      (el as HTMLElement).style.height = '320px';
+      await new Promise(r => setTimeout(r, 80));
+    }
 
     try {
       // Release any lingering tracks before html5-qrcode re-acquires the camera
@@ -150,8 +158,11 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
       // sized, so we get real viewfinder dimensions instead of 0×0.
       // Clamp to 80% of the smaller dimension, min 200px, max 350px.
       const qrboxFn = (w: number, h: number) => {
-        const side = Math.min(350, Math.max(200, Math.round(Math.min(w, h) * 0.80)));
-        console.log('[SCANNER STARTED] viewfinder:', w, 'x', h, '→ qrbox:', side);
+        console.log('[VIEWFINDER SIZE]', w, 'x', h);
+        // If height is 0 (flex collapse not yet resolved), use width as fallback
+        const effectiveH = h > 0 ? h : w;
+        const side = Math.min(350, Math.max(200, Math.round(Math.min(w, effectiveH) * 0.80)));
+        console.log('[VIEWFINDER SIZE] → qrbox:', side, 'x', side);
         return { width: side, height: side };
       };
 
@@ -454,11 +465,26 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
       {isCameraPhase && (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#000' }}>
 
-          {/* Camera viewport */}
-          <div style={{ position: 'relative', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+          {/* Camera viewport — explicit height so html5-qrcode always measures > 0.
+              position:relative + explicit height avoids the flex-collapse where
+              the child position:absolute gets clientHeight=0. */}
+          <div style={{
+            position: 'relative',
+            width: '100%',
+            height: 'calc(100vh - 130px)',
+            minHeight: 320,
+            maxHeight: 600,
+            overflow: 'hidden',
+            flexShrink: 0,
+            background: '#000',
+          }}>
 
-            {/* Always-present camera container — full size */}
-            <div id={QR_ELEMENT_ID} style={{ position: 'absolute', inset: 0 }} />
+            {/* Camera container — explicit 100% width+height (not inset:0) so
+                html5-qrcode reads real clientWidth/clientHeight */}
+            <div
+              id={QR_ELEMENT_ID}
+              style={{ width: '100%', height: '100%', position: 'relative', background: '#000' }}
+            />
 
             {/* Spinner overlay during 'opening' — removed once scanning starts */}
             {phase === 'opening' && (
