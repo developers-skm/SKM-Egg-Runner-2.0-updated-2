@@ -40,10 +40,7 @@ async function printQRCodes(codes: QRCodeRecord[], actor: string): Promise<void>
       rowHtml.push(`<tr>${cells.map(item => `
         <td style="padding:14px 10px;text-align:center;vertical-align:top;width:33.33%">
           <div style="display:inline-block;border:1.5px solid #eee;border-radius:12px;padding:12px;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,0.06)">
-            <img src="${item.dataUrl}" width="160" height="160" style="display:block;margin:0 auto 10px;border-radius:6px"/>
-            <div style="font-size:13px;font-weight:900;font-family:monospace;color:#111;margin-bottom:4px;letter-spacing:1px">${item.code}</div>
-            <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;padding:3px 10px;border-radius:20px;display:inline-block;background:${item.isDev ? 'rgba(139,0,0,0.08)' : 'rgba(215,25,32,0.07)'};color:${item.isDev ? '#8B0000' : '#D71920'}">${item.type}${item.isDev ? ' · Unlimited' : ''}</div>
-            <div style="font-size:9px;color:#bbb;margin-top:6px">Sheet ${pi + 1}</div>
+            <img src="${item.dataUrl}" width="160" height="160" style="display:block;margin:0 auto;border-radius:6px"/>
           </div>
         </td>`).join('')}</tr>`);
     }
