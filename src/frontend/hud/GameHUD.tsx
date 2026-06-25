@@ -62,13 +62,13 @@ export const GameHUD: React.FC<GameHUDProps> = ({
     <div className="absolute inset-0 z-10 flex flex-col justify-between p-4 pointer-events-none select-none">
 
       {/* Evolution Stage Indicator & Progress Bar */}
-      <div className="absolute top-18 left-1/2 pointer-events-auto flex flex-col items-center gap-1 bg-slate-900/95 border border-slate-800 rounded-2xl px-3 py-1.5 backdrop-blur shadow-2xl w-[45vw] max-w-[245px] min-w-[150px] responsive-hud-center">
+      <div className="absolute top-18 left-1/2 pointer-events-auto flex flex-col items-center gap-1 bg-slate-900/95 border border-slate-800 backdrop-blur shadow-2xl responsive-hud-center" style={{ width: 180, height: 60, borderRadius: 16, padding: '8px 12px', transform: 'translateX(-50%)' }}>
         <div className="flex items-center gap-1">
-          <span className="text-xs">
+          <span style={{ fontSize: 18 }}>
             {isStage2 ? '🥚' : currentStage === 'EGG' ? '🥚' : currentStage === 'CHICK' ? '🐥' : '🏆'}
           </span>
-          <span className="text-[8px] font-black text-amber-300 font-mono tracking-wider leading-none uppercase">
-            {isStage2 ? 'EXTREME MODE' : currentStage === 'EGG' ? 'EGG STAGE' : currentStage === 'CHICK' ? 'CHICK STAGE' : 'CHICKEN CHAMPION'}
+          <span className="font-black text-amber-300 font-mono tracking-wider leading-none uppercase" style={{ fontSize: 14 }}>
+            {isStage2 ? 'EXTREME MODE' : currentStage === 'EGG' ? 'EGG STAGE' : currentStage === 'CHICK' ? 'CHICK STAGE' : 'CHAMPION'}
           </span>
         </div>
 
@@ -168,19 +168,19 @@ export const GameHUD: React.FC<GameHUDProps> = ({
       {/* Top HUD: Stats Bar */}
       <div className="flex justify-between items-start w-full pointer-events-auto">
         {/* Left indicators: Combined Compact Stats Panel */}
-        <div className="flex flex-col gap-1.5 responsive-hud-left max-w-[175px] md:max-w-[195px] w-full">
+        <div className="flex flex-col gap-1.5 responsive-hud-left w-[140px] min-w-[140px]">
           {/* Top Left Combined Compact Stats Panel */}
-          <div className="bg-slate-900/95 border border-slate-800 rounded-2xl p-2.5 backdrop-blur shadow-2xl flex flex-col gap-1.5 w-full relative overflow-hidden">
+          <div className="bg-slate-900/95 border border-slate-800 rounded-2xl backdrop-blur shadow-2xl flex flex-col gap-1.5 w-full relative overflow-hidden" style={{ padding: '10px 12px', minHeight: 72, borderRadius: 16 }}>
             <div className="grid grid-cols-2 gap-2 text-left">
               <div>
-                <span className="text-[7.5px] text-slate-400 font-mono tracking-wider leading-none block font-black uppercase">SCORE</span>
-                <span className="text-sm font-black text-white font-mono leading-none block mt-1 truncate">
+                <span className="text-[11px] text-slate-400 font-mono tracking-wider leading-none block font-black uppercase">SCORE</span>
+                <span className="font-black text-white font-mono leading-none block mt-1 truncate" style={{ fontSize: 20 }}>
                   {score.toLocaleString()}
                 </span>
               </div>
               <div className="text-right">
-                <span className="text-[7.5px] text-slate-400 font-mono tracking-wider leading-none block font-black uppercase">DISTANCE</span>
-                <span className="text-sm font-black text-yellow-405 font-mono leading-none block mt-1 truncate">
+                <span className="text-[11px] text-slate-400 font-mono tracking-wider leading-none block font-black uppercase">DIST</span>
+                <span className="font-black text-yellow-400 font-mono leading-none block mt-1 truncate" style={{ fontSize: 20 }}>
                   {Math.round(distance)}m
                 </span>
               </div>
@@ -214,7 +214,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           </div>
 
           {/* Top-Left Corner Side Active Power-up Sliders */}
-          <div className="flex flex-col gap-1 w-full max-w-[175px] md:max-w-[195px] pointer-events-auto">
+          <div className="flex flex-col gap-1 w-full pointer-events-auto">
             {activePowerUps.map((p) => {
               const pct = Math.round((p.timeLeft / p.duration) * 100);
               let powerColor = 'bg-yellow-400';
@@ -277,10 +277,11 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           <button
             id="btn_pause_game"
             onClick={() => { soundManager.playClick(); onPause(); }}
-            className="bg-slate-900/95 hover:bg-slate-800 border border-slate-800 p-2.5 rounded-xl transition cursor-pointer pointer-events-auto shadow-xl flex items-center justify-center h-10 w-10 active:scale-90"
+            className="bg-slate-900/95 hover:bg-slate-800 border border-slate-800 transition cursor-pointer pointer-events-auto shadow-xl flex items-center justify-center active:scale-90"
+            style={{ width: 56, height: 56, borderRadius: 16 }}
             title="Pause Game"
           >
-            <Pause className="w-4 h-4 text-white fill-current" />
+            <Pause style={{ width: 22, height: 22 }} className="text-white fill-current" />
           </button>
         </div>
       </div>
