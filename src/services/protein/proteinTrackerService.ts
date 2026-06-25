@@ -21,6 +21,7 @@ import {
   runTransaction,
 } from 'firebase/firestore';
 import { db } from '../firebase/firebase';
+import { updateSummaryOnScan, updateSummaryOnManualEntry } from './userSummaryService';
 // Shared utilities — single source of truth
 import {
   todayKey as _todayKey,
@@ -300,8 +301,11 @@ export async function logEggScan(uid: string, qrCode: string): Promise<{
 
   await updateDailyStats(uid, dateKey, entry.protein, entry.calories, 1);
   const streakInfo = await updateStreak(uid, dateKey);
-  await addRewards(uid, XP_PER_EGG, COINS_PER_EGG);
-  await updateChallengeProgress(uid, 'scan_egg', 1);
+  await Promise.all([
+    addRewards(uid, XP_PER_EGG, COINS_PER_EGG),
+    updateChallengeProgress(uid, 'scan_egg', 1),
+    updateSummaryOnScan(uid, entry.protein, streakInfo),
+  ]);
 
   return {
     entry: { ...entry, id: entryId ?? '' },
@@ -324,10 +328,14 @@ export async function logManualEntry(
     uid, type: 'manual', dateKey,
     loggedAt: serverTimestamp() as Timestamp, ...data,
   };
-  const colRef = collection(db, 'protein_logs', uid, 'entries');
-  const docRef = await addDoc(colRef, entry);
-  await updateDailyStats(uid, dateKey, data.protein * data.quantity, data.calories * data.quantity, 0);
-  await updateChallengeProgress(uid, 'reach_goal', 0); // triggers goal check
+  const colRef   = collection(db, 'protein_logs', uid, 'entries');
+  const docRef   = await addDoc(colRef, entry);
+  const totalPro = data.protein * data.quantity;
+  await updateDailyStats(uid, dateKey, totalPro, data.calories * data.quantity, 0);
+  await Promise.all([
+    updateChallengeProgress(uid, 'reach_goal', 0),
+    updateSummaryOnManualEntry(uid, totalPro),
+  ]);
   return { ...entry, id: docRef.id };
 }
 
