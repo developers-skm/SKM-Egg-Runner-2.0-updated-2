@@ -8,7 +8,8 @@ import ModuleSelectScreen from './auth/ModuleSelectScreen.tsx';
 import ProteinTrackerScreen from './auth/ProteinTrackerScreen.tsx';
 import QRManagementPage from './pages/qr-management/QRManagementPage.tsx';
 import LoadingScreen from './auth/LoadingScreen.tsx';
-import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import OfflineScreen from './auth/OfflineScreen.tsx';
+import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './services/firebase/firebase.ts';
 import { startRealtimeConfigSync } from './liveConfig.ts';
 import './index.css';
@@ -178,10 +179,31 @@ function AppRoot() {
   return <App onBackToMenu={() => setScreen('MODULE_SELECT')} />;
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
+function OnlineGate() {
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    const goOnline  = () => setIsOnline(true);
+    const goOffline = () => setIsOnline(false);
+    window.addEventListener('online',  goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online',  goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
+
+  if (!isOnline) return <OfflineScreen />;
+
+  return (
     <AuthProvider>
       <AppRoot />
     </AuthProvider>
+  );
+}
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <OnlineGate />
   </StrictMode>,
 );
