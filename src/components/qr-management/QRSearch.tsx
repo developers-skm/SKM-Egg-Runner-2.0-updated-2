@@ -135,17 +135,17 @@ function QRPreviewModal({ qr, dataUrl, onClose, onToggle, toggling }: PreviewMod
       style={{ position: 'fixed', inset: 0, zIndex: 10200, background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div style={{ background: '#FFFFFF', borderRadius: 22, width: '100%', maxWidth: 420, boxShadow: '0 24px 60px rgba(0,0,0,0.2)', overflow: 'hidden', border: '1px solid #E5E7EB' }}>
+      <div style={{ background: '#FFFFFF', borderRadius: 22, width: '100%', maxWidth: 680, boxShadow: '0 24px 60px rgba(0,0,0,0.2)', overflow: 'hidden', border: '1px solid #E5E7EB' }}>
 
-        {/* Modal header */}
-        <div style={{ padding: '16px 20px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        {/* Header */}
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ width: 32, height: 32, borderRadius: 8, background: `${RED}10`, border: `1px solid ${RED}20`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: RED }}>
-              <QrCodeIcon size={16} strokeWidth={2} />
+            <div style={{ width: 30, height: 30, borderRadius: 8, background: `${RED}10`, border: `1px solid ${RED}20`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: RED }}>
+              <QrCodeIcon size={15} strokeWidth={2} />
             </div>
             <div>
               <p style={{ fontSize: 13, fontWeight: 800, color: '#1A1A1A', margin: 0 }}>QR Preview</p>
-              <p style={{ fontSize: 10, color: '#9CA3AF', margin: 0 }}>{qr.code}</p>
+              <p style={{ fontSize: 10, color: '#9CA3AF', margin: 0, fontFamily: 'monospace' }}>{qr.code}</p>
             </div>
           </div>
           <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #E5E7EB', background: '#F9FAFB', color: '#6B7280', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -153,88 +153,92 @@ function QRPreviewModal({ qr, dataUrl, onClose, onToggle, toggling }: PreviewMod
           </button>
         </div>
 
-        {/* QR Image */}
-        <div style={{ padding: '24px 20px 16px', display: 'flex', justifyContent: 'center' }}>
-          <div style={{ border: '1.5px solid #E5E7EB', borderRadius: 16, padding: 16, background: '#FAFAFA', display: 'inline-block', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
-            <img src={dataUrl} alt={qr.code} style={{ width: 200, height: 200, display: 'block', borderRadius: 8 }} />
-          </div>
-        </div>
+        {/* ── Two-column body ── */}
+        <div style={{ display: 'flex', alignItems: 'stretch', minHeight: 320 }}>
 
-        {/* Details */}
-        <div style={{ padding: '0 20px 16px' }}>
-          <div style={{ background: '#F9FAFB', borderRadius: 12, border: '1px solid #E5E7EB', overflow: 'hidden' }}>
-            {[
-              { label: 'QR Code',  value: qr.code,         mono: true   },
-              { label: 'Type',     value: qr.type,         badge: tm    },
-              { label: 'Status',   value: sm.label,        badge: sm    },
-              { label: 'Batch',    value: qr.batch || '—', mono: true   },
-              { label: 'Usage',    value: `${qr.playCount} / ${qr.maxPlays === 999999 ? '∞' : qr.maxPlays} scans` },
-              { label: 'Created',  value: fmtDate(qr.createdAt) },
-            ].map((row, i, arr) => (
-              <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 14px', borderBottom: i < arr.length - 1 ? '1px solid #F3F4F6' : 'none' }}>
-                <span style={{ fontSize: 11, color: '#9CA3AF', fontWeight: 600 }}>{row.label}</span>
-                {row.badge ? (
-                  <span style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.8, padding: '2px 8px', borderRadius: 20, background: row.badge.bg, color: row.badge.color, border: `1px solid ${row.badge.border}` }}>
-                    {row.value}
-                  </span>
-                ) : (
-                  <span style={{ fontSize: 12, fontWeight: 700, color: '#1A1A1A', fontFamily: row.mono ? 'monospace' : undefined }}>{row.value}</span>
-                )}
+          {/* Left — QR image */}
+          <div style={{ width: 220, flexShrink: 0, borderRight: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, background: '#FAFAFA' }}>
+            <div style={{ border: '1.5px solid #E5E7EB', borderRadius: 16, padding: 14, background: '#FFFFFF', boxShadow: '0 2px 16px rgba(0,0,0,0.08)' }}>
+              <img src={dataUrl} alt={qr.code} style={{ width: 160, height: 160, display: 'block', borderRadius: 6 }} />
+            </div>
+          </div>
+
+          {/* Right — details + actions */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '18px 20px', gap: 14, minWidth: 0 }}>
+
+            {/* Details table */}
+            <div style={{ background: '#F9FAFB', borderRadius: 12, border: '1px solid #E5E7EB', overflow: 'hidden', flex: 1 }}>
+              {[
+                { label: 'QR Code', value: qr.code,                                                         mono: true },
+                { label: 'Type',    value: qr.type,                                                         badge: tm  },
+                { label: 'Status',  value: sm.label,                                                        badge: sm  },
+                { label: 'Batch',   value: qr.batch || '—',                                                 mono: true },
+                { label: 'Usage',   value: `${qr.playCount} / ${qr.maxPlays >= 999999 ? '∞' : qr.maxPlays} scans`     },
+                { label: 'Created', value: fmtDate(qr.createdAt)                                                       },
+              ].map((row, i, arr) => (
+                <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderBottom: i < arr.length - 1 ? '1px solid #F3F4F6' : 'none' }}>
+                  <span style={{ fontSize: 11, color: '#9CA3AF', fontWeight: 600, flexShrink: 0 }}>{row.label}</span>
+                  {row.badge ? (
+                    <span style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.8, padding: '2px 8px', borderRadius: 20, background: row.badge.bg, color: row.badge.color, border: `1px solid ${row.badge.border}` }}>
+                      {row.value}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 11, fontWeight: 700, color: '#1A1A1A', fontFamily: row.mono ? 'monospace' : undefined, textAlign: 'right', wordBreak: 'break-all' }}>{row.value}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Action buttons */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+              {/* Download — primary */}
+              <button onClick={handleDownload} style={{
+                background: `linear-gradient(135deg,${RED},#B51218)`, color: '#fff', border: 'none',
+                borderRadius: 10, padding: '11px 0', fontSize: 12, fontWeight: 800,
+                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+                boxShadow: `0 3px 12px ${RED}30`,
+              }}>
+                <Download size={14} strokeWidth={2} /> Download PNG
+              </button>
+
+              {/* Print + Copy */}
+              <div style={{ display: 'flex', gap: 7 }}>
+                <button onClick={handlePrint} disabled={printing} style={{
+                  flex: 1, padding: '9px 0', borderRadius: 10, border: '1px solid #E5E7EB',
+                  background: '#F9FAFB', color: '#374151', fontSize: 11, fontWeight: 700,
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                }}>
+                  <Printer size={13} strokeWidth={2} /> {printing ? 'Printing…' : 'Print QR'}
+                </button>
+                <button onClick={handleCopy} style={{
+                  flex: 1, padding: '9px 0', borderRadius: 10,
+                  border: `1px solid ${copied ? '#BBF7D0' : '#E5E7EB'}`,
+                  background: copied ? '#F0FDF4' : '#F9FAFB',
+                  color: copied ? '#16A34A' : '#374151', fontSize: 11, fontWeight: 700,
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                  transition: 'all 200ms',
+                }}>
+                  {copied ? <CheckCircle2 size={13} strokeWidth={2} /> : <Copy size={13} strokeWidth={2} />}
+                  {copied ? 'Copied!' : 'Copy ID'}
+                </button>
               </div>
-            ))}
+
+              {/* Enable / Disable */}
+              <button onClick={() => { onToggle(qr.code, qr.active); onClose(); }} disabled={toggling === qr.code} style={{
+                padding: '9px 0', borderRadius: 10,
+                border: `1px solid ${qr.active ? '#FECACA' : '#BBF7D0'}`,
+                background: qr.active ? '#FEF2F2' : '#F0FDF4',
+                color: qr.active ? '#DC2626' : '#16A34A',
+                fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+              }}>
+                {qr.active
+                  ? <><PauseCircle size={13} strokeWidth={2} /> Disable QR</>
+                  : <><PlayCircle  size={13} strokeWidth={2} /> Enable QR</>}
+              </button>
+            </div>
+
           </div>
-        </div>
-
-        {/* Action buttons */}
-        <div style={{ padding: '0 20px 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {/* Primary: Download */}
-          <button onClick={handleDownload} style={{
-            background: `linear-gradient(135deg,${RED},#B51218)`, color: '#fff', border: 'none',
-            borderRadius: 12, padding: '12px 0', fontSize: 13, fontWeight: 800,
-            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-            boxShadow: `0 4px 16px ${RED}30`,
-          }}>
-            <Download size={15} strokeWidth={2} /> Download PNG
-          </button>
-
-          {/* Secondary row */}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={handlePrint} disabled={printing} style={{
-              flex: 1, padding: '10px 0', borderRadius: 10, border: '1px solid #E5E7EB',
-              background: '#F9FAFB', color: '#374151', fontSize: 12, fontWeight: 700,
-              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-            }}>
-              <Printer size={14} strokeWidth={2} /> {printing ? 'Printing…' : 'Print QR'}
-            </button>
-            <button onClick={handleCopy} style={{
-              flex: 1, padding: '10px 0', borderRadius: 10,
-              border: `1px solid ${copied ? '#BBF7D0' : '#E5E7EB'}`,
-              background: copied ? '#F0FDF4' : '#F9FAFB',
-              color: copied ? '#16A34A' : '#374151', fontSize: 12, fontWeight: 700,
-              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-              transition: 'all 200ms',
-            }}>
-              {copied ? <CheckCircle2 size={14} strokeWidth={2} /> : <Copy size={14} strokeWidth={2} />}
-              {copied ? 'Copied!' : 'Copy ID'}
-            </button>
-          </div>
-
-          {/* Toggle active */}
-          <button
-            onClick={() => { onToggle(qr.code, qr.active); onClose(); }}
-            disabled={toggling === qr.code}
-            style={{
-              padding: '10px 0', borderRadius: 10,
-              border: `1px solid ${qr.active ? '#FECACA' : '#BBF7D0'}`,
-              background: qr.active ? '#FEF2F2' : '#F0FDF4',
-              color: qr.active ? '#DC2626' : '#16A34A',
-              fontSize: 12, fontWeight: 700, cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-            }}>
-            {qr.active
-              ? <><PauseCircle size={14} strokeWidth={2} /> Disable QR</>
-              : <><PlayCircle  size={14} strokeWidth={2} /> Enable QR</>}
-          </button>
         </div>
       </div>
     </div>
