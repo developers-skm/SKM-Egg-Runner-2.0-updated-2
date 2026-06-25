@@ -942,12 +942,11 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
               console.log('[QR] Golden QR — unlimited retry enabled');
               updateSession({ remainingAttempts: 999, unlimited: true });
             } else {
-              // Each QR scan = exactly 1 game run. The Firestore transaction already
-              // consumed one use at scan time. remainingRaw tells us how many uses
-              // are left on the QR for future scans — it does NOT grant extra runs here.
-              // This session gets exactly 1 run regardless of remaining.
-              console.log('[QR] Normal QR — 1 run granted | QR remaining uses:', remainingRaw ?? '0');
-              updateSession({ remainingAttempts: 1 });
+              // Business rule: 1 QR scan = 2 play attempts.
+              // The Firestore transaction consumed 1 QR use at scan time.
+              // The player now gets 2 consecutive runs before needing a new QR.
+              console.log('[QR] Normal QR — 2 runs granted | QR remaining uses:', remainingRaw ?? '0');
+              updateSession({ remainingAttempts: 2 });
             }
             handleStartGame();
           }}
@@ -1049,6 +1048,7 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
           onContinueWithGems={handleContinueWithGems}
           onRestart={handleRestart}
           onHome={handleHome}
+          onScanNewQR={() => { updateSession(null); if (onBackToMenu) onBackToMenu(); else setGameState('MENU'); }}
         />
       )}
 

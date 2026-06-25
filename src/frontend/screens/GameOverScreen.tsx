@@ -19,6 +19,7 @@ interface GameOverScreenProps {
   onContinueWithGems: () => void;
   onRestart: () => void;
   onHome: () => void;
+  onScanNewQR?: () => void;
 }
 
 // Sparkle Effect for 3-star rating
@@ -51,12 +52,18 @@ export const GameOverScreen: React.FC<GameOverScreenProps> = ({
   unlimited = false,
   onContinueWithGems,
   onRestart,
-  onHome
+  onHome,
+  onScanNewQR,
 }) => {
   const isNewHighscore = score > highscore;
-  // Golden QR: always can retry regardless of remainingAttempts
-  const canRetry = unlimited || remainingAttempts > 0;
+  const canRetry    = unlimited || remainingAttempts > 0;
   const canContinue = playerGemsBalance >= 3 && canRetry;
+
+  // Attempt counter display — "2 / 2 used" style
+  // Total attempts per QR = 2 (business rule). Remaining tells us how many are left.
+  const TOTAL_ATTEMPTS = 2;
+  const attemptsUsed   = unlimited ? null : Math.max(0, TOTAL_ATTEMPTS - remainingAttempts);
+  console.log('[GAME OVER] remainingAttempts:', remainingAttempts, '| attemptsUsed:', attemptsUsed, '| canRetry:', canRetry);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Confetti system for 3 golden eggs milestone
@@ -382,17 +389,31 @@ export const GameOverScreen: React.FC<GameOverScreenProps> = ({
         {/* BUTTONS CONTROLLER (BOTTOM OF CARD) */}
         <div className="mt-3.5 px-2 flex flex-col gap-2 relative z-10 w-full">
 
-          {/* Session expired banner — only for normal QR with no attempts left */}
-          {!canRetry && (
-            <div className="w-full bg-red-950/80 border border-red-500/40 rounded-2xl py-2.5 px-4 text-center mb-1">
-              <p className="text-red-300 text-[11px] font-black font-mono uppercase tracking-wide">
-                ⛔ Your 2 play attempts have been used.
-              </p>
-              <p className="text-red-400/80 text-[10px] font-semibold font-mono mt-0.5">
-                Please scan a QR code again to continue.
-              </p>
+          {/* ── Attempt counter pill ── */}
+          {!unlimited && (
+            <div className={`w-full rounded-2xl py-2.5 px-4 text-center mb-1 ${canRetry ? 'bg-amber-950/80 border border-yellow-500/40' : 'bg-red-950/80 border border-red-500/40'}`}>
+              {canRetry ? (
+                <>
+                  <p className="text-yellow-300 text-[11px] font-black font-mono uppercase tracking-wide">
+                    {remainingAttempts} Play{remainingAttempts !== 1 ? 's' : ''} Remaining
+                  </p>
+                  <p className="text-yellow-400/70 text-[10px] font-semibold font-mono mt-0.5">
+                    Attempts Used: {attemptsUsed} / {TOTAL_ATTEMPTS}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-red-300 text-[11px] font-black font-mono uppercase tracking-wide">
+                    All Attempts Used · {TOTAL_ATTEMPTS} / {TOTAL_ATTEMPTS}
+                  </p>
+                  <p className="text-red-400/80 text-[10px] font-semibold font-mono mt-0.5">
+                    Scan a new QR code to continue playing.
+                  </p>
+                </>
+              )}
             </div>
           )}
+
           {/* Golden QR unlimited banner */}
           {unlimited && (
             <div className="w-full bg-amber-950/80 border border-yellow-500/40 rounded-2xl py-2 px-4 text-center mb-1">
@@ -402,45 +423,51 @@ export const GameOverScreen: React.FC<GameOverScreenProps> = ({
             </div>
           )}
 
-          {/* Bottom Action Bar: Horizontal circular button row */}
+          {/* Bottom Action Bar */}
           <div className="flex items-center justify-center gap-6 mt-1 mb-1 relative z-10 w-full">
-            {/* Left Circular Button (Refresh/Retry ↻) */}
-            <button
-              id="btn_retry_match"
-              onClick={() => {
-                soundManager.playClick();
-                onRestart();
-              }}
-              disabled={!canRetry}
-              className={`w-16 h-16 md:w-[72px] md:h-[72px] relative group transition-all duration-300 transform active:scale-90 hover:scale-105 flex items-center justify-center rounded-full shrink-0 ${!canRetry ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
-            >
-              {/* 3D shadow depth layer */}
-              <div className="absolute inset-0 bg-[#D48C00] rounded-full translate-y-1.5 transition-all group-active:translate-y-0.5" />
-              {/* Top Glossy Core */}
-              <div className="absolute inset-0 bg-gradient-to-r from-[#FFCC00] via-[#FFAA00] to-[#FFCC00] rounded-full flex items-center justify-center border-2 border-white/50 shadow-md group-active:translate-y-1">
-                {/* Diagonal Highlight (glossy) */}
-                <div className="absolute top-0 left-0 right-0 h-1/2 bg-white/20 rounded-t-full pointer-events-none" />
-                <RefreshCw className="w-7 h-7 text-[#5C2C0C] font-black shrink-0" />
-              </div>
-            </button>
-            {/* Right Circular Button (Home ⎋) */}
+
+            {/* Play Again / Scan New QR button */}
+            {canRetry ? (
+              /* PLAY AGAIN — attempts remaining */
+              <button
+                id="btn_retry_match"
+                onClick={() => { soundManager.playClick(); onRestart(); }}
+                className="w-16 h-16 md:w-[72px] md:h-[72px] relative group transition-all duration-300 transform active:scale-90 hover:scale-105 cursor-pointer flex items-center justify-center rounded-full shrink-0"
+              >
+                <div className="absolute inset-0 bg-[#D48C00] rounded-full translate-y-1.5 transition-all group-active:translate-y-0.5" />
+                <div className="absolute inset-0 bg-gradient-to-r from-[#FFCC00] via-[#FFAA00] to-[#FFCC00] rounded-full flex items-center justify-center border-2 border-white/50 shadow-md group-active:translate-y-1">
+                  <div className="absolute top-0 left-0 right-0 h-1/2 bg-white/20 rounded-t-full pointer-events-none" />
+                  <RefreshCw className="w-7 h-7 text-[#5C2C0C] font-black shrink-0" />
+                </div>
+              </button>
+            ) : (
+              /* SCAN NEW QR — no attempts left */
+              <button
+                id="btn_scan_new_qr"
+                onClick={() => { soundManager.playClick(); onScanNewQR ? onScanNewQR() : onHome(); }}
+                className="w-16 h-16 md:w-[72px] md:h-[72px] relative group transition-all duration-300 transform active:scale-90 hover:scale-105 cursor-pointer flex items-center justify-center rounded-full shrink-0"
+              >
+                <div className="absolute inset-0 bg-[#065F46] rounded-full translate-y-1.5 transition-all group-active:translate-y-0.5" />
+                <div className="absolute inset-0 bg-gradient-to-r from-[#10B981] via-[#059669] to-[#10B981] rounded-full flex items-center justify-center border-2 border-white/50 shadow-md group-active:translate-y-1">
+                  <div className="absolute top-0 left-0 right-0 h-1/2 bg-white/20 rounded-t-full pointer-events-none" />
+                  <Navigation className="w-7 h-7 text-white font-black shrink-0" />
+                </div>
+              </button>
+            )}
+
+            {/* Home button */}
             <button
               id="btn_exit_lobby"
-              onClick={() => {
-                soundManager.playClick();
-                onHome();
-              }}
+              onClick={() => { soundManager.playClick(); onHome(); }}
               className="w-16 h-16 md:w-[72px] md:h-[72px] relative group transition-all duration-300 transform active:scale-90 hover:scale-105 cursor-pointer flex items-center justify-center rounded-full shrink-0"
             >
-              {/* 3D shadow depth layer */}
               <div className="absolute inset-0 bg-[#B71C1C] rounded-full translate-y-1.5 transition-all group-active:translate-y-0.5" />
-              {/* Top Core */}
               <div className="absolute inset-0 bg-gradient-to-r from-[#FF4040] via-[#D62828] to-[#B71C1C] rounded-full flex items-center justify-center border-2 border-white/40 shadow-md group-active:translate-y-1">
-                {/* Diagonal Highlight (glossy) */}
                 <div className="absolute top-0 left-0 right-0 h-1/2 bg-white/20 rounded-t-full pointer-events-none" />
                 <Home className="w-7 h-7 text-white shrink-0" />
               </div>
             </button>
+
           </div>
 
         </div>
