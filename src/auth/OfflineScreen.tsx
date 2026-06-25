@@ -5,12 +5,21 @@ const GREEN = '#22C55E';
 
 const STATUS_MESSAGES = [
   'Trying to restore connection...',
-  'Looking for a stable signal...',
-  'Checking network status...',
-  'Almost there...',
-  'Reconnecting services...',
+  'Looking for a stable network...',
+  'Checking connection status...',
+  'Reconnecting SKM services...',
+  'Getting things back on track...',
+  'Searching for a stronger signal...',
+  'Almost ready...',
+  'Restoring your SKM experience...',
+  'Preparing to reconnect...',
+  'Waiting for internet access...',
+  'Verifying network availability...',
+  'Checking service health...',
+  'Attempting to reconnect...',
+  'Connection recovery in progress...',
+  'We\'ll be back online shortly...'
 ];
-
 function fmt12h(d: Date) {
   const h = d.getHours(), m = d.getMinutes();
   const ampm = h >= 12 ? 'PM' : 'AM';
@@ -300,7 +309,7 @@ export default function OfflineScreen() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ width: 8, height: 8, borderRadius: '50%', background: firebaseColor,
               boxShadow: `0 0 6px ${firebaseColor}` }} />
-            <span style={{ fontSize: 13, color: '#444', fontWeight: 600 }}>Firebase Status</span>
+            <span style={{ fontSize: 13, color: '#444', fontWeight: 600 }}>App Services</span>
           </div>
           <span style={{ fontSize: 13, fontWeight: 800, color: firebaseColor }}>{firebaseStatus}</span>
         </div>

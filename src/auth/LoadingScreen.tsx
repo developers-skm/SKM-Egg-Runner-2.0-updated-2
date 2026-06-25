@@ -2,12 +2,17 @@ import { useEffect, useState, useRef } from 'react';
 
 const RED = '#D71920';
 
-const MESSAGES = [
-  'Building healthy habits...',
-  'Loading your protein journey...',
-  'Preparing your dashboard...',
-  'Checking today\'s progress...',
-  'Welcome back...',
+const loadingMessages = [
+  'Every egg counts toward your goal...',
+  'Preparing your protein journey...',
+  'Building healthy habits, one step at a time...',
+  'Tracking today\'s nutrition progress...',
+  'Checking your latest achievements...',
+  'Preparing your personalized dashboard...',
+  'Helping you stay consistent...',
+  'Loading your wellness insights...',
+  'Turning goals into daily habits...',
+  'Welcome back to your SKM journey...'
 ];
 
 interface Props {
