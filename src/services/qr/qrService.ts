@@ -95,14 +95,26 @@ export async function validateEggForProtein(rawCode: string): Promise<EggQRValid
     console.log('[SCAN] QR validated for protein scan:', code);
     return { ok: true, eggCode: code, isGolden: false };
   } catch (err: unknown) {
-    const msg = (err as { message?: string }).message ?? String(err);
-    console.error('[SCAN] Firestore error during egg validation:', msg);
+    const e = err as { code?: string; message?: string };
+    const firebaseCode = e.code ?? '';
+    const rawMessage   = e.message ?? String(err);
+
+    console.error('[SCAN] Firestore error during egg validation:', {
+      code:         code,
+      path:         `qrCodes/${code}`,
+      firebaseCode,
+      rawMessage,
+    });
+
+    if (firebaseCode === 'permission-denied') {
+      return { ok: false, reason: 'ERROR', message: 'Permission Denied. Your account cannot read this QR code.' };
+    }
     // On network error, if the code format looks right, allow offline logging
     if (looksLikeSKMCode) {
-      console.log('[SCAN] Network error but code looks valid — allowing offline');
+      console.log('[SCAN] Network/permission error but code looks valid — allowing offline');
       return { ok: true, eggCode: code, isGolden: false };
     }
-    return { ok: false, reason: 'ERROR', message: 'Network error. Please check your connection and try again.' };
+    return { ok: false, reason: 'ERROR', message: rawMessage || 'Network error. Please check your connection and try again.' };
   }
 }
 
@@ -190,14 +202,34 @@ export async function validateAndUseQR(rawCode: string): Promise<QRValidationRes
     console.log('[NAVIGATE TO GAME]', result.ok ? 'GRANTED' : 'DENIED');
     return result;
   } catch (err: any) {
-    const isTimeout = err?.message === 'TIMEOUT';
-    console.error(isTimeout ? '[VALIDATION TIMEOUT]' : '[VALIDATION FAILED]', err?.message ?? err);
-    return {
-      ok:      false,
-      reason:  'ERROR',
-      message: isTimeout
-        ? 'Validation Timeout. Please try again.'
-        : 'Network error. Please check your connection and try again.',
-    };
+    const isTimeout  = err?.message === 'TIMEOUT';
+    const firebaseCode: string = err?.code ?? '';
+    const rawMessage: string   = err?.message ?? String(err);
+
+    console.error('[VALIDATION ERROR]', {
+      uid:          'see caller',
+      qrCode:       code,
+      path:         `qrCodes/${code}`,
+      firebaseCode,
+      rawMessage,
+    });
+
+    if (isTimeout) {
+      return { ok: false, reason: 'ERROR', message: 'Validation timed out. Please try again.' };
+    }
+
+    // Surface the real error — never hide permission issues behind "Network error"
+    if (firebaseCode === 'permission-denied') {
+      return { ok: false, reason: 'ERROR', message: 'Permission Denied. Your account cannot validate this QR code.' };
+    }
+    if (firebaseCode === 'unavailable' || firebaseCode === 'deadline-exceeded') {
+      return { ok: false, reason: 'ERROR', message: 'Firebase Unavailable. Please check your connection and try again.' };
+    }
+    if (firebaseCode === 'not-found') {
+      return { ok: false, reason: 'NOT_FOUND', message: 'QR Not Found in database.' };
+    }
+
+    // Unknown error — show the real message so it can be diagnosed
+    return { ok: false, reason: 'ERROR', message: rawMessage || 'Unknown error. Please try again.' };
   }
 }
