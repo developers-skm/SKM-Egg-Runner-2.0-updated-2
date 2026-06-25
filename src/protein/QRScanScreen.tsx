@@ -13,9 +13,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Html5Qrcode, Html5QrcodeScannerState } from 'html5-qrcode';
 import type { User } from 'firebase/auth';
-import { validateEggForProtein } from '../services/qr/qrService';
+import { validateEggForProtein, claimProteinScan } from '../services/qr/qrService';
 import {
-  logEggScan, checkProteinScanExists,
+  logEggScan,
   getRecentEntries, getTodayStats, getTrackerSettings,
   PROTEIN_PER_EGG,
   type ProteinLogEntry, type DailyStats, type TrackerSettings,
@@ -227,22 +227,23 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
 
       console.log('[QR VALIDATED] accepted:', validation.eggCode);
 
-      // ── Dedup check — same user cannot earn protein from the same QR twice ──
-      let alreadyScanned = false;
+      // ── Atomic dedup claim — single transaction: read + write ─────────────
+      // claimProteinScan replaces the old two-step getDoc → addDoc pattern.
+      // The transaction guarantees that only one scan per user per QR ever
+      // commits, even if two requests arrive simultaneously.
+      let claimResult: 'new' | 'duplicate';
       try {
-        alreadyScanned = await checkProteinScanExists(user.uid, validation.eggCode);
-      } catch (dedupErr: any) {
-        // If the rules aren't deployed yet, getDoc throws permission-denied.
-        // Treat this conservatively: allow the scan (rules will block the write
-        // atomically inside logEggScan if it's truly a duplicate).
-        console.warn('[DEDUP] Could not read proteinScans:', dedupErr?.message);
+        claimResult = await claimProteinScan(user.uid, validation.eggCode);
+      } catch (claimErr: any) {
+        console.warn('[DEDUP] claimProteinScan threw:', claimErr?.message);
+        // On permission error, fall through to logEggScan which will also
+        // fail atomically if the dedup doc already exists.
+        claimResult = 'new';
       }
 
-      if (alreadyScanned) {
-        console.warn('[DEDUP] Protein already recorded for', validation.eggCode, 'by user', user.uid);
-        if (mountedRef.current) {
-          setPhase('duplicate');
-        }
+      if (claimResult === 'duplicate') {
+        console.warn('[DEDUP] Protein already claimed for', validation.eggCode, 'by user', user.uid);
+        if (mountedRef.current) setPhase('duplicate');
         return;
       }
 

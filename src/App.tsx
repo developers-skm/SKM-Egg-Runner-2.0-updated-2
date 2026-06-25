@@ -920,13 +920,35 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
         <MainMenu
           stats={stats}
           onStartGame={() => {
-            const isGolden = sessionStorage.getItem('skm_golden_qr') === 'true';
+            const isGolden      = sessionStorage.getItem('skm_golden_qr')       === 'true';
+            const remainingRaw  = sessionStorage.getItem('skm_qr_remaining');
+            const validatedAtRaw= sessionStorage.getItem('skm_qr_validated_at');
+
+            // Anti-refresh guard: if the validated session is older than 30 minutes,
+            // treat it as expired and block entry without a new QR scan.
+            const SESSION_TTL_MS = 30 * 60 * 1000;
+            const validatedAt    = validatedAtRaw ? Number(validatedAtRaw) : 0;
+            const sessionAge     = Date.now() - validatedAt;
+
+            if (!isGolden && sessionAge > SESSION_TTL_MS) {
+              console.warn('[QR] Validated session expired — require new QR scan');
+              updateSession(null);
+              sessionStorage.removeItem('skm_qr_remaining');
+              sessionStorage.removeItem('skm_qr_validated_at');
+              return; // block game start — user must re-scan
+            }
+
             if (isGolden) {
-              console.log('[QR] Golden QR detected — unlimited retry enabled');
+              console.log('[QR] Golden QR — unlimited retry enabled');
               updateSession({ remainingAttempts: 999, unlimited: true });
             } else {
-              console.log('[QR] Normal QR detected — 2 play limit set');
-              updateSession({ remainingAttempts: 2 });
+              // Use the exact remaining count committed by the Firestore transaction.
+              // remaining is plays left AFTER this one was consumed, so total plays
+              // available to this session = remaining + 1 (the one just used to enter).
+              const remaining = remainingRaw !== null ? Number(remainingRaw) : 0;
+              const totalPlays = remaining + 1; // +1 = the current session just validated
+              console.log('[QR] Normal QR — transaction-confirmed plays for this session:', totalPlays, '| remaining after entry:', remaining);
+              updateSession({ remainingAttempts: totalPlays });
             }
             handleStartGame();
           }}

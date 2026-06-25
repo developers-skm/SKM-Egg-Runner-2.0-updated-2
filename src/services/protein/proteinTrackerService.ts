@@ -18,7 +18,6 @@ import {
   serverTimestamp, Timestamp,
   query, orderBy, limit, where,
   increment,
-  runTransaction,
 } from 'firebase/firestore';
 import { db } from '../firebase/firebase';
 import { updateSummaryOnScan, updateSummaryOnManualEntry } from './userSummaryService';
@@ -260,36 +259,18 @@ export async function checkProteinScanExists(uid: string, qrCode: string): Promi
 export async function logEggScan(uid: string, qrCode: string): Promise<{
   entry: ProteinLogEntry; streak: StreakInfo; xpEarned: number; coinsEarned: number;
 }> {
-  const dateKey   = todayKey();
-  const dedupRef  = doc(db, 'proteinScans', proteinScanDocId(uid, qrCode));
-  const colRef    = collection(db, 'protein_logs', uid, 'entries');
+  // Dedup is now handled atomically by claimProteinScan() before this function
+  // is called, so we skip the dedup transaction here and write the log entry directly.
+  const dateKey = todayKey();
+  const colRef  = collection(db, 'protein_logs', uid, 'entries');
+  const newRef  = doc(colRef);
+  const entryId = newRef.id;
 
-  // Write the dedup record inside a transaction so it's atomic.
-  // If the doc already exists the transaction returns null and we skip.
-  let entryId: string | null = null;
-
-  await runTransaction(db, async tx => {
-    const snap = await tx.get(dedupRef);
-    if (snap.exists()) {
-      // Already logged — transaction is a no-op; caller should have checked first
-      return;
-    }
-    // Mark as used
-    tx.set(dedupRef, {
-      userId:       uid,
-      qrId:         qrCode,
-      proteinAdded: PROTEIN_PER_EGG,
-      timestamp:    serverTimestamp(),
-    });
-    // We cannot addDoc inside a transaction, so we pre-generate the ID via a ref
-    const newRef = doc(colRef);
-    entryId = newRef.id;
-    tx.set(newRef, {
-      uid, type: 'qr_scan', foodName: 'SKM Egg',
-      protein: PROTEIN_PER_EGG, calories: CALORIES_PER_EGG,
-      quantity: 1, meal: getMealByTime(), dateKey,
-      loggedAt: serverTimestamp(), qrCode, category: 'Eggs',
-    });
+  await setDoc(newRef, {
+    uid, type: 'qr_scan', foodName: 'SKM Egg',
+    protein: PROTEIN_PER_EGG, calories: CALORIES_PER_EGG,
+    quantity: 1, meal: getMealByTime(), dateKey,
+    loggedAt: serverTimestamp(), qrCode, category: 'Eggs',
   });
 
   const entry: Omit<ProteinLogEntry, 'id'> = {

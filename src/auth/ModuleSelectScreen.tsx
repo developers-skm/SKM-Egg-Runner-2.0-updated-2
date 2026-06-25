@@ -300,14 +300,25 @@ function QRAccessModal({
           }
 
           if (result.ok === true) {
+            // Store the exact remaining count returned by the committed transaction.
+            // App.tsx reads this value — never hardcode it there.
             if (result.unlimited) {
               sessionStorage.setItem('skm_golden_qr', 'true');
+              sessionStorage.setItem('skm_qr_remaining', '999');
             } else {
               sessionStorage.removeItem('skm_golden_qr');
+              sessionStorage.setItem('skm_qr_remaining', String(result.remaining));
             }
+            // Timestamp lets App.tsx detect page-refresh reuse of an old session
+            sessionStorage.setItem('skm_qr_validated_at', String(Date.now()));
+
             setScanSuccess(true);
             setScanError(null);
-            setScanMsg(result.unlimited ? '✓ Access Granted — Unlimited Play!' : '✓ Access Granted — Starting game…');
+            setScanMsg(
+              result.unlimited
+                ? '✓ Access Granted — Unlimited Play!'
+                : `✓ Access Granted — ${result.remaining + 1} play${result.remaining + 1 !== 1 ? 's' : ''} awarded`,
+            );
             // Navigate after 1 second — don't call closeWith (avoids double-stopScanner hang)
             setTimeout(() => onConfirm(), 1000);
           } else {
