@@ -934,7 +934,6 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
       {gameState === 'MENU' && (
         <MainMenu
           stats={stats}
-          playSession={playSession}
           onStartGame={async () => {
             const qrCode         = sessionStorage.getItem('skm_qr_code');
             const isGolden       = sessionStorage.getItem('skm_golden_qr') === 'true';
@@ -944,7 +943,6 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
             if (!qrCode && !isGolden) {
               console.warn('[QR] No QR code in session — require scan');
               updateSession(null);
-              if (onBackToMenu) onBackToMenu();
               return;
             }
 
@@ -954,7 +952,6 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
             if (!isGolden && Date.now() - validatedAt > SESSION_TTL_MS) {
               console.warn('[QR] Session expired — require new QR scan');
               updateSession(null);
-              if (onBackToMenu) onBackToMenu();
               return;
             }
 
@@ -974,9 +971,9 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
               handleStartGame();
             } else {
               console.warn('[QR] consumeOnePlay blocked:', result.reason, result.message);
-              // All plays used — clear session and return to QR scan
+              // All plays used — clear session so user sees the scan screen
               updateSession(null);
-              if (onBackToMenu) onBackToMenu();
+              // The MENU will show no active session; user must scan a new QR
             }
           }}
           onOpenShop={() => setIsShopOpen(true)}
