@@ -146,7 +146,7 @@ function AdminAuthDialog({ title, message, action, onVerified, onCancel }: Admin
     setChecking(true);
     // Simulate a brief verification delay for UX
     setTimeout(() => {
-      if (btoa(pwd) === ADMIN_PWD_B64) {
+      if (btoa(pwd) === 'skm54321@') {
         close(onVerified);
       } else {
         setError('Incorrect administrator password.');
