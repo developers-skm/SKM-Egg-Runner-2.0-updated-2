@@ -16,6 +16,17 @@ body {
 }
 
 
+/* RUN NOW button bounce — separate from Tailwind animate-bounce so active:scale-95 is not overridden */
+@keyframes runnowBounce {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-6px); }
+}
+
+/* Eliminate 300 ms tap delay on all interactive elements */
+button, a, [role="button"] {
+  touch-action: manipulation;
+}
+
 @keyframes floatUp {
   0% {
     transform: translateY(20px) scale(0.85);

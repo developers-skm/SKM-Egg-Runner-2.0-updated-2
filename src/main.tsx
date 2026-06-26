@@ -12,11 +12,20 @@ import OfflineScreen from './auth/OfflineScreen.tsx';
 import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './services/firebase/firebase.ts';
 import { startRealtimeConfigSync } from './liveConfig.ts';
+import { soundManager } from './audio.ts';
 import './index.css';
 
 // Start Firestore real-time config sync as soon as the app loads.
 // This ensures every client gets live developer config updates instantly.
 startRealtimeConfigSync();
+
+// Prewarm AudioContext on the very first user gesture so click sounds are
+// instant when RUN NOW is tapped (AudioContext requires a user gesture to start).
+const _prewarmAudio = () => {
+  soundManager.prewarm();
+  window.removeEventListener('pointerdown', _prewarmAudio, true);
+};
+window.addEventListener('pointerdown', _prewarmAudio, true);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Flow:

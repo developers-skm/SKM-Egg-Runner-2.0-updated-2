@@ -114,11 +114,26 @@ export const MainMenu: React.FC<MainMenuProps> = ({
     onClaimDailyReward(currentReward.type, currentReward.value);
   };
 
-  // ── RUN NOW — game is already QR-validated at module select, start directly ─
-  const handleRunNow = () => {
+  // ── RUN NOW ───────────────────────────────────────────────────────────────
+  // Fire sound + game start on pointerdown so there is zero click-delay on
+  // mobile. A ref guard prevents double-fires from rapid taps.
+  const runNowFiredRef = React.useRef(false);
+
+  const handleRunNowPointerDown = React.useCallback(() => {
+    if (runNowFiredRef.current) return;
+    runNowFiredRef.current = true;
     soundManager.playClick();
     onStartGame();
-  };
+    // Reset guard after a short window so the button works again if the
+    // game transitions back to MENU (e.g. after a failed QR consume).
+    setTimeout(() => { runNowFiredRef.current = false; }, 800);
+  }, [onStartGame]);
+
+  // onClick is kept as a no-op fallback for keyboard/accessibility — the real
+  // action already fired on pointerdown, so we suppress the synthetic click.
+  const handleRunNowClick = React.useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+  }, []);
 
   return (
     <div
@@ -190,11 +205,13 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         </div>
 
         <div className="flex flex-col gap-3 min-w-64 max-w-xs w-full">
-          {/* RUN NOW — starts game directly (QR already validated at module select) */}
+          {/* RUN NOW — fires on pointerdown for zero-latency response on mobile */}
           <button
             id="btn_play_now"
-            onClick={handleRunNow}
-            className="group relative bg-gradient-to-r from-yellow-400 via-amber-500 to-yellow-400 bg-[length:200%_auto] hover:bg-right hover:scale-105 text-slate-950 font-black py-4 px-6 rounded-2xl shadow-xl shadow-yellow-500/30 transition-all duration-300 active:scale-95 flex flex-col items-center justify-center gap-0.5 text-lg uppercase cursor-pointer tracking-wider animate-bounce"
+            onPointerDown={handleRunNowPointerDown}
+            onClick={handleRunNowClick}
+            className="group relative bg-gradient-to-r from-yellow-400 via-amber-500 to-yellow-400 bg-[length:200%_auto] hover:bg-right hover:scale-105 text-slate-950 font-black py-4 px-6 rounded-2xl shadow-xl shadow-yellow-500/30 transition-all duration-300 active:scale-95 flex flex-col items-center justify-center gap-0.5 text-lg uppercase cursor-pointer tracking-wider"
+            style={{ animation: 'runnowBounce 1.8s ease-in-out infinite' }}
           >
             <div className="absolute inset-0 rounded-2xl bg-white/25 opacity-0 group-hover:opacity-100 transition-opacity" />
             <div className="flex items-center gap-2">

@@ -37,8 +37,16 @@ class SoundManager {
   private collectCombo: number = 0;
 
   constructor() {
-    // Volume configs are loaded early. Context is initialized on first user click.
+    // Volume configs are loaded early. Context is initialized on first user interaction.
     this.loadFromStorage();
+  }
+
+  // Call once on the very first user gesture so AudioContext is ready before RUN NOW.
+  public prewarm() {
+    this.ensureContext();
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
   }
 
   private loadFromStorage() {
