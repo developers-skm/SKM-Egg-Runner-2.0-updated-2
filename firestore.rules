@@ -118,12 +118,12 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Admin operation log — developer read/write only
+    // Admin operation log — developer read/write/delete only
     match /qrOperationLogs/{logId} {
       allow read:   if isDeveloper();
       allow create: if isDeveloper();
       allow update: if false;
-      allow delete: if false;
+      allow delete: if isDeveloper();
     }
 
     match /gameConfig/{docId} {
@@ -131,6 +131,12 @@ service cloud.firestore {
       // Developer may write config; fallback UID kept for backward compat
       allow write: if isDeveloper()
                    || (isAuth() && request.auth.uid == 'YOUR_DEVELOPER_UID');
+    }
+
+    // QR Management Settings (game link mapping, etc.) — developer only
+    match /skm_config/{docId} {
+      allow read:  if isDeveloper();
+      allow write: if isDeveloper();
     }
 
     // Game missions (subcollection used by game engine)

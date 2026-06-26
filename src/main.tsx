@@ -111,17 +111,17 @@ function AppRoot() {
     }
   }, [user?.uid]);
 
-  // Stop BGM when entering QR Management; resume when leaving.
-  // soundManager is a singleton whose BGM sequencer keeps running across
-  // screen transitions unless explicitly stopped here.
+  // BGM ownership: the game engine is the SOLE owner of startMusic().
+  // Every non-GAME screen must be silent. Stop the sequencer immediately
+  // on any transition away from the game so QR Management, Module Select,
+  // Protein Tracker, and the login screen are all quiet.
+  // The engine's start() call re-starts BGM when a run begins.
   useEffect(() => {
-    if (screen === 'QR_MANAGEMENT') {
+    if (screen !== 'GAME') {
       soundManager.stopMusic();
-      console.log('[AUDIO] Route: /codes — Game BGM stopped.');
-    } else if (screen === 'GAME') {
-      soundManager.startMusic();
-      console.log('[AUDIO] Route: / — Game BGM resumed.');
+      console.log(`[AUDIO] Screen: ${screen} — Game BGM stopped.`);
     }
+    // No startMusic() here — engine.start() handles that exclusively.
   }, [screen]);
 
   // ── Loading splash ────────────────────────────────────────────────────────

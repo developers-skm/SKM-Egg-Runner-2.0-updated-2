@@ -321,6 +321,15 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
     soundManager.setConfig(stats.soundEnabled, stats.musicEnabled);
   }, [stats.soundEnabled, stats.musicEnabled]);
 
+  // Stop BGM when App unmounts (user leaves game to QR Management or any other screen).
+  // Belt-and-suspenders alongside the main.tsx screen-change effect.
+  useEffect(() => {
+    return () => {
+      soundManager.stopMusic();
+      console.log('[AUDIO] App unmounted — Game BGM stopped.');
+    };
+  }, []);
+
   // --- Live configuration checking and browser anomaly recording hooks ---
   useEffect(() => {
     // 1. Server config polling sequence on initial system startup

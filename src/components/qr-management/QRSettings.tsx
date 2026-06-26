@@ -9,7 +9,7 @@ import {
 } from '../../services/qr/qrManagementService';
 import { useAuth } from '../../auth/AuthProvider';
 import {
-  collection, getDocs, writeBatch, doc, addDoc, serverTimestamp,
+  collection, getDocs, writeBatch, doc, getDoc, addDoc, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../../services/firebase/firebase';
 
@@ -292,6 +292,26 @@ function ResetModal({ actor, email, onSuccess, onCancel }: ResetModalProps) {
     setProgress(0);
 
     try {
+      // ── Debug: log current user UID and Firestore role ──────────────────
+      const uid = actor; // actor is displayName/email from useAuth
+      console.group('[RESET] Permission diagnostics');
+      console.log('Actor:', actor, '| Email:', email);
+
+      // Read the user's Firestore doc to check role field
+      // (The Firebase Auth uid comes from the useAuth hook in the parent)
+      // We import db directly — pull UID from Firebase Auth if available
+      try {
+        // Attempt to read any qrCodes doc to test delete permission
+        const testSnap = await getDocs(collection(db, 'qrCodes'));
+        console.log('qrCodes readable: yes — doc count:', testSnap.size);
+        console.log('NOTE: delete permission requires role == "developer" in your users/{uid} document.');
+        console.log('If reset fails, open Firestore → users → your UID → confirm role: "developer" exists.');
+      } catch (permErr: any) {
+        console.error('qrCodes read failed:', permErr?.message);
+      }
+      console.groupEnd();
+      // ───────────────────────────────────────────────────────────────────
+
       // Step 1: write audit log BEFORE deletion
       await addDoc(collection(db, 'qrOperationLogs'), {
         operation:   'full-database-reset',
