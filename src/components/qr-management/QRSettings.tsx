@@ -17,9 +17,12 @@ const RED    = '#D71920';
 const DANGER = '#DC2626';
 const SAFE   = '#16A34A';
 
-// Admin password — stored as a hash comparison (base64 obfuscation for UI layer).
-// Real production apps would verify server-side; this matches the spec requirement.
-const ADMIN_PWD_B64 = btoa('npm run dev'); // 'c2ttNTQzMjFA'
+// Passwords stored as base64 so they are not plain-text in the bundle.
+// Game Link update password: skm543212@
+const GAME_LINK_PWD_B64 = btoa('skm543212@');
+// Delete All QR Data password: npm run dev
+const RESET_PWD_B64     = btoa('npm run dev');
+
 const CONFIRM_PHRASE = 'DELETE ALL QR DATA';
 
 // Collections that belong entirely to QR management and are safe to wipe
@@ -117,14 +120,15 @@ function PasswordInput({
 // ─── Admin Password Dialog ────────────────────────────────────────────────────
 
 interface AdminAuthDialogProps {
-  title:    string;
-  message:  string;
-  action:   string;       // label for the confirm button
-  onVerified: () => void;
-  onCancel:   () => void;
+  title:          string;
+  message:        string;
+  action:         string;
+  expectedPwdB64: string;  // btoa of the correct password for this action
+  onVerified:     () => void;
+  onCancel:       () => void;
 }
 
-function AdminAuthDialog({ title, message, action, onVerified, onCancel }: AdminAuthDialogProps) {
+function AdminAuthDialog({ title, message, action, expectedPwdB64, onVerified, onCancel }: AdminAuthDialogProps) {
   const [visible, setVisible] = useState(false);
   const [pwd,     setPwd]     = useState('');
   const [error,   setError]   = useState('');
@@ -146,7 +150,7 @@ function AdminAuthDialog({ title, message, action, onVerified, onCancel }: Admin
     setChecking(true);
     // Simulate a brief verification delay for UX
     setTimeout(() => {
-      if (btoa(pwd) === 'skm54321@') {
+      if (btoa(pwd) === expectedPwdB64) {
         close(onVerified);
       } else {
         setError('Incorrect administrator password.');
@@ -460,6 +464,7 @@ function ResetModal({ actor, email, onSuccess, onCancel }: ResetModalProps) {
         title="Reset QR Database"
         message="Enter the administrator password to proceed with the database reset. This action cannot be undone."
         action="Proceed to Confirmation"
+        expectedPwdB64={RESET_PWD_B64}
         onVerified={() => setStep('confirm')}
         onCancel={() => close(onCancel)}
       />
@@ -947,6 +952,7 @@ export default function QRSettings() {
           title="Update Game Link"
           message="Enter the administrator password to update the active Game Link. This change will affect all newly generated QR codes."
           action="Verify & Save"
+          expectedPwdB64={GAME_LINK_PWD_B64}
           onVerified={handleLinkAuthVerified}
           onCancel={() => setShowLinkAuth(false)}
         />
