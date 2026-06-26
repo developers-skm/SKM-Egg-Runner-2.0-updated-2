@@ -248,12 +248,39 @@ export async function generateQRCodes(
   onProgress?: (done: number, total: number) => void,
 ): Promise<GeneratedQR[]> {
   const { displayName, internalId } = nextBatchName();
-  const batchLabel  = displayName;
-  const activeGameUrl = getGameUrl(); // snapshot once at generation start
+  const batchLabel = displayName;
 
-  // Debug log — verifiable that the correct URL is being embedded
+  // ── Fetch the active Game Link directly from Firestore at generation time ──
+  // This is the single source of truth. We never rely on localStorage, cached
+  // React state, module-level constants, or environment variables.
+  // If Firestore is unreachable, fall back to localStorage, then the default.
+  let activeGameUrl: string = DEFAULT_BASE_URL;
+  let urlSource = 'default';
+  try {
+    const cfgSnap = await getDoc(doc(db, CONFIG_COLLECTION, CONFIG_DOC));
+    if (cfgSnap.exists() && cfgSnap.data().url) {
+      activeGameUrl = (cfgSnap.data().url as string).replace(/\/$/, '');
+      urlSource = 'Firestore Settings';
+      // Keep localStorage in sync
+      try { localStorage.setItem(GAME_URL_KEY, activeGameUrl); } catch { /* ignore */ }
+    } else {
+      // No Firestore doc yet — fall back to localStorage
+      const ls = getGameUrl();
+      activeGameUrl = ls;
+      urlSource = ls !== DEFAULT_BASE_URL ? 'localStorage' : 'default constant';
+    }
+  } catch (e: any) {
+    // Firestore unreachable — use localStorage
+    const ls = getGameUrl();
+    activeGameUrl = ls;
+    urlSource = 'localStorage (Firestore unavailable)';
+    console.warn('[QR GENERATOR] Firestore unreachable, falling back:', e?.message);
+  }
+
+  // Debug log — verifiable in browser console that the correct URL is embedded
   console.group('[QR GENERATOR]');
-  console.log('Using URL:', activeGameUrl);
+  console.log('Active Game Link:', activeGameUrl);
+  console.log('Source:', urlSource);
   console.log('Batch:', batchLabel, '| Prefix:', prefix, '| Quantity:', quantity, '| Type:', type);
   console.log('Timestamp:', new Date().toISOString());
   console.groupEnd();
@@ -301,6 +328,37 @@ export async function generateQRCodes(
     onProgress?.(Math.min(chunkStart + FIRESTORE_CHUNK, codes.length), codes.length);
     // Yield to the browser between chunks
     await new Promise<void>(r => setTimeout(r, 0));
+  }
+
+  // ── Post-generation verification ─────────────────────────────────────────
+  // Read back the first generated code from Firestore and confirm its stored
+  // URL matches what we intended to embed. Catches any write inconsistency.
+  if (codes.length > 0) {
+    try {
+      const firstCode = codes[0].code;
+      const verifySnap = await getDoc(doc(db, COLLECTION, firstCode));
+      if (verifySnap.exists()) {
+        const storedUrl = verifySnap.data().url as string;
+        if (!storedUrl?.startsWith(activeGameUrl)) {
+          console.error(
+            '[QR GENERATOR] VERIFICATION FAILED — embedded URL mismatch!\n',
+            'Expected prefix:', activeGameUrl,
+            '\nStored URL:', storedUrl,
+          );
+          throw new Error(
+            `QR mapping mismatch. The generated QR contains "${storedUrl}" ` +
+            `but the active Game Link is "${activeGameUrl}". ` +
+            `Please check Settings and try again.`
+          );
+        }
+        console.log('[QR GENERATOR] Verification passed — URL matches:', storedUrl);
+      }
+    } catch (e: any) {
+      // Re-throw only if it's our own mismatch error
+      if (e.message?.includes('QR mapping mismatch')) throw e;
+      // Firestore read-back errors are non-fatal (codes are already written)
+      console.warn('[QR GENERATOR] Post-generation verify read failed (non-fatal):', e?.message);
+    }
   }
 
   return codes;
