@@ -564,13 +564,6 @@ export default function QRGenerator({ onGenerated }: Props) {
       <div style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 18, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
 
         {/* Active game link indicator — always live */}
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          padding: '9px 13px', background: '#F0FDF4',
-          border: '1px solid #BBF7D0', borderRadius: 10, marginBottom: 16,
-        }}>
-        </div>
-
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 14, marginBottom: 18 }}>
           <div>
             <label style={labelStyle}>QR Prefix</label>
