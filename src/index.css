@@ -16,10 +16,10 @@ body {
 }
 
 
-/* RUN NOW button bounce — separate from Tailwind animate-bounce so active:scale-95 is not overridden */
+/* RUN NOW button bounce — JS overrides animation on press so scale feedback is instant */
 @keyframes runnowBounce {
-  0%, 100% { transform: translateY(0); }
-  50%       { transform: translateY(-6px); }
+  0%, 100% { transform: translateY(0)    scale(1); }
+  50%       { transform: translateY(-6px) scale(1); }
 }
 
 /* Eliminate 300 ms tap delay on all interactive elements */

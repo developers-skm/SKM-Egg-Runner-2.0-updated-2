@@ -115,21 +115,37 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   };
 
   // ── RUN NOW ───────────────────────────────────────────────────────────────
-  // pointerdown fires before the 300ms click delay on Android/iOS.
-  // A ref guard prevents double-fires from rapid taps.
-  const runNowFiredRef = React.useRef(false);
+  // Strategy: fire sound + visual feedback instantly on pointerdown.
+  // The async QR-consume work happens in onStartGame — we don't block on it.
+  // Guard prevents double-fire within a 300ms window (shorter than before so
+  // returning to MENU and tapping again is never blocked).
+  const runNowFiredRef    = React.useRef(false);
+  const [runNowPressed,   setRunNowPressed] = React.useState(false);
 
   const handleRunNowPointerDown = React.useCallback((e: React.PointerEvent) => {
-    // Only handle primary pointer (left-click / first touch finger)
-    if (e.button !== 0 && e.pointerType !== 'touch') return;
+    // Accept primary mouse button OR any touch pointer
+    if (e.pointerType !== 'touch' && e.button !== 0) return;
     if (runNowFiredRef.current) return;
+
     runNowFiredRef.current = true;
-    // Stop propagation so the backdrop overlay doesn't swallow the event
     e.stopPropagation();
+
+    // Instant visual press feedback (scale down) — separate from bounce animation
+    setRunNowPressed(true);
+
+    // Sound fires synchronously before any async work
     soundManager.playClick();
+
+    // Kick off the game start — async internally but we don't await here
     onStartGame();
-    // Reset after 800 ms so the button is live again if game returns to MENU
-    setTimeout(() => { runNowFiredRef.current = false; }, 800);
+
+    // Release press state and guard after 300 ms
+    // 300 ms is enough to prevent double-fire but short enough that
+    // returning to MENU and tapping again always works on the first touch
+    setTimeout(() => {
+      setRunNowPressed(false);
+      runNowFiredRef.current = false;
+    }, 300);
   }, [onStartGame]);
 
   return (
@@ -208,17 +224,20 @@ export const MainMenu: React.FC<MainMenuProps> = ({
           <button
             id="btn_play_now"
             onPointerDown={handleRunNowPointerDown}
-            className="group relative bg-gradient-to-r from-yellow-400 via-amber-500 to-yellow-400 bg-[length:200%_auto] hover:bg-right hover:scale-105 text-slate-950 font-black py-4 px-6 rounded-2xl shadow-xl shadow-yellow-500/30 transition-all duration-300 active:scale-95 flex flex-col items-center justify-center gap-0.5 text-lg uppercase tracking-wider"
+            className="relative bg-gradient-to-r from-yellow-400 via-amber-500 to-yellow-400 text-slate-950 font-black py-4 px-6 rounded-2xl shadow-xl shadow-yellow-500/30 flex flex-col items-center justify-center gap-0.5 text-lg uppercase tracking-wider"
             style={{
-              animation: 'runnowBounce 1.8s ease-in-out infinite',
+              // Use JS-driven transform instead of CSS :active so Android never misses it
+              transform: runNowPressed ? 'scale(0.94)' : 'scale(1)',
+              animation: runNowPressed ? 'none' : 'runnowBounce 1.8s ease-in-out infinite',
+              transition: runNowPressed ? 'transform 60ms ease-out' : 'transform 200ms ease-in',
               touchAction: 'manipulation',
               WebkitTapHighlightColor: 'transparent',
               cursor: 'pointer',
               userSelect: 'none',
               WebkitUserSelect: 'none',
+              willChange: 'transform',
             }}
           >
-            <div className="absolute inset-0 rounded-2xl bg-white/25 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
             <div className="flex items-center gap-2 pointer-events-none">
               <Play className="w-4 h-4 fill-slate-950" />
               <span className="text-base font-extrabold font-sans">RUN NOW</span>
