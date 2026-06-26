@@ -569,13 +569,6 @@ export default function QRGenerator({ onGenerated }: Props) {
           padding: '9px 13px', background: '#F0FDF4',
           border: '1px solid #BBF7D0', borderRadius: 10, marginBottom: 16,
         }}>
-          <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#22C55E', boxShadow: '0 0 5px #22C55E80', flexShrink: 0 }} />
-          <span style={{ fontSize: 10, fontWeight: 700, color: '#15803D', textTransform: 'uppercase', letterSpacing: 0.8, flexShrink: 0 }}>
-            Using Active Link:
-          </span>
-          <code style={{ fontSize: 11, color: '#15803D', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-            {liveGameUrl}
-          </code>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 14, marginBottom: 18 }}>
