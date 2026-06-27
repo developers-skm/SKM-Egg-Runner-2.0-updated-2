@@ -24,12 +24,31 @@ async function makeQRDataUrl(qr: QRCodeRecord, base: string): Promise<string> {
   });
 }
 
+/** Fetch any URL and return it as a base64 data-URL. Falls back to '' on error. */
+async function toDataUrl(src: string): Promise<string> {
+  try {
+    const res  = await fetch(src);
+    const blob = await res.blob();
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload  = () => resolve(reader.result as string);
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return '';
+  }
+}
+
 async function printQRCodes(codes: QRCodeRecord[], actor: string): Promise<void> {
   console.log('[PRINT] Preparing printable document —', codes.length, 'QR codes');
 
   // Fetch active game link from Firestore once before rendering any QR images
   const activeBase = await syncGameUrlFromFirestore();
   console.log('[SETTINGS] Current URL:', activeBase, '| Source: Firestore Settings');
+
+  // Fetch logo as base64 so it renders correctly in the detached print window
+  const logoDataUrl = await toDataUrl('/skm header logo.png');
 
   const PER_ROW = 3; const PER_PAGE = 9;
   const items = await Promise.all(codes.map(async (qr, idx) => ({
@@ -68,11 +87,11 @@ async function printQRCodes(codes: QRCodeRecord[], actor: string): Promise<void>
     body { font-family: system-ui, sans-serif; margin: 0; }
     .page { page-break-after: always; }
     .page:last-child { page-break-after: avoid; }
-    .header { display: flex; justify-content: space-between; align-items: center;
-               border-bottom: 2px solid #D71920; padding-bottom: 8px; margin-bottom: 16px; }
-    .header-company { font-size: 18px; font-weight: 900; color: #D71920; }
-    .header-batch   { font-size: 11px; font-weight: 700; color: #1A1A1A; margin-top: 2px; }
-    .header-meta    { font-size: 9px; color: #888; text-align: right; line-height: 1.6; }
+    .header       { display: flex; justify-content: space-between; align-items: center;
+                    border-bottom: 2px solid #D71920; padding-bottom: 8px; margin-bottom: 16px; }
+    .header-logo  { height: 48px; width: auto; display: block; object-fit: contain; }
+    .header-batch { font-size: 11px; font-weight: 700; color: #1A1A1A; margin-top: 3px; }
+    .header-meta  { font-size: 9px; color: #888; text-align: right; line-height: 1.6; }
     table { width: 100%; border-collapse: collapse; }
     .footer { margin-top: 12px; text-align: center; font-size: 9px; color: #9CA3AF; }
     @media print {
@@ -85,7 +104,9 @@ async function printQRCodes(codes: QRCodeRecord[], actor: string): Promise<void>
   <div class="page">
     <div class="header">
       <div>
-        <div class="header-company">SKM EGG PRODUCTS</div>
+        ${logoDataUrl
+          ? `<img src="${logoDataUrl}" class="header-logo" alt="SKM Logo"/>`
+          : `<div style="font-size:18px;font-weight:900;color:#D71920">SKM EGG PRODUCTS</div>`}
         <div class="header-batch">QR Code Sheet — Batch ${pi + 1}</div>
       </div>
       <div class="header-meta">
