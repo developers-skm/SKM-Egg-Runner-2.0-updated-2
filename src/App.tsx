@@ -554,7 +554,7 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
 
   // --- Start Game Run ---
   const handleStartGame = () => {
-    console.log('[GAME START] Initializing game…');
+    console.log('[GAME] Initializing game…');
 
     setIsShopOpen(false);
     setIsMissionsOpen(false);
@@ -571,7 +571,7 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
     setBrownEggsCollected(0);
     setIsStage2(false);
 
-    console.log('[GAME START] Starting game loop…');
+    console.log('[GAME] Game loop started.');
     setGameState('PLAYING');
     setRunStats({
       score: 0,
@@ -584,26 +584,23 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
     });
     setActivePowerUps([]);
 
-    // Capture engine ref synchronously before any async gap.
-    // The engine effect now has an empty dep array so the engine is never torn
-    // down mid-flight — this ref will always be valid after component mount.
+    // Capture engine ref synchronously — engine lives for full App lifetime
+    // (empty dep array on the init effect) so this is always valid post-mount.
     const engine = engineRef.current;
     if (!engine) {
-      console.error('[GAME START] Engine not initialized — cannot start. This should never happen.');
+      console.error('[GAME] Engine not initialized — cannot start. This should never happen.');
       isStartingRef.current = false;
       return;
     }
 
-    console.log('[GAME START] Spawning player…');
+    console.log('[GAME] Player spawned.');
     const curSkin = skinsList.find(s => s.id === stats.activeSkinId) || skinsList[0];
     engine.setSkin(curSkin.id, curSkin.color, curSkin.accentColor);
     engine.debugHitboxesActive = debugHitboxes;
 
-    // engine.start() is synchronous — it starts the RAF loop and spawns the player.
-    // No setTimeout needed now that engine is guaranteed to exist.
     engine.start();
     isStartingRef.current = false;
-    console.log('[GAME START] Game started successfully.');
+    console.log('[GAME] Gameplay started.');
   };
 
   const handlePause = () => {
@@ -621,32 +618,47 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
   };
 
   const handleRestart = async () => {
-    if (playSession?.unlimited) {
-      console.log('[RETRY] Golden QR — unlimited, no Firestore consume');
-      handleStartGame();
+    if (isStartingRef.current) {
+      console.warn('[GAME] Retry ignored — already starting.');
       return;
     }
+    isStartingRef.current = true;
+    console.log('[GAME] Retry clicked.');
 
-    const qrCode = sessionStorage.getItem('skm_qr_code');
-    if (!qrCode) {
-      console.warn('[RETRY] No QR code in session — returning to menu');
-      if (engineRef.current) engineRef.current.resetToShowcase();
-      updateSession(null);
-      setGameState('MENU');
-      return;
-    }
+    try {
+      if (playSession?.unlimited) {
+        console.log('[GAME] Initializing game — Golden QR unlimited, no Firestore consume.');
+        handleStartGame();
+        return;
+      }
 
-    // Consume one play from Firestore — blocks if all plays are used
-    const result = await consumeOnePlay(qrCode);
-    if (result.ok) {
-      console.log('[RETRY] Play consumed — remaining:', result.remaining);
-      updateSession({ remainingAttempts: result.remaining });
-      handleStartGame();
-    } else {
-      console.warn('[RETRY] Blocked by Firestore:', result.reason, result.message);
-      if (engineRef.current) engineRef.current.resetToShowcase();
-      updateSession(null);
-      setGameState('MENU');
+      const qrCode = sessionStorage.getItem('skm_qr_code');
+      if (!qrCode) {
+        console.warn('[GAME] Retry blocked — no QR code in session. Returning to menu.');
+        if (engineRef.current) engineRef.current.resetToShowcase();
+        updateSession(null);
+        setGameState('MENU');
+        isStartingRef.current = false;
+        return;
+      }
+
+      console.log('[GAME] Initializing game — consuming play from Firestore…');
+      const result = await consumeOnePlay(qrCode);
+
+      if (result.ok) {
+        console.log('[GAME] Assets ready — play consumed, remaining:', result.remaining);
+        updateSession({ remainingAttempts: result.remaining });
+        handleStartGame();
+      } else {
+        console.warn('[GAME] Retry blocked by Firestore:', result.reason, result.message);
+        if (engineRef.current) engineRef.current.resetToShowcase();
+        updateSession(null);
+        setGameState('MENU');
+        isStartingRef.current = false;
+      }
+    } catch (err: any) {
+      console.error('[GAME] Retry error:', err?.message ?? err);
+      isStartingRef.current = false;
     }
   };
 
@@ -972,22 +984,22 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
           onStartGame={async () => {
             // Hard guard: hold through the full async pipeline, not just 300ms.
             if (isStartingRef.current) {
-              console.warn('[GAME START] Already starting — ignoring duplicate tap.');
+              console.warn('[GAME] Already starting — ignoring duplicate tap.');
               return;
             }
             isStartingRef.current = true;
-            console.log('[GAME START] Button clicked.');
+            console.log('[GAME] Button clicked.');
 
             try {
               const qrCode         = sessionStorage.getItem('skm_qr_code');
               const isGolden       = sessionStorage.getItem('skm_golden_qr') === 'true';
               const validatedAtRaw = sessionStorage.getItem('skm_qr_validated_at');
 
-              console.log('[GAME START] Validation started — qrCode:', qrCode, '| isGolden:', isGolden);
+              console.log('[GAME] Validation started — qrCode:', qrCode, '| isGolden:', isGolden);
 
               // No QR scanned this session — send back to scan
               if (!qrCode && !isGolden) {
-                console.warn('[GAME START] Validation failed — no QR in session. Require scan.');
+                console.warn('[GAME] Validation failed — no QR in session. Require scan.');
                 updateSession(null);
                 isStartingRef.current = false;
                 return;
@@ -997,38 +1009,38 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
               const SESSION_TTL_MS = 30 * 60 * 1000;
               const validatedAt    = validatedAtRaw ? Number(validatedAtRaw) : 0;
               if (!isGolden && Date.now() - validatedAt > SESSION_TTL_MS) {
-                console.warn('[GAME START] Validation failed — QR session expired. Require new scan.');
+                console.warn('[GAME] Validation failed — QR session expired. Require new scan.');
                 updateSession(null);
                 isStartingRef.current = false;
                 return;
               }
 
-              console.log('[GAME START] Validation passed.');
+              console.log('[GAME] Validation passed.');
 
               if (isGolden) {
-                console.log('[GAME START] Golden QR — unlimited plays, skipping Firestore consume.');
-                console.log('[GAME START] Session created.');
+                console.log('[GAME] Golden QR — unlimited plays, skipping Firestore consume.');
+                console.log('[GAME] Session created.');
                 updateSession({ remainingAttempts: 999, unlimited: true });
                 handleStartGame();
                 return;
               }
 
               // Consume one play from Firestore — authoritative gate
-              console.log('[GAME START] Loading assets / consuming play from Firestore…');
+              console.log('[GAME] Loading assets / consuming play from Firestore…');
               const result = await consumeOnePlay(qrCode!);
 
               if (result.ok) {
-                console.log('[GAME START] Assets loaded. Play consumed — remaining:', result.remaining);
-                console.log('[GAME START] Session created.');
+                console.log('[GAME] Assets loaded. Play consumed — remaining:', result.remaining);
+                console.log('[GAME] Session created.');
                 updateSession({ remainingAttempts: result.remaining });
                 handleStartGame();
               } else {
-                console.warn('[GAME START] Blocked by Firestore:', result.reason, result.message);
+                console.warn('[GAME] Blocked by Firestore:', result.reason, result.message);
                 updateSession(null);
                 isStartingRef.current = false;
               }
             } catch (err: any) {
-              console.error('[GAME START] Unexpected error in start pipeline:', err?.message ?? err);
+              console.error('[GAME] Unexpected error in start pipeline:', err?.message ?? err);
               isStartingRef.current = false;
             }
           }}

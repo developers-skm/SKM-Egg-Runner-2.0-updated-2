@@ -64,7 +64,8 @@ export const GameOverScreen: React.FC<GameOverScreenProps> = ({
   const TOTAL_ATTEMPTS = 2;
   const attemptsUsed   = unlimited ? null : Math.max(0, TOTAL_ATTEMPTS - remainingAttempts);
   console.log('[GAME OVER] remainingAttempts:', remainingAttempts, '| attemptsUsed:', attemptsUsed, '| canRetry:', canRetry);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorMessage,  setErrorMessage]  = useState<string | null>(null);
+  const retryFiredRef = React.useRef(false);
 
   // Confetti system for 3 golden eggs milestone
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -431,8 +432,17 @@ export const GameOverScreen: React.FC<GameOverScreenProps> = ({
               /* PLAY AGAIN — attempts remaining */
               <button
                 id="btn_retry_match"
-                onClick={() => { soundManager.playClick(); onRestart(); }}
+                onPointerDown={(e) => {
+                  if (e.pointerType !== 'touch' && e.button !== 0) return;
+                  if (retryFiredRef.current) return;
+                  retryFiredRef.current = true;
+                  soundManager.playClick();
+                  onRestart();
+                  // Reset guard after 1.5s — enough for the async pipeline to complete
+                  setTimeout(() => { retryFiredRef.current = false; }, 1500);
+                }}
                 className="w-16 h-16 md:w-[72px] md:h-[72px] relative group transition-all duration-300 transform active:scale-90 hover:scale-105 cursor-pointer flex items-center justify-center rounded-full shrink-0"
+                style={{ touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent' }}
               >
                 <div className="absolute inset-0 bg-[#D48C00] rounded-full translate-y-1.5 transition-all group-active:translate-y-0.5" />
                 <div className="absolute inset-0 bg-gradient-to-r from-[#FFCC00] via-[#FFAA00] to-[#FFCC00] rounded-full flex items-center justify-center border-2 border-white/50 shadow-md group-active:translate-y-1">
