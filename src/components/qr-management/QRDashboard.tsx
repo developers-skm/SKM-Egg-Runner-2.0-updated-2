@@ -331,16 +331,17 @@ function QuickStat({ label, value }: { label: string; value: string | number }) 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
 interface Props {
-  stats:      QRDashboardStats;
-  loading:    boolean;
-  error?:     string | null;
-  codes?:     QRCodeRecord[];
-  actor?:     string;
-  onNavigate?: (tab: string) => void;
-  onRefresh?:  () => void;
+  stats:              QRDashboardStats;
+  loading:            boolean;
+  error?:             string | null;
+  codes?:             QRCodeRecord[];
+  actor?:             string;
+  proteinScansToday?: number;
+  onNavigate?:        (tab: string) => void;
+  onRefresh?:         () => void;
 }
 
-export default function QRDashboard({ stats, loading, error, codes = [], actor = 'Admin', onNavigate, onRefresh }: Props) {
+export default function QRDashboard({ stats, loading, error, codes = [], actor = 'Admin', proteinScansToday = 0, onNavigate, onRefresh }: Props) {
   const [now, setNow] = useState(fmtTime);
   useEffect(() => {
     const t = setInterval(() => setNow(fmtTime()), 30_000);
@@ -445,7 +446,7 @@ export default function QRDashboard({ stats, loading, error, codes = [], actor =
               <TodayCard label="QR Generated Today"       value={generatedToday}   icon={<Plus size={18} strokeWidth={2} />}     color="#6366F1" sub="new codes created" />
               <TodayCard label="QR Scanned Today"         value={scannedToday}     icon={<ScanLine size={18} strokeWidth={2} />} color={RED}     sub="from dailyScans" />
               <TodayCard label="Game Sessions Today"      value={scannedToday}     icon={<Zap size={18} strokeWidth={2} />}      color="#0891B2" sub="game entries" />
-              <TodayCard label="Protein Tracker Scans"   value={0}                icon={<Activity size={18} strokeWidth={2} />} color="#16A34A" sub="nutrition scans" />
+              <TodayCard label="Protein Tracker Scans"   value={proteinScansToday} icon={<Activity size={18} strokeWidth={2} />} color="#16A34A" sub="nutrition scans" />
             </div>
           </div>
 

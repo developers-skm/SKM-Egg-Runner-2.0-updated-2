@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Plus, Search, Zap, Layers3,
   BarChart3, Activity, Printer, Trash2, Settings, Menu, ScanSearch,
 } from 'lucide-react';
-import { subscribeDashboardStats, fetchAllQRCodes, EMPTY_STATS } from '../../services/qr/qrManagementService';
+import { subscribeDashboardStats, fetchAllQRCodes, EMPTY_STATS, subscribeProteinScansToday } from '../../services/qr/qrManagementService';
 import type { QRDashboardStats, QRCodeRecord } from '../../types/qr/qrManagementTypes';
 import { useAuth } from '../../auth/AuthProvider';
 import QRDashboard     from '../../components/qr-management/QRDashboard';
@@ -151,13 +151,15 @@ export default function QRManagementPage({ onBack }: Props) {
   const actor = user?.email ?? user?.displayName ?? 'Admin';
   const isMobile = useIsMobile();
 
-  const [activeTab,    setActiveTab]    = useState<TabId>('dashboard');
-  const [stats,        setStats]        = useState<QRDashboardStats>(EMPTY_STATS);
-  const [codes,        setCodes]        = useState<QRCodeRecord[]>([]);
-  const [loadingStats, setLoadingStats] = useState(true);
-  const [statsError,   setStatsError]   = useState<string | null>(null);
-  const [refreshKey,   setRefreshKey]   = useState(0);
-  const unsubRef = useRef<(() => void) | null>(null);
+  const [activeTab,          setActiveTab]          = useState<TabId>('dashboard');
+  const [stats,              setStats]              = useState<QRDashboardStats>(EMPTY_STATS);
+  const [codes,              setCodes]              = useState<QRCodeRecord[]>([]);
+  const [loadingStats,       setLoadingStats]       = useState(true);
+  const [statsError,         setStatsError]         = useState<string | null>(null);
+  const [refreshKey,         setRefreshKey]         = useState(0);
+  const [proteinScansToday,  setProteinScansToday]  = useState(0);
+  const unsubRef        = useRef<(() => void) | null>(null);
+  const unsubProteinRef = useRef<(() => void) | null>(null);
 
   // Desktop: collapsed = icon-only. Mobile: open = overlay visible.
   const [desktopCollapsed, setDesktopCollapsed] = useState<boolean>(() => {
@@ -176,15 +178,21 @@ export default function QRManagementPage({ onBack }: Props) {
   }, [isMobile]);
 
   // Hard mute lock for the entire QR Management session.
-  // lockAdminMute() stops the sequencer AND blocks any future startMusic() call
-  // so no background effect (settings sync, engine resume) can restart BGM
-  // while the admin panel is mounted. unlockAdminMute() on unmount restores
-  // normal BGM behaviour when the user returns to the game.
   useEffect(() => {
     soundManager.lockAdminMute();
     return () => {
       soundManager.unlockAdminMute();
     };
+  }, []);
+
+  // Live protein scan count for today — independent of QR stats subscription.
+  // Queries proteinScans documents timestamped within today's calendar day.
+  useEffect(() => {
+    unsubProteinRef.current?.();
+    unsubProteinRef.current = subscribeProteinScansToday((count) => {
+      setProteinScansToday(count);
+    });
+    return () => { unsubProteinRef.current?.(); };
   }, []);
 
   const refresh = useCallback(() => setRefreshKey(k => k + 1), []);
@@ -226,7 +234,7 @@ export default function QRManagementPage({ onBack }: Props) {
   // ── Render active tab content ─────────────────────────────────────────────
   const renderTab = () => {
     switch (activeTab) {
-      case 'dashboard': return <QRDashboard stats={stats} loading={loadingStats} error={statsError} codes={codes} actor={actor} onNavigate={(tab) => navigate(tab as any)} onRefresh={refresh} />;
+      case 'dashboard': return <QRDashboard stats={stats} loading={loadingStats} error={statsError} codes={codes} actor={actor} proteinScansToday={proteinScansToday} onNavigate={(tab) => navigate(tab as any)} onRefresh={refresh} />;
       case 'generator': return <QRGenerator onGenerated={refresh} />;
       case 'search':    return <QRSearch />;
       case 'actions':   return <QRActions onRefresh={refresh} actor={actor} />;

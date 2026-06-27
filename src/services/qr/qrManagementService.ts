@@ -123,6 +123,42 @@ function nextBatchName(): { displayName: string; internalId: string } {
   return { displayName: `Batch ${count}`, internalId: `BATCH-${Date.now()}` };
 }
 
+/** Resets the batch counter so the next generated batch starts at Batch 1. */
+export function resetBatchCounter(): void {
+  try {
+    localStorage.removeItem(BATCH_COUNT_KEY);
+    console.log('[RESET] Batch counter cleared — next batch will be Batch 1.');
+  } catch { /* ignore */ }
+}
+
+/**
+ * Live subscription: counts proteinScans documents whose timestamp field
+ * falls on today's local date. Calls onChange whenever the count changes.
+ * Returns an unsubscribe function.
+ */
+export function subscribeProteinScansToday(onChange: (count: number) => void): Unsubscribe {
+  const today = todayStr(); // "YYYY-MM-DD"
+  // todayStart / todayEnd bracket the full calendar day in UTC
+  const todayStart = new Date(`${today}T00:00:00.000Z`);
+  const todayEnd   = new Date(`${today}T23:59:59.999Z`);
+
+  console.log('[Protein Dashboard] Subscribing to proteinScans for date:', today);
+
+  const q = query(
+    collection(db, 'proteinScans'),
+    where('timestamp', '>=', Timestamp.fromDate(todayStart)),
+    where('timestamp', '<=', Timestamp.fromDate(todayEnd)),
+  );
+
+  return onSnapshot(q, (snap) => {
+    const count = snap.size;
+    console.log('[Protein Dashboard] proteinScans today —', today, '| count:', count);
+    onChange(count);
+  }, (err) => {
+    console.error('[Protein Dashboard] onSnapshot error:', err?.message);
+  });
+}
+
 function buildCode(prefix: string, index: number): string {
   return `${prefix.toUpperCase()}-${String(index).padStart(6, '0')}`;
 }

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import {
   getGameUrl, saveGameUrl, subscribeGameUrl, syncGameUrlFromFirestore,
+  resetBatchCounter,
 } from '../../services/qr/qrManagementService';
 import { useAuth } from '../../auth/AuthProvider';
 import {
@@ -296,27 +297,12 @@ function ResetModal({ actor, email, onSuccess, onCancel }: ResetModalProps) {
     setProgress(0);
 
     try {
-      // ── Debug: log current user UID and Firestore role ──────────────────
-      const uid = actor; // actor is displayName/email from useAuth
-      console.group('[RESET] Permission diagnostics');
-      console.log('Actor:', actor, '| Email:', email);
+      console.group('[RESET] Full QR Database Reset initiated');
+      console.log('[RESET] Actor:', actor, '| Email:', email);
 
-      // Read the user's Firestore doc to check role field
-      // (The Firebase Auth uid comes from the useAuth hook in the parent)
-      // We import db directly — pull UID from Firebase Auth if available
-      try {
-        // Attempt to read any qrCodes doc to test delete permission
-        const testSnap = await getDocs(collection(db, 'qrCodes'));
-        console.log('qrCodes readable: yes — doc count:', testSnap.size);
-        console.log('NOTE: delete permission requires role == "developer" in your users/{uid} document.');
-        console.log('If reset fails, open Firestore → users → your UID → confirm role: "developer" exists.');
-      } catch (permErr: any) {
-        console.error('qrCodes read failed:', permErr?.message);
-      }
-      console.groupEnd();
-      // ───────────────────────────────────────────────────────────────────
-
-      // Step 1: write audit log BEFORE deletion
+      // Step 1: write audit log BEFORE deletion so we have a record even if
+      // the delete partially fails.
+      console.log('[RESET] Writing audit log…');
       await addDoc(collection(db, 'qrOperationLogs'), {
         operation:   'full-database-reset',
         type:        'ADMIN',
@@ -331,16 +317,18 @@ function ResetModal({ actor, email, onSuccess, onCancel }: ResetModalProps) {
       });
       setProgress(10);
 
-      // Step 2: delete each collection in chunks of 490
+      // Step 2: delete each Firestore collection in chunks of 490
+      console.log('[RESET] Deleting QR Collections…');
       const collectionCount = QR_COLLECTIONS.length;
       for (let ci = 0; ci < collectionCount; ci++) {
         const colName = QR_COLLECTIONS[ci];
+        console.log('[RESET] Deleting collection:', colName);
         const snap = await getDocs(collection(db, colName));
         const docs  = snap.docs;
         const total = docs.length;
         let deleted = 0;
 
-        setProgress(10 + Math.round((ci / collectionCount) * 80));
+        setProgress(10 + Math.round((ci / collectionCount) * 70));
 
         for (let i = 0; i < docs.length; i += 490) {
           const chunk = docs.slice(i, i + 490);
@@ -348,18 +336,41 @@ function ResetModal({ actor, email, onSuccess, onCancel }: ResetModalProps) {
           chunk.forEach(d => batch.delete(doc(db, colName, d.id)));
           await batch.commit();
           deleted += chunk.length;
-          setProgress(10 + Math.round(((ci + deleted / Math.max(total, 1)) / collectionCount) * 80));
-          // Yield between chunks
+          setProgress(10 + Math.round(((ci + deleted / Math.max(total, 1)) / collectionCount) * 70));
           await new Promise<void>(r => setTimeout(r, 0));
         }
+        console.log('[RESET] Deleted', total, 'documents from', colName);
       }
+      setProgress(85);
 
+      // Step 3: reset the batch counter in localStorage so the next batch
+      // generated is always "Batch 1" — as if it's a fresh installation.
+      console.log('[RESET] Resetting Batch Counter…');
+      resetBatchCounter();
+      setProgress(90);
+
+      // Step 4: reset QR counter (same localStorage namespace)
+      console.log('[RESET] Resetting QR Counter…');
+      try { localStorage.removeItem('qr_last_index'); } catch { /* ignore */ }
+      setProgress(95);
+
+      // Step 5: reset dashboard / cached stats
+      console.log('[RESET] Resetting Dashboard…');
+      try {
+        localStorage.removeItem('qr_dashboard_cache');
+        localStorage.removeItem('qr_export_history');
+        localStorage.removeItem('qr_search_cache');
+      } catch { /* ignore */ }
       setProgress(100);
 
-      // Small pause so the progress bar hits 100% visibly
+      console.log('[RESET] Reset Completed Successfully.');
+      console.groupEnd();
+
       await new Promise<void>(r => setTimeout(r, 400));
       setStep('done');
     } catch (e: any) {
+      console.error('[RESET] Reset failed:', e?.message);
+      console.groupEnd();
       setErrorMsg(e?.message ?? 'Reset failed. Please try again.');
       setStep('error');
     }
