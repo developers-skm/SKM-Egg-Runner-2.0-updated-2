@@ -2258,6 +2258,75 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               {activeTab === 'NOTIFY' && (
                 <div className="space-y-4">
 
+                  {/* ── Setup Status ── */}
+                  {(() => {
+                    const hasVapid     = !!import.meta.env.VITE_FIREBASE_VAPID_KEY;
+                    const hasServerKey = !!import.meta.env.VITE_FCM_SERVER_KEY;
+                    const allGood      = hasVapid && hasServerKey;
+                    return (
+                      <div className="rounded-xl border overflow-hidden"
+                        style={{ borderColor: allGood ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.4)' }}>
+                        <div className="px-3 py-2 flex items-center gap-2"
+                          style={{ background: allGood ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.1)' }}>
+                          <span style={{ fontSize: 9 }}>{allGood ? '✅' : '🔴'}</span>
+                          <span className="text-[9px] font-black font-mono uppercase tracking-widest"
+                            style={{ color: allGood ? '#86efac' : '#fca5a5' }}>
+                            {allGood ? 'Push Ready — Both Keys Set' : 'Setup Required — Keys Missing'}
+                          </span>
+                        </div>
+                        {!allGood && (
+                          <div className="px-3 py-2 space-y-3" style={{ background: 'rgba(0,0,0,0.25)' }}>
+                            {/* Key 1: VAPID */}
+                            <div>
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-[8px] font-mono" style={{ color: hasVapid ? '#86efac' : '#fca5a5' }}>
+                                  {hasVapid ? '✓' : '✗'} VITE_FIREBASE_VAPID_KEY
+                                </span>
+                                <span className="text-[7px] font-mono text-slate-500">(device token registration)</span>
+                              </div>
+                              {!hasVapid && (
+                                <div className="text-[8px] font-mono text-slate-400 leading-relaxed pl-3"
+                                  style={{ borderLeft: '2px solid rgba(239,68,68,0.4)' }}>
+                                  1. Go to <span className="text-orange-300">Firebase Console → Project Settings → Cloud Messaging</span><br/>
+                                  2. Scroll to <span className="text-orange-300">Web Push certificates</span><br/>
+                                  3. Click <span className="text-orange-300">Generate key pair</span> (or use existing)<br/>
+                                  4. Copy the <span className="text-orange-300">public key</span> (starts with B...)<br/>
+                                  5. Add to <span className="text-yellow-300">.env</span>: <code className="text-green-300">VITE_FIREBASE_VAPID_KEY=Bxxx...</code><br/>
+                                  6. <span className="text-red-400 font-black">Restart dev server</span>
+                                </div>
+                              )}
+                            </div>
+                            {/* Key 2: Server Key */}
+                            <div>
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-[8px] font-mono" style={{ color: hasServerKey ? '#86efac' : '#fca5a5' }}>
+                                  {hasServerKey ? '✓' : '✗'} VITE_FCM_SERVER_KEY
+                                </span>
+                                <span className="text-[7px] font-mono text-slate-500">(admin push sending)</span>
+                              </div>
+                              {!hasServerKey && (
+                                <div className="text-[8px] font-mono text-slate-400 leading-relaxed pl-3"
+                                  style={{ borderLeft: '2px solid rgba(239,68,68,0.4)' }}>
+                                  1. Go to <span className="text-orange-300">Firebase Console → Project Settings → Cloud Messaging</span><br/>
+                                  2. Find <span className="text-orange-300">Cloud Messaging API (Legacy)</span> section<br/>
+                                  3. If disabled: click the <span className="text-orange-300">⋮ menu → Manage API</span> → Enable it<br/>
+                                  4. Copy the <span className="text-orange-300">Server key</span> (starts with AAAA...)<br/>
+                                  5. Add to <span className="text-yellow-300">.env</span>: <code className="text-green-300">VITE_FCM_SERVER_KEY=AAAAxxx...</code><br/>
+                                  6. <span className="text-red-400 font-black">Restart dev server</span>
+                                </div>
+                              )}
+                            </div>
+                            {allGood ? null : (
+                              <p className="text-[8px] font-mono text-slate-500 pt-1">
+                                After both keys are set and server restarted, open the app on each phone once to register the device. Then try notify: again.
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   {/* Header */}
                   <div className="p-3 rounded-xl border space-y-1"
                     style={{ background: 'rgba(234,88,12,0.08)', borderColor: 'rgba(234,88,12,0.25)' }}>
