@@ -26,7 +26,6 @@ import {
   notifyProteinAdded, notifyProteinGoalComplete,
   notifyDuplicateEgg, notifyStreakMilestone, notifyProteinMilestone,
 } from '../services/notifications/notificationService';
-import { triggerAchievementPopup } from '../components/notifications/AchievementPopup';
 
 type Phase = 'idle' | 'opening' | 'scanning' | 'processing' | 'success' | 'duplicate' | 'consumed_other' | 'error';
 
@@ -283,34 +282,22 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
       });
       setPhase('success');
 
-      // Fire notifications (all non-fatal)
+      // Write Firestore notification docs — Cloud Function / FCM sends
+      // real Android push notification to the device. No in-app popup shown.
       notifyProteinAdded(user.uid, PROTEIN_PER_EGG, todayProtein).catch(() => {});
 
       if (todayProtein >= todayGoal) {
         notifyProteinGoalComplete(user.uid, todayGoal).catch(() => {});
-        triggerAchievementPopup({
-          type: 'protein_milestone',
-          title: 'Daily Goal Reached!',
-          subtitle: `${todayProtein}g of protein today`,
-          value: `${todayGoal}g`,
-        });
       }
 
-      // Streak milestones (3, 7, 14, 30, 60, 100 days)
+      // Streak milestones → push notification via FCM
       const streak = streakInfo.currentStreak;
       if ([3, 7, 14, 30, 60, 100].includes(streak)) {
         notifyStreakMilestone(user.uid, streak).catch(() => {});
-        triggerAchievementPopup({
-          type: 'streak_milestone',
-          title: `${streak}-Day Streak!`,
-          subtitle: 'You\'re on fire! Keep scanning daily.',
-          value: `🔥 ${streak} Days`,
-        });
       }
 
-      // Cumulative protein milestones
+      // Cumulative protein milestones → push notification via FCM
       const lifetimeMs = [100, 500, 1000, 5000];
-      // We don't have the total here so check if todayProtein just crossed a nice round number
       if (lifetimeMs.some(m => todayProtein >= m && todayProtein - PROTEIN_PER_EGG < m)) {
         notifyProteinMilestone(user.uid, todayProtein).catch(() => {});
       }

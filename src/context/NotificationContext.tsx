@@ -1,9 +1,14 @@
 /**
  * SKM Notification Context
- * Global notification state with real-time Firestore sync + FCM push support.
+ *
+ * Push-only architecture:
+ *   - All notifications go to the Android notification bar via FCM.
+ *   - NO in-app toasts, popups, or banners are shown automatically.
+ *   - The notification drawer is a history panel — opened manually by the user.
+ *   - FCM foreground messages are silently stored; never shown as in-app UI.
  */
 
-import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../auth/AuthProvider';
 import {
   subscribeToNotifications,
@@ -29,104 +34,78 @@ import type { AppNotification, NotificationSettings } from '../types/notificatio
 import { DEFAULT_NOTIFICATION_SETTINGS } from '../types/notifications';
 
 interface NotificationContextValue {
-  notifications: AppNotification[];
-  unreadCount: number;
-  settings: NotificationSettings;
-  drawerOpen: boolean;
-  toastQueue: AppNotification[];
+  notifications:  AppNotification[];
+  unreadCount:    number;
+  settings:       NotificationSettings;
+  drawerOpen:     boolean;
   pushPermission: 'granted' | 'denied' | 'default' | 'unsupported';
-  pushEnabled: boolean;
-  openDrawer: () => void;
-  closeDrawer: () => void;
-  markRead: (id: string) => Promise<void>;
-  markAllRead: () => Promise<void>;
-  remove: (id: string) => Promise<void>;
-  clearAll: () => Promise<void>;
+  pushEnabled:    boolean;
+  openDrawer:     () => void;
+  closeDrawer:    () => void;
+  markRead:       (id: string) => Promise<void>;
+  markAllRead:    () => Promise<void>;
+  remove:         (id: string) => Promise<void>;
+  clearAll:       () => Promise<void>;
   updateSettings: (s: NotificationSettings) => Promise<void>;
-  dismissToast: (id: string) => void;
-  enablePush: () => Promise<void>;
-  disablePush: () => Promise<void>;
+  enablePush:     () => Promise<void>;
+  disablePush:    () => Promise<void>;
 }
 
 const NotificationContext = createContext<NotificationContextValue>({
-  notifications: [],
-  unreadCount: 0,
-  settings: DEFAULT_NOTIFICATION_SETTINGS,
-  drawerOpen: false,
-  toastQueue: [],
+  notifications:  [],
+  unreadCount:    0,
+  settings:       DEFAULT_NOTIFICATION_SETTINGS,
+  drawerOpen:     false,
   pushPermission: 'default',
-  pushEnabled: false,
-  openDrawer: () => {},
-  closeDrawer: () => {},
-  markRead: async () => {},
-  markAllRead: async () => {},
-  remove: async () => {},
-  clearAll: async () => {},
+  pushEnabled:    false,
+  openDrawer:     () => {},
+  closeDrawer:    () => {},
+  markRead:       async () => {},
+  markAllRead:    async () => {},
+  remove:         async () => {},
+  clearAll:       async () => {},
   updateSettings: async () => {},
-  dismissToast: () => {},
-  enablePush: async () => {},
-  disablePush: async () => {},
+  enablePush:     async () => {},
+  disablePush:    async () => {},
 });
 
 export function NotificationProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const uid = (user as any)?.uid as string | undefined;
 
-  const [notifications, setNotifications] = useState<AppNotification[]>([]);
-  const [settings, setSettings]           = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
-  const [drawerOpen, setDrawerOpen]       = useState(false);
-  const [toastQueue, setToastQueue]       = useState<AppNotification[]>([]);
+  const [notifications,  setNotifications]  = useState<AppNotification[]>([]);
+  const [settings,       setSettings]       = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
+  const [drawerOpen,     setDrawerOpen]     = useState(false);
   const [pushPermission, setPushPermission] = useState<NotificationContextValue['pushPermission']>(
     getPushPermissionState()
   );
   const [pushEnabled, setPushEnabled] = useState(false);
 
-  // Track which notification IDs we've already shown as a toast this session
-  const shownToastsRef = useRef<Set<string>>(new Set());
-
   const unreadCount = notifications.filter(n => !n.read).length;
 
-  // ── PWA install prompt capture (run once at app start) ──────────────────────
-  useEffect(() => {
-    capturePWAInstallPrompt();
-  }, []);
+  // ── PWA install prompt ───────────────────────────────────────────────────────
+  useEffect(() => { capturePWAInstallPrompt(); }, []);
 
-  // ── Load settings once on login ──────────────────────────────────────────────
+  // ── Load notification settings ───────────────────────────────────────────────
   useEffect(() => {
     if (!uid) return;
-    getNotificationSettings(uid)
-      .then(s => setSettings(s))
-      .catch(() => {});
+    getNotificationSettings(uid).then(s => setSettings(s)).catch(() => {});
   }, [uid]);
 
-  // ── Real-time notification subscription ──────────────────────────────────────
+  // ── Real-time Firestore listener — history only, no UI popups ────────────────
   useEffect(() => {
     if (!uid) { setNotifications([]); return; }
-
     const unsub = subscribeToNotifications(uid, (incoming) => {
-      // Queue new unread items as in-app toasts (only once per session)
-      const newUnread = incoming.filter(
-        n => !n.read && !shownToastsRef.current.has(n.id)
-      );
-      if (newUnread.length > 0) {
-        newUnread.forEach(n => shownToastsRef.current.add(n.id));
-        const latest = newUnread.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
-        setToastQueue(prev => [...prev, latest]);
-      }
       setNotifications(incoming);
+      // No toast queue. No popup. Notifications are stored silently.
     });
-
     return unsub;
   }, [uid]);
 
-  // ── FCM push setup ───────────────────────────────────────────────────────────
+  // ── FCM token setup ──────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!uid) {
-      setPushEnabled(false);
-      return;
-    }
+    if (!uid) { setPushEnabled(false); return; }
 
-    // Auto-init push if permission already granted in a previous session
     const currentPerm = getPushPermissionState();
     setPushPermission(currentPerm);
 
@@ -136,9 +115,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         .catch(() => setPushEnabled(false));
     }
 
-    // Request permission automatically on first login (only once ever)
+    // Request permission once on first login (after 3s so user is settled)
     if (currentPerm === 'default' && !hasAskedPermission()) {
-      // Delay 3s so the user is settled into the app before the prompt appears
       const timer = setTimeout(async () => {
         const perm = await requestPushPermission();
         setPushPermission(perm);
@@ -151,50 +129,28 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     }
   }, [uid]);
 
-  // ── FCM foreground message listener ─────────────────────────────────────────
-  // initForegroundMessages() is async (awaits messagingPromise) so we call it
-  // inside the effect and store the cleanup in a ref.
+  // ── FCM foreground handler — NO popup, just log silently ────────────────────
+  // When the app is open FCM normally suppresses OS notifications.
+  // We do NOT show any in-app UI either. The message is already stored in
+  // Firestore by the Cloud Function and will appear in the drawer.
   useEffect(() => {
     let unsubFCM: (() => void) | null = null;
-
-    initForegroundMessages().then((unsub) => {
-      unsubFCM = unsub;
-    }).catch(() => {});
-
-    const handleForeground = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      const syntheticNotif: AppNotification = {
-        id:        `push_${Date.now()}`,
-        userId:    uid ?? '',
-        title:     detail.title,
-        message:   detail.body,
-        type:      detail.type ?? 'admin_announcement',
-        priority:  'normal',
-        read:      false,
-        createdAt: new Date(),
-        metadata:  { notifId: detail.notifId },
-      };
-      if (!shownToastsRef.current.has(syntheticNotif.id)) {
-        shownToastsRef.current.add(syntheticNotif.id);
-        setToastQueue(prev => [...prev, syntheticNotif]);
-      }
-    };
-
-    window.addEventListener('skm_push_foreground', handleForeground);
+    initForegroundMessages().then(unsub => { unsubFCM = unsub; }).catch(() => {});
+    // Consume the custom event so nothing else acts on it
+    const swallow = () => {};
+    window.addEventListener('skm_push_foreground', swallow);
     return () => {
       unsubFCM?.();
-      window.removeEventListener('skm_push_foreground', handleForeground);
+      window.removeEventListener('skm_push_foreground', swallow);
     };
-  }, [uid]);
+  }, []);
 
-  // ── SW notification click → app navigation ───────────────────────────────────
+  // ── SW notification click → navigate ─────────────────────────────────────────
   useEffect(() => {
     const unsub = listenForNotificationClicks((type, url) => {
-      // Dispatch a global event — screens can listen and navigate accordingly
       window.dispatchEvent(new CustomEvent('skm_notification_navigate', {
         detail: { type, url },
       }));
-      console.info('[Notif] SW click navigate:', type, url);
     });
     return unsub;
   }, []);
@@ -210,40 +166,23 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
   // ── Actions ──────────────────────────────────────────────────────────────────
 
-  const openDrawer  = useCallback(() => setDrawerOpen(true), []);
+  const openDrawer  = useCallback(() => setDrawerOpen(true),  []);
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
 
-  const markRead = useCallback(async (id: string) => {
-    await markAsRead(id);
-  }, []);
-
-  const markAllRead = useCallback(async () => {
-    if (uid) await markAllAsRead(uid);
-  }, [uid]);
-
-  const remove = useCallback(async (id: string) => {
-    await deleteNotification(id);
-  }, []);
-
-  const clearAll = useCallback(async () => {
-    if (uid) await clearAllNotifications(uid);
-  }, [uid]);
+  const markRead    = useCallback(async (id: string) => { await markAsRead(id); }, []);
+  const markAllRead = useCallback(async () => { if (uid) await markAllAsRead(uid); }, [uid]);
+  const remove      = useCallback(async (id: string) => { await deleteNotification(id); }, []);
+  const clearAll    = useCallback(async () => { if (uid) await clearAllNotifications(uid); }, [uid]);
 
   const updateSettings = useCallback(async (s: NotificationSettings) => {
     setSettings(s);
     if (uid) await saveNotificationSettings(uid, s);
   }, [uid]);
 
-  const dismissToast = useCallback((id: string) => {
-    setToastQueue(prev => prev.filter(n => n.id !== id));
-  }, []);
-
   const enablePush = useCallback(async () => {
     if (!uid) return;
     let perm = getPushPermissionState();
-    if (perm === 'default') {
-      perm = await requestPushPermission();
-    }
+    if (perm === 'default') perm = await requestPushPermission();
     setPushPermission(perm);
     if (perm === 'granted') {
       const token = await initFCMToken(uid).catch(() => null);
@@ -264,7 +203,6 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       unreadCount,
       settings,
       drawerOpen,
-      toastQueue,
       pushPermission,
       pushEnabled,
       openDrawer,
@@ -274,7 +212,6 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       remove,
       clearAll,
       updateSettings,
-      dismissToast,
       enablePush,
       disablePush,
     }}>
