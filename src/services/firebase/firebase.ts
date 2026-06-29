@@ -53,21 +53,21 @@ isSupported().then((supported) => {
   if (supported) {
     analytics = getAnalytics(app);
   }
-}).catch(() => {
-  // Analytics not supported — silently skip
-});
+}).catch(() => {});
 export { analytics };
 
-// Firebase Cloud Messaging (only in browsers that support service workers)
-let messaging: Messaging | null = null;
-isMessagingSupported().then((supported) => {
-  if (supported) {
-    messaging = getMessaging(app);
-  }
-}).catch(() => {
-  // FCM not supported (e.g. Safari without push support) — silently skip
-});
-export { messaging };
+// ─────────────────────────────────────────────
+// Firebase Cloud Messaging
+//
+// IMPORTANT: isMessagingSupported() is async.
+// Export a Promise<Messaging|null> so callers always await the real instance
+// instead of reading a null that hasn't been resolved yet.
+// ─────────────────────────────────────────────
+export const messagingPromise: Promise<Messaging | null> = isMessagingSupported()
+  .then((supported) => supported ? getMessaging(app) : null)
+  .catch(() => null);
+
+// Convenience re-export used by the SW eligibility check
 export { isMessagingSupported };
 
 // ─────────────────────────────────────────────

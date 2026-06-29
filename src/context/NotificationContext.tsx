@@ -21,7 +21,7 @@ import {
   requestPushPermission,
   initFCMToken,
   revokeFCMToken,
-  subscribeForegroundMessages,
+  initForegroundMessages,
   listenForNotificationClicks,
   capturePWAInstallPrompt,
 } from '../services/notifications/pushNotificationService';
@@ -152,12 +152,17 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   }, [uid]);
 
   // ── FCM foreground message listener ─────────────────────────────────────────
+  // initForegroundMessages() is async (awaits messagingPromise) so we call it
+  // inside the effect and store the cleanup in a ref.
   useEffect(() => {
-    const unsub = subscribeForegroundMessages();
+    let unsubFCM: (() => void) | null = null;
+
+    initForegroundMessages().then((unsub) => {
+      unsubFCM = unsub;
+    }).catch(() => {});
 
     const handleForeground = (e: Event) => {
       const detail = (e as CustomEvent).detail;
-      // Create a synthetic AppNotification for the toast queue
       const syntheticNotif: AppNotification = {
         id:        `push_${Date.now()}`,
         userId:    uid ?? '',
@@ -177,7 +182,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
     window.addEventListener('skm_push_foreground', handleForeground);
     return () => {
-      unsub();
+      unsubFCM?.();
       window.removeEventListener('skm_push_foreground', handleForeground);
     };
   }, [uid]);

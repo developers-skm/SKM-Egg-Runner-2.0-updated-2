@@ -18,14 +18,13 @@
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
     <script>
+      // Register the app shell / offline cache service worker only.
+      // The FCM messaging SW (firebase-messaging-sw.js) is registered separately
+      // by PushNotificationService on its own scope (/firebase-cloud-messaging-push-scope)
+      // so the two workers never conflict with each other.
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          // App shell / offline cache SW
-          navigator.serviceWorker.register('/sw.js').catch(() => {});
-          // FCM messaging SW — registered separately so it can be updated independently
-          // The actual registration happens inside PushNotificationService when FCM token
-          // is generated. This pre-registration ensures the SW is ready faster.
-          navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' }).catch(() => {});
+        window.addEventListener('load', function() {
+          navigator.serviceWorker.register('/sw.js').catch(function() {});
         });
       }
     </script>
