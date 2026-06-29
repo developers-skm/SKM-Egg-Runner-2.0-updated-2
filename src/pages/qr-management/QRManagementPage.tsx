@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { soundManager } from '../../audio';
 import {
   QrCode, RefreshCw, ArrowLeft,
-  LayoutDashboard, Plus, Search, Zap, Layers3,
+  LayoutDashboard, Plus, Search, Layers3,
   BarChart3, Activity, Printer, Trash2, Settings, Menu, ScanSearch,
 } from 'lucide-react';
 import { subscribeDashboardStats, fetchAllQRCodes, EMPTY_STATS, subscribeProteinScansToday } from '../../services/qr/qrManagementService';
@@ -11,7 +11,6 @@ import { useAuth } from '../../auth/AuthProvider';
 import QRDashboard     from '../../components/qr-management/QRDashboard';
 import QRGenerator     from '../../components/qr-management/QRGenerator';
 import QRSearch        from '../../components/qr-management/QRSearch';
-import QRActions       from '../../components/qr-management/QRActions';
 import QRBulkControl   from '../../components/qr-management/QRBulkControl';
 import QRBulkExport    from '../../components/qr-management/QRBulkExport';
 import QRAnalytics     from '../../components/qr-management/QRAnalytics';
@@ -31,7 +30,7 @@ const STORAGE_KEY = 'qr_sidebar_collapsed';
 // ─── Tab definitions ──────────────────────────────────────────────────────────
 
 type TabId =
-  | 'dashboard' | 'generator' | 'search'   | 'actions'
+  | 'dashboard' | 'generator' | 'search'
   | 'bulk'      | 'analytics' | 'tracker'  | 'activity' | 'print'
   | 'delete'    | 'settings';
 
@@ -46,7 +45,6 @@ const TABS: Tab[] = [
   { id: 'dashboard', label: 'Dashboard',    icon: <LayoutDashboard size={17} strokeWidth={2} /> },
   { id: 'generator', label: 'Generator',    icon: <Plus            size={17} strokeWidth={2} /> },
   { id: 'search',    label: 'Search',       icon: <Search          size={17} strokeWidth={2} /> },
-  { id: 'actions',   label: 'Actions',      icon: <Zap             size={17} strokeWidth={2} /> },
   { id: 'bulk',      label: 'Bulk Actions', icon: <Layers3         size={17} strokeWidth={2} /> },
   { id: 'analytics', label: 'Analytics',    icon: <BarChart3       size={17} strokeWidth={2} /> },
   { id: 'tracker',   label: 'QR Tracker',   icon: <ScanSearch      size={17} strokeWidth={2} /> },
@@ -60,7 +58,6 @@ const TAB_TITLES: Record<TabId, { title: string; subtitle: string }> = {
   dashboard: { title: 'Dashboard',    subtitle: 'Live system overview and QR statistics' },
   generator: { title: 'QR Generator', subtitle: 'Create single, bulk, or Golden QR codes' },
   search:    { title: 'QR Search',    subtitle: 'Find and manage individual QR codes' },
-  actions:   { title: 'QR Actions',   subtitle: 'Enable, disable or control QR codes by type' },
   bulk:      { title: 'Bulk Actions', subtitle: 'Large-scale QR operations and data export' },
   analytics: { title: 'Analytics',    subtitle: 'Scan trends, usage rates and performance reports' },
   tracker:   { title: 'QR Tracker',   subtitle: 'Full lifecycle tracking and per-QR inspection' },
@@ -237,7 +234,6 @@ export default function QRManagementPage({ onBack }: Props) {
       case 'dashboard': return <QRDashboard stats={stats} loading={loadingStats} error={statsError} codes={codes} actor={actor} proteinScansToday={proteinScansToday} onNavigate={(tab) => navigate(tab as any)} onRefresh={refresh} />;
       case 'generator': return <QRGenerator onGenerated={refresh} />;
       case 'search':    return <QRSearch />;
-      case 'actions':   return <QRActions onRefresh={refresh} actor={actor} />;
       case 'bulk':      return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
           <QRBulkExport codes={codes} actor={actor} />
