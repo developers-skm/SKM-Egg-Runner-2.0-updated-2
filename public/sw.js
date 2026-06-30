@@ -1,7 +1,7 @@
 // SKM Experience — Service Worker
 // Caches the app shell on install so the offline page works when there's no network.
 
-const CACHE = 'skm-v3';
+const CACHE = 'skm-v4';
 
 const PRECACHE = [
   '/',
@@ -63,4 +63,23 @@ self.addEventListener('fetch', event => {
   }
 
   // Everything else (Firestore, Auth API calls): network-only, let app handle failures
+});
+
+// ─── Notification click (for SW-triggered foreground notifications) ───────────
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) ? event.notification.data.url : '/';
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windowClients => {
+      for (var i = 0; i < windowClients.length; i++) {
+        var client = windowClients[i];
+        if ('focus' in client) {
+          client.focus();
+          client.postMessage({ type: 'SKM_NOTIFICATION_CLICK', url: url });
+          return;
+        }
+      }
+      if (clients.openWindow) return clients.openWindow(url);
+    })
+  );
 });

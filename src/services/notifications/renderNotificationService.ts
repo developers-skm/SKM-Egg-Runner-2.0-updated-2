@@ -21,26 +21,51 @@ const RENDER_URL: string = (import.meta.env.VITE_RENDER_API_URL as string | unde
 
 const ICON = '/THUMBS_POSE__Egg_-removebg-preview.png';
 
-// ─── Web Notifications API fallback (foreground only) ─────────────────────────
-// Used when VITE_RENDER_API_URL is not set and the app tab is open.
-// Does NOT work when the browser is fully closed — Render server handles that.
+// ─── Service Worker notification (works on Android Chrome) ───────────────────
+// Android Chrome blocks new Notification() from the main thread entirely.
+// Must use serviceWorkerRegistration.showNotification() instead.
+// Falls back to new Notification() on desktop where SW may not be ready.
 
-function showBrowserNotification(title: string, body: string, clickUrl = '/'): void {
+async function showBrowserNotification(title: string, body: string, clickUrl = '/'): Promise<void> {
   if (!('Notification' in window)) return;
   if (Notification.permission !== 'granted') return;
 
-  const notif = new Notification(title, {
+  const options: NotificationOptions & { renotify?: boolean } = {
     body,
-    icon:  ICON,
-    badge: ICON,
-    tag:   'skm-' + Date.now(),
-  });
-
-  notif.onclick = () => {
-    window.focus();
-    notif.close();
-    if (clickUrl && clickUrl !== '/') window.location.href = clickUrl;
+    icon:     ICON,
+    badge:    ICON,
+    tag:      'skm-notification',
+    renotify: true,
+    data:     { url: clickUrl },
   };
+
+  // Android Chrome requires showNotification via a ServiceWorkerRegistration.
+  // new Notification() is silently blocked on Android — SW path is mandatory.
+  if ('serviceWorker' in navigator) {
+    try {
+      // Use the cache SW (scope '/') which controls the page.
+      // The FCM SW on /firebase-cloud-messaging-push-scope is not the controller.
+      const reg = await navigator.serviceWorker.getRegistration('/');
+      if (reg) {
+        await reg.showNotification(title, options);
+        return;
+      }
+      // Fallback: use whichever SW is ready
+      const ready = await navigator.serviceWorker.ready;
+      await ready.showNotification(title, options);
+      return;
+    } catch (err: any) {
+      console.warn('[FCM] SW showNotification failed:', err?.message ?? err);
+    }
+  }
+
+  // Desktop-only fallback (not supported on Android without SW)
+  try {
+    const notif = new Notification(title, options);
+    notif.onclick = () => { window.focus(); notif.close(); };
+  } catch {
+    // Silently ignore if blocked
+  }
 }
 
 // ─── Click URL map ────────────────────────────────────────────────────────────
@@ -133,12 +158,10 @@ function buildFallbackText(body: Record<string, unknown>): { title: string; msg:
 
 async function post(path: string, body: Record<string, unknown>): Promise<boolean> {
   if (!RENDER_URL) {
-    // No Render server deployed yet — show a browser notification while the tab is open.
-    // This is the foreground-only fallback. Background/closed-browser pushes require Render.
     const { title, msg } = buildFallbackText(body);
     const type = String(body['type'] ?? path);
-    showBrowserNotification(title, msg, clickUrlFor(type));
-    console.info(`[FCM] Browser notification shown (foreground fallback): ${title}`);
+    await showBrowserNotification(title, msg, clickUrlFor(type));
+    console.info(`[FCM] SW notification shown (foreground fallback): ${title}`);
     return true;
   }
 
