@@ -1,100 +1,221 @@
 /**
  * SKM Render Notification Service
  *
- * Client-side helper that POSTs to the Render.com notification server.
- * All calls include a Firebase ID Token for server-side auth verification.
- *
- * The server (render-server/) reads the token, verifies it, looks up the
- * user's FCM token in Firestore via Admin SDK, and calls messaging.send().
- *
- * No FCM server credentials ever touch this file or the browser.
- *
- * Usage:
- *   import { renderNotify } from './renderNotificationService';
- *   await renderNotify.login(uid);
- *   await renderNotify.protein(uid, { grams: 6, total: 12 });
+ * When VITE_RENDER_API_URL is set  → POST to Render server → Firebase Admin SDK → FCM push
+ * When VITE_RENDER_API_URL is empty → showNotification() via service worker (Android-compatible)
  */
 
 import { getAuth } from 'firebase/auth';
 
 const RENDER_URL: string = (import.meta.env.VITE_RENDER_API_URL as string | undefined) ?? '';
-
 const ICON = '/THUMBS_POSE__Egg_-removebg-preview.png';
 
-// ─── Service Worker notification (works on Android Chrome) ───────────────────
-// Android Chrome blocks new Notification() from the main thread entirely.
-// Must use serviceWorkerRegistration.showNotification() instead.
-// Falls back to new Notification() on desktop where SW may not be ready.
+// ─── Service Worker notification ──────────────────────────────────────────────
+// Strategy: post a message to the active SW controller telling it to call
+// self.registration.showNotification(). This is the only approach that works
+// on Android Chrome — direct new Notification() and reg.showNotification()
+// from the main thread are both blocked or silently dropped on Android.
 
-async function showBrowserNotification(title: string, body: string, clickUrl = '/'): Promise<void> {
-  if (!('Notification' in window)) return;
-  if (Notification.permission !== 'granted') return;
+async function showSWNotification(title: string, body: string, clickUrl = '/'): Promise<void> {
+  console.info('[Notify] showSWNotification called:', title);
 
-  const options: NotificationOptions & { renotify?: boolean } = {
-    body,
-    icon:     ICON,
-    badge:    ICON,
-    tag:      'skm-notification',
-    renotify: true,
-    data:     { url: clickUrl },
-  };
-
-  // Android Chrome requires showNotification via a ServiceWorkerRegistration.
-  // new Notification() is silently blocked on Android — SW path is mandatory.
-  if ('serviceWorker' in navigator) {
-    try {
-      // Use the cache SW (scope '/') which controls the page.
-      // The FCM SW on /firebase-cloud-messaging-push-scope is not the controller.
-      const reg = await navigator.serviceWorker.getRegistration('/');
-      if (reg) {
-        await reg.showNotification(title, options);
-        return;
-      }
-      // Fallback: use whichever SW is ready
-      const ready = await navigator.serviceWorker.ready;
-      await ready.showNotification(title, options);
-      return;
-    } catch (err: any) {
-      console.warn('[FCM] SW showNotification failed:', err?.message ?? err);
-    }
+  if (!('Notification' in window)) {
+    console.warn('[Notify] FAILED — Notification API not available in this browser.');
+    return;
+  }
+  if (Notification.permission !== 'granted') {
+    console.warn('[Notify] FAILED — Permission is:', Notification.permission);
+    return;
+  }
+  if (!('serviceWorker' in navigator)) {
+    console.warn('[Notify] No SW support — trying direct Notification()');
+    try { new Notification(title, { body, icon: ICON }); } catch { /* ignore */ }
+    return;
   }
 
-  // Desktop-only fallback (not supported on Android without SW)
+  // Wait for the SW controller to be ready
+  let controller = navigator.serviceWorker.controller;
+  if (!controller) {
+    console.warn('[Notify] No active SW controller yet — waiting...');
+    try {
+      await navigator.serviceWorker.ready;
+      controller = navigator.serviceWorker.controller;
+    } catch { /* ignore */ }
+  }
+
+  if (controller) {
+    // Send message to SW — SW calls self.registration.showNotification()
+    controller.postMessage({
+      type:  'SHOW_NOTIFICATION',
+      title,
+      body,
+      icon:  ICON,
+      tag:   'skm-notification',
+      url:   clickUrl,
+    });
+    console.info('[Notify] ✓ Message sent to SW controller — notification will appear shortly.');
+    return;
+  }
+
+  // SW not controlling the page yet (first load before SW activates)
+  // Fall back to reg.showNotification() which works on desktop
+  console.warn('[Notify] No SW controller — trying reg.showNotification() fallback');
   try {
-    const notif = new Notification(title, options);
-    notif.onclick = () => { window.focus(); notif.close(); };
-  } catch {
-    // Silently ignore if blocked
+    const reg = await navigator.serviceWorker.getRegistration('/') ?? await navigator.serviceWorker.ready;
+    await reg.showNotification(title, {
+      body, icon: ICON, badge: ICON,
+      tag: 'skm-notification', data: { url: clickUrl },
+    });
+    console.info('[Notify] ✓ Notification shown via reg.showNotification()');
+  } catch (err: any) {
+    console.warn('[Notify] reg.showNotification failed:', err?.message);
+    try {
+      new Notification(title, { body, icon: ICON });
+      console.info('[Notify] ✓ Notification shown via direct Notification() (desktop)');
+    } catch (e2: any) {
+      console.error('[Notify] All notification methods failed:', e2?.message);
+    }
   }
 }
 
-// ─── Click URL map ────────────────────────────────────────────────────────────
+// ─── Notification text per event type ────────────────────────────────────────
 
-function clickUrlFor(type: string): string {
+function buildText(path: string, body: Record<string, unknown>): { title: string; msg: string; url: string } {
+  // path is the route name: 'login', 'protein', 'streak', 'game', 'achievement', 'daily-summary', 'broadcast'
+  // body['type'] is the specific sub-type within that route
+  const type = String(body['type'] ?? path);
+
   switch (type) {
+    case 'login':
+      return {
+        title: '👋 Welcome Back!',
+        msg:   'You have successfully signed in to SKM. Have a great day!',
+        url:   '/',
+      };
     case 'protein_added':
+      return {
+        title: `+${body['grams'] ?? '?'}g Protein Added`,
+        msg:   `Daily protein is now ${body['total'] ?? '?'}g. Keep it up!`,
+        url:   '/?tab=tracker',
+      };
     case 'protein_goal_complete':
-    case 'protein_reminder':
+      return {
+        title: '🎯 Daily Protein Goal Reached!',
+        msg:   `You hit ${body['total'] ?? '?'}g today. You're on fire!`,
+        url:   '/?tab=tracker',
+      };
     case 'protein_duplicate':
-    case 'golden_egg_scanned':
-    case 'streak_reminder':
+      return {
+        title: '⚠️ Duplicate Egg Detected',
+        msg:   'This egg has already been consumed today.',
+        url:   '/?tab=tracker',
+      };
+    case 'protein_reminder':
+      return {
+        title: '🥚 Time to Fuel Your Day!',
+        msg:   "Don't forget today's protein. Scan an SKM Egg and earn +6g protein.",
+        url:   '/?tab=tracker',
+      };
     case 'daily_goal_reminder':
-    case 'daily_summary':
-    case 'protein_milestone':
+      return {
+        title: '💪 Almost There!',
+        msg:   "You're close to today's protein goal. Keep going!",
+        url:   '/?tab=tracker',
+      };
+    case 'golden_egg_scanned':
+      return {
+        title: '🥇 Golden Egg Scanned!',
+        msg:   'Unlimited plays unlocked!',
+        url:   '/?tab=game',
+      };
     case 'streak_milestone':
-      return '/?tab=tracker';
+      return {
+        title: `🔥 ${body['days'] ?? '?'}-Day Streak!`,
+        msg:   `${body['days'] ?? '?'} days straight. Incredible!`,
+        url:   '/?tab=tracker',
+      };
+    case 'streak_reminder':
+      return {
+        title: "⏰ Don't Lose Your Streak!",
+        msg:   "Record today's egg before midnight to keep your streak alive!",
+        url:   '/?tab=tracker',
+      };
     case 'new_high_score':
+      return {
+        title: '🏆 New High Score!',
+        msg:   `New personal best: ${Number(body['score'] ?? 0).toLocaleString()} points!`,
+        url:   '/?tab=game',
+      };
     case 'game_reminder':
+      return {
+        title: '🎮 Ready for Another Run?',
+        msg:   'Your chicken is warmed up and ready to race. Tap to play!',
+        url:   '/?tab=game',
+      };
     case 'mission_complete':
+      return {
+        title: '✅ Mission Complete!',
+        msg:   `You completed "${body['missionName'] ?? 'a mission'}". Claim your reward!`,
+        url:   '/?tab=game',
+      };
     case 'qr_validated':
+      return {
+        title: '✅ QR Code Validated',
+        msg:   `You have ${body['plays'] ?? '?'} plays available.`,
+        url:   '/?tab=game',
+      };
     case 'run_completed':
-      return '/?tab=game';
+      return {
+        title: '🐔 Run Complete!',
+        msg:   `Score: ${Number(body['score'] ?? 0).toLocaleString()} points.`,
+        url:   '/?tab=game',
+      };
     case 'achievement_unlocked':
-    case 'level_up':
+      return {
+        title: '🎖️ Achievement Unlocked!',
+        msg:   body['achievementName']
+          ? `You unlocked "${body['achievementName']}"!`
+          : 'New achievement unlocked! Check your profile.',
+        url:   '/?tab=profile',
+      };
+    case 'protein_milestone':
+      return {
+        title: `🏅 ${body['total'] ?? '?'}g Protein Milestone!`,
+        msg:   `You've consumed ${body['total'] ?? '?'}g of protein total. Champion!`,
+        url:   '/?tab=profile',
+      };
     case 'champion_rank_improved':
-      return '/?tab=profile';
+      return {
+        title: '🏆 Champion Rank Improved!',
+        msg:   `Your ranking improved to #${body['rank'] ?? '?'} in the Champion Hall.`,
+        url:   '/?tab=profile',
+      };
+    case 'level_up':
+      return {
+        title: '⬆️ Level Up!',
+        msg:   'You reached a new level. Keep climbing!',
+        url:   '/?tab=profile',
+      };
+    case 'daily_summary':
+    case 'daily-summary':
+      return {
+        title: "📊 Today's Summary",
+        msg:   `Protein: ${body['protein'] ?? 0}g · Runs: ${body['runs'] ?? 0} · Streak: ${body['streak'] ?? 0} days`,
+        url:   '/?tab=tracker',
+      };
+    case 'admin_announcement':
+    case 'broadcast':
+      return {
+        title: String(body['title'] ?? 'SKM Announcement'),
+        msg:   String(body['message'] ?? body['body'] ?? ''),
+        url:   '/',
+      };
     default:
-      return '/';
+      return {
+        title: String(body['title'] ?? 'SKM Notification'),
+        msg:   String(body['message'] ?? body['body'] ?? ''),
+        url:   '/',
+      };
   }
 }
 
@@ -110,71 +231,31 @@ async function getIdToken(): Promise<string | null> {
   }
 }
 
-function buildFallbackText(body: Record<string, unknown>): { title: string; msg: string } {
-  const type = String(body['type'] ?? '');
-  switch (type) {
-    case 'login':
-      return { title: '👋 Welcome Back!', msg: 'You have successfully signed in to SKM.' };
-    case 'protein_added':
-      return { title: `+${body['grams'] ?? '?'}g Protein Added`, msg: `Daily protein is now ${body['total'] ?? '?'}g. Keep it up!` };
-    case 'protein_goal_complete':
-      return { title: '🎯 Daily Protein Goal Reached!', msg: `You hit ${body['total'] ?? '?'}g today. You're on fire!` };
-    case 'protein_duplicate':
-      return { title: '⚠️ Duplicate Egg Detected', msg: 'This egg has already been consumed today.' };
-    case 'protein_reminder':
-      return { title: '🥚 Time to Fuel Your Day!', msg: "Don't forget today's protein. Scan an SKM Egg!" };
-    case 'daily_goal_reminder':
-      return { title: '💪 Almost There!', msg: "You're close to today's protein goal. Keep going!" };
-    case 'golden_egg_scanned':
-      return { title: '🥇 Golden Egg Scanned!', msg: 'Unlimited plays unlocked!' };
-    case 'streak_milestone':
-      return { title: `🔥 ${body['days'] ?? '?'}-Day Streak!`, msg: `${body['days'] ?? '?'} days straight. Incredible!` };
-    case 'streak_reminder':
-      return { title: `⏰ Don't Lose Your Streak!`, msg: 'Record today\'s egg before midnight!' };
-    case 'new_high_score':
-      return { title: '🏆 New High Score!', msg: `New personal best: ${Number(body['score'] ?? 0).toLocaleString()} points!` };
-    case 'game_reminder':
-      return { title: '🎮 Ready for Another Run?', msg: 'Your chicken is warmed up. Tap to play!' };
-    case 'mission_complete':
-      return { title: '✅ Mission Complete!', msg: `You completed "${body['missionName'] ?? 'a mission'}". Claim your reward!` };
-    case 'qr_validated':
-      return { title: '✅ QR Code Validated', msg: `You have ${body['plays'] ?? '?'} plays available.` };
-    case 'run_completed':
-      return { title: '🐔 Run Complete!', msg: `Score: ${Number(body['score'] ?? 0).toLocaleString()} points.` };
-    case 'achievement_unlocked':
-      return { title: '🎖️ Achievement Unlocked!', msg: body['achievementName'] ? `You unlocked "${body['achievementName']}"!` : 'New achievement unlocked!' };
-    case 'protein_milestone':
-      return { title: `🏅 ${body['total'] ?? '?'}g Protein Milestone!`, msg: `You've consumed ${body['total'] ?? '?'}g total. Champion!` };
-    case 'champion_rank_improved':
-      return { title: '🏆 Champion Rank Improved!', msg: `Your ranking improved to #${body['rank'] ?? '?'}.` };
-    case 'level_up':
-      return { title: '⬆️ Level Up!', msg: 'You reached a new level. Keep climbing!' };
-    case 'daily_summary':
-      return { title: "📊 Today's Summary", msg: `Protein: ${body['protein'] ?? 0}g · Runs: ${body['runs'] ?? 0} · Streak: ${body['streak'] ?? 0} days` };
-    default:
-      return { title: String(body['title'] ?? 'SKM Notification'), msg: String(body['body'] ?? '') };
-  }
-}
-
 async function post(path: string, body: Record<string, unknown>): Promise<boolean> {
+  const type = String(body['type'] ?? path);
+
+  // ── No Render server: use SW notification directly ────────────────────────
   if (!RENDER_URL) {
-    const { title, msg } = buildFallbackText(body);
-    const type = String(body['type'] ?? path);
-    await showBrowserNotification(title, msg, clickUrlFor(type));
-    console.info(`[FCM] SW notification shown (foreground fallback): ${title}`);
+    console.info(`[Notify] No RENDER_URL — showing SW notification for type: ${type}`);
+    const { title, msg, url } = buildText(path, body);
+    await showSWNotification(title, msg, url);
     return true;
   }
 
+  // ── Render server: POST with Firebase ID Token ────────────────────────────
   const idToken = await getIdToken();
   if (!idToken) {
-    console.warn('[Render] No authenticated user — push skipped.');
-    return false;
+    console.warn('[Notify] No authenticated user — falling back to SW notification.');
+    const { title, msg, url } = buildText(path, body);
+    await showSWNotification(title, msg, url);
+    return true;
   }
 
-  const url = `${RENDER_URL.replace(/\/$/, '')}/notify/${path}`;
+  const endpoint = `${RENDER_URL.replace(/\/$/, '')}/notify/${path}`;
+  console.info(`[Notify] POST ${endpoint} type=${type}`);
 
   try {
-    const res = await fetch(url, {
+    const res = await fetch(endpoint, {
       method:  'POST',
       headers: {
         'Content-Type':  'application/json',
@@ -185,19 +266,19 @@ async function post(path: string, body: Record<string, unknown>): Promise<boolea
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      console.error(`[Render] POST /notify/${path} → HTTP ${res.status}:`, text);
+      console.error(`[Notify] HTTP ${res.status} from Render:`, text);
       return false;
     }
 
     const data = await res.json().catch(() => ({}));
     if (data.success) {
-      console.info(`[Render] ✓ /notify/${path} delivered uid=${body['uid']}`);
+      console.info(`[Notify] ✓ Render delivered push uid=${body['uid']} type=${type}`);
     } else {
-      console.warn(`[Render] /notify/${path} no-op (reason: ${data.reason ?? 'unknown'}) — user may not have FCM token yet.`);
+      console.warn(`[Notify] Render no-op (reason: ${data.reason ?? 'unknown'})`);
     }
     return !!data.success;
   } catch (err: any) {
-    console.error(`[Render] POST /notify/${path} network error:`, err?.message ?? err);
+    console.error(`[Notify] Network error calling Render:`, err?.message ?? err);
     return false;
   }
 }
@@ -205,11 +286,9 @@ async function post(path: string, body: Record<string, unknown>): Promise<boolea
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export const renderNotify = {
-  /** Called after every successful login. */
   login: (uid: string, email?: string) =>
-    post('login', { uid, email: email ?? '' }),
+    post('login', { uid, email: email ?? '', type: 'login' }),
 
-  /** Protein-related events. */
   proteinAdded: (uid: string, grams: number, total: number) =>
     post('protein', { uid, grams, total, type: 'protein_added' }),
 
@@ -228,14 +307,12 @@ export const renderNotify = {
   goldenEgg: (uid: string) =>
     post('protein', { uid, type: 'golden_egg_scanned' }),
 
-  /** Streak events. */
   streakMilestone: (uid: string, days: number) =>
     post('streak', { uid, days, type: 'streak_milestone' }),
 
   streakReminder: (uid: string, days: number) =>
     post('streak', { uid, days, type: 'streak_reminder' }),
 
-  /** Game events. */
   newHighScore: (uid: string, score: number) =>
     post('game', { uid, score, type: 'new_high_score' }),
 
@@ -251,7 +328,6 @@ export const renderNotify = {
   runCompleted: (uid: string, score: number) =>
     post('game', { uid, score, type: 'run_completed' }),
 
-  /** Achievement events. */
   achievementUnlocked: (uid: string, achievementName: string) =>
     post('achievement', { uid, achievementName, type: 'achievement_unlocked' }),
 
@@ -264,11 +340,9 @@ export const renderNotify = {
   levelUp: (uid: string) =>
     post('achievement', { uid, type: 'level_up' }),
 
-  /** Daily summary. */
   dailySummary: (uid: string, protein: number, runs: number, streak: number, rank?: number) =>
-    post('daily-summary', { uid, protein, runs, streak, rank }),
+    post('daily-summary', { uid, protein, runs, streak, rank, type: 'daily_summary' }),
 
-  /** Admin broadcast — developer only. */
   broadcast: (uid: string, title: string, message: string, target = 'all') =>
-    post('broadcast', { uid, title, message, target }),
+    post('broadcast', { uid, title, message, target, type: 'admin_announcement' }),
 };

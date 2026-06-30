@@ -1,7 +1,7 @@
 // SKM Experience — Service Worker
 // Caches the app shell on install so the offline page works when there's no network.
 
-const CACHE = 'skm-v4';
+const CACHE = 'skm-v5';
 
 const PRECACHE = [
   '/',
@@ -29,31 +29,26 @@ self.addEventListener('activate', event => {
 });
 
 self.addEventListener('fetch', event => {
-  // Only handle GET requests for same-origin or CDN assets
   if (event.request.method !== 'GET') return;
 
   const url = new URL(event.request.url);
 
-  // For navigation requests (HTML pages): network-first, fall back to cached index.html
+  // Navigation: network-first, fall back to cached index.html
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request)
-        .catch(() => caches.match('/index.html'))
+      fetch(event.request).catch(() => caches.match('/index.html'))
     );
     return;
   }
 
-  // For static assets (images, fonts, JS, CSS): cache-first
-  if (
-    url.pathname.match(/\.(png|jpg|jpeg|svg|gif|webp|ico|woff2?|ttf|css|js)$/)
-  ) {
+  // Static assets: cache-first
+  if (url.pathname.match(/\.(png|jpg|jpeg|svg|gif|webp|ico|woff2?|ttf|css|js)$/)) {
     event.respondWith(
       caches.match(event.request).then(cached => {
         if (cached) return cached;
         return fetch(event.request).then(response => {
           if (response.ok) {
-            const clone = response.clone();
-            caches.open(CACHE).then(cache => cache.put(event.request, clone));
+            caches.open(CACHE).then(cache => cache.put(event.request, response.clone()));
           }
           return response;
         });
@@ -61,16 +56,43 @@ self.addEventListener('fetch', event => {
     );
     return;
   }
-
-  // Everything else (Firestore, Auth API calls): network-only, let app handle failures
 });
 
-// ─── Notification click (for SW-triggered foreground notifications) ───────────
+// ─── Show notification from main thread message ───────────────────────────────
+// The main thread sends { type: 'SHOW_NOTIFICATION', title, body, icon, tag, data }
+// The SW shows it via self.registration.showNotification() — the ONLY way that
+// works reliably on Android Chrome when triggered from app code.
+
+self.addEventListener('message', event => {
+  if (!event.data || event.data.type !== 'SHOW_NOTIFICATION') return;
+
+  var title   = event.data.title   || 'SKM';
+  var body    = event.data.body    || '';
+  var icon    = event.data.icon    || '/THUMBS_POSE__Egg_-removebg-preview.png';
+  var tag     = event.data.tag     || 'skm-notification';
+  var url     = event.data.url     || '/';
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body:     body,
+      icon:     icon,
+      badge:    icon,
+      tag:      tag,
+      renotify: true,
+      vibrate:  [200, 100, 200],
+      data:     { url: url },
+    })
+  );
+});
+
+// ─── Notification click handler ───────────────────────────────────────────────
+
 self.addEventListener('notificationclick', event => {
   event.notification.close();
-  const url = (event.notification.data && event.notification.data.url) ? event.notification.data.url : '/';
+  var url = (event.notification.data && event.notification.data.url) ? event.notification.data.url : '/';
+
   event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windowClients => {
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(windowClients) {
       for (var i = 0; i < windowClients.length; i++) {
         var client = windowClients[i];
         if ('focus' in client) {
