@@ -14,7 +14,6 @@ import { db, messagingPromise } from '../firebase/firebase';
 const VAPID_KEY: string | undefined = import.meta.env.VITE_FIREBASE_VAPID_KEY as string | undefined;
 
 const FCM_SW_URL       = '/firebase-messaging-sw.js';
-const FCM_SW_SCOPE     = '/firebase-cloud-messaging-push-scope';
 const FCM_TOKEN_LS_KEY = 'skm_fcm_token';
 const PERMISSION_ASKED = 'skm_push_permission_asked';
 
@@ -77,20 +76,21 @@ async function getFCMServiceWorker(): Promise<ServiceWorkerRegistration | null> 
   console.info('[FCM] STEP 2 — Registering firebase-messaging-sw.js...');
 
   try {
-    // Check if already registered
-    const existing = await navigator.serviceWorker.getRegistration(FCM_SW_SCOPE);
-    if (existing) {
-      console.info('[FCM] STEP 2 — Service Worker already registered at scope:', FCM_SW_SCOPE, '✓');
+    // FCM requires the SW to be registered at scope '/' to create push subscriptions.
+    // Check if already registered at root scope.
+    const existing = await navigator.serviceWorker.getRegistration('/');
+    if (existing && existing.active) {
+      console.info('[FCM] STEP 2 — Service Worker already registered at scope: / ✓');
       _fcmSwReg = existing;
       return existing;
     }
 
-    const reg = await navigator.serviceWorker.register(FCM_SW_URL, { scope: FCM_SW_SCOPE });
+    const reg = await navigator.serviceWorker.register(FCM_SW_URL, { scope: '/' });
     console.info('[FCM] STEP 2 — Service Worker registered. State:', reg.installing?.state ?? reg.active?.state ?? 'unknown');
 
     // Wait for active
     await waitForSWActive(reg);
-    console.info('[FCM] STEP 2 — Service Worker active ✓ (scope:', FCM_SW_SCOPE, ')');
+    console.info('[FCM] STEP 2 — Service Worker active ✓ (scope: /)');
 
     _fcmSwReg = reg;
     return reg;

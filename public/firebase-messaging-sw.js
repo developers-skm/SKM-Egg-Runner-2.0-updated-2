@@ -1,19 +1,80 @@
 /**
- * SKM EGG RUNNER — Firebase Cloud Messaging Service Worker
+ * SKM EGG RUNNER — Unified Service Worker
  *
- * Registered with scope: /firebase-cloud-messaging-push-scope
- * (different from sw.js which uses scope '/' — this avoids conflicts)
+ * Handles BOTH:
+ *   1. App shell caching (offline support)
+ *   2. Firebase Cloud Messaging (background push notifications)
  *
- * Handles background push notifications when the app is closed or backgrounded.
- * Must be at public root path: /firebase-messaging-sw.js
+ * Registered at scope: / (root — required for FCM getToken() push subscriptions)
+ * Path: /firebase-messaging-sw.js  (FCM SDK looks for this filename by default)
  *
- * Firebase compat SDK is required inside service workers (no ES modules in SW).
+ * Firebase compat SDK required inside service workers (no ES modules in SW).
  */
 
 importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js');
 
-// Firebase config — hardcoded because service workers have no access to env vars
+// ─── App shell cache ──────────────────────────────────────────────────────────
+
+const CACHE = 'skm-v7';
+
+const PRECACHE = [
+  '/',
+  '/index.html',
+  '/signal-lost.png',
+  '/egg mus_Image_v5vrg3v5vrg3v5vr-removebg-preview.png',
+  '/Jump pose.png',
+  '/THUMBS_POSE__Egg_-removebg-preview.png',
+];
+
+self.addEventListener('install', function(event) {
+  event.waitUntil(
+    caches.open(CACHE).then(function(cache) { return cache.addAll(PRECACHE); })
+  );
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', function(event) {
+  event.waitUntil(
+    caches.keys().then(function(keys) {
+      return Promise.all(keys.filter(function(k) { return k !== CACHE; }).map(function(k) { return caches.delete(k); }));
+    })
+  );
+  self.clients.claim();
+});
+
+self.addEventListener('fetch', function(event) {
+  if (event.request.method !== 'GET') return;
+
+  var url = new URL(event.request.url);
+
+  // Navigation: network-first, fall back to cached index.html
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request).catch(function() { return caches.match('/index.html'); })
+    );
+    return;
+  }
+
+  // Static assets: cache-first
+  if (url.pathname.match(/\.(png|jpg|jpeg|svg|gif|webp|ico|woff2?|ttf|css|js)$/)) {
+    event.respondWith(
+      caches.match(event.request).then(function(cached) {
+        if (cached) return cached;
+        return fetch(event.request).then(function(response) {
+          if (response.ok) {
+            caches.open(CACHE).then(function(cache) { cache.put(event.request, response.clone()); });
+          }
+          return response;
+        });
+      })
+    );
+    return;
+  }
+});
+
+// ─── Firebase Cloud Messaging ─────────────────────────────────────────────────
+
 firebase.initializeApp({
   apiKey:            'AIzaSyBcGsQCma6dB3yDSZxhPAiwJtNR3CofcJc',
   authDomain:        'skm-egg-runner.firebaseapp.com',
@@ -23,25 +84,21 @@ firebase.initializeApp({
   appId:             '1:635492295830:web:d572a5d8b35e42ef8f4eb7',
 });
 
-const messaging = firebase.messaging();
+var messaging = firebase.messaging();
 
-// ─── Background message handler ───────────────────────────────────────────────
-// Fires when app tab is CLOSED or BACKGROUNDED.
-// FCM delivers the raw data payload here; we must call showNotification ourselves.
+// Background push: fires when app tab is CLOSED or BACKGROUNDED
 messaging.onBackgroundMessage(function(payload) {
   console.log('[FCM-SW] Background message received');
 
-  // notification fields from FCM payload
-  const notifTitle = (payload.notification && payload.notification.title)
+  var notifTitle = (payload.notification && payload.notification.title)
     ? payload.notification.title
     : 'SKM Notification';
 
-  const notifBody = (payload.notification && payload.notification.body)
+  var notifBody = (payload.notification && payload.notification.body)
     ? payload.notification.body
     : '';
 
-  // data fields sent by Cloud Function
-  const d = payload.data || {};
+  var d = payload.data || {};
 
   var options = {
     body:    notifBody,
@@ -59,7 +116,6 @@ messaging.onBackgroundMessage(function(payload) {
     vibrate:  [200, 100, 200],
   };
 
-  // Only add image if it's actually set (undefined crashes some Android browsers)
   if (payload.notification && payload.notification.image) {
     options.image = payload.notification.image;
   }
@@ -67,48 +123,8 @@ messaging.onBackgroundMessage(function(payload) {
   return self.registration.showNotification(notifTitle, options);
 });
 
-// ─── Notification click handler ───────────────────────────────────────────────
-self.addEventListener('notificationclick', function(event) {
-  console.log('[FCM-SW] Notification clicked, action:', event.action);
-  event.notification.close();
-
-  var data = event.notification.data || {};
-  var targetUrl = data.url || '/';
-
-  // Override URL based on which action button was tapped
-  if (event.action === 'scan_qr')    targetUrl = '/?open=scan';
-  if (event.action === 'play_game')  targetUrl = '/?open=game';
-  if (event.action === 'view_stats') targetUrl = '/?open=profile';
-
-  event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(windowClients) {
-      // If app already open in any tab — focus it and tell it to navigate
-      for (var i = 0; i < windowClients.length; i++) {
-        var client = windowClients[i];
-        if ('focus' in client) {
-          client.focus();
-          client.postMessage({
-            type: 'FCM_NOTIFICATION_CLICK',
-            data: {
-              url:       targetUrl,
-              notifType: data.type,
-              notifId:   data.notifId,
-            },
-          });
-          return;
-        }
-      }
-      // App not open — open a new tab/window at the target URL
-      if (clients.openWindow) {
-        return clients.openWindow(targetUrl);
-      }
-    })
-  );
-});
-
 // ─── Show notification on demand from main thread ─────────────────────────────
 // Main thread posts { type: 'SHOW_NOTIFICATION', title, body, icon, tag, url }
-// This SW has notification authority so showNotification works on Android.
 
 self.addEventListener('message', function(event) {
   if (!event.data || event.data.type !== 'SHOW_NOTIFICATION') return;
@@ -127,6 +143,37 @@ self.addEventListener('message', function(event) {
       renotify: true,
       vibrate:  [200, 100, 200],
       data:     { url: url },
+    })
+  );
+});
+
+// ─── Notification click ───────────────────────────────────────────────────────
+
+self.addEventListener('notificationclick', function(event) {
+  console.log('[FCM-SW] Notification clicked, action:', event.action);
+  event.notification.close();
+
+  var data = event.notification.data || {};
+  var targetUrl = data.url || '/';
+
+  if (event.action === 'scan_qr')    targetUrl = '/?open=scan';
+  if (event.action === 'play_game')  targetUrl = '/?open=game';
+  if (event.action === 'view_stats') targetUrl = '/?open=profile';
+
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(windowClients) {
+      for (var i = 0; i < windowClients.length; i++) {
+        var client = windowClients[i];
+        if ('focus' in client) {
+          client.focus();
+          client.postMessage({
+            type: 'FCM_NOTIFICATION_CLICK',
+            data: { url: targetUrl, notifType: data.type, notifId: data.notifId },
+          });
+          return;
+        }
+      }
+      if (clients.openWindow) return clients.openWindow(targetUrl);
     })
   );
 });

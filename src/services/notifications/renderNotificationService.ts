@@ -36,29 +36,18 @@ async function showSWNotification(title: string, body: string, clickUrl = '/'): 
     url:   clickUrl,
   };
 
-  // Try FCM SW first (scope: /firebase-cloud-messaging-push-scope)
-  // It has notification authority from FCM, works on Android
+  // The unified SW (firebase-messaging-sw.js) is registered at scope '/'
+  // and handles both caching and FCM. Send SHOW_NOTIFICATION to it.
   try {
-    const fcmReg = await navigator.serviceWorker.getRegistration('/firebase-cloud-messaging-push-scope');
-    if (fcmReg?.active) {
-      fcmReg.active.postMessage(msg);
-      console.info('[Notify] ✓ Message sent to FCM SW — notification will appear.');
+    const reg = await navigator.serviceWorker.getRegistration('/');
+    const sw = reg?.active ?? reg?.waiting ?? reg?.installing;
+    if (sw) {
+      sw.postMessage(msg);
+      console.info('[Notify] ✓ Message sent to SW — notification will appear.');
       return;
     }
   } catch (e: any) {
-    console.warn('[Notify] FCM SW lookup failed:', e?.message);
-  }
-
-  // Try cache SW (scope: /)
-  try {
-    const cacheReg = await navigator.serviceWorker.getRegistration('/');
-    if (cacheReg?.active) {
-      cacheReg.active.postMessage(msg);
-      console.info('[Notify] ✓ Message sent to cache SW — notification will appear.');
-      return;
-    }
-  } catch (e: any) {
-    console.warn('[Notify] Cache SW lookup failed:', e?.message);
+    console.warn('[Notify] SW lookup failed:', e?.message);
   }
 
   // Last resort: reg.showNotification() directly (works on desktop Chrome)
