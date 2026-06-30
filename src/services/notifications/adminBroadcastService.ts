@@ -33,6 +33,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase/firebase';
 import { getAllTokens, getTokenForUser } from './fcmSender';
+import { renderNotify } from './renderNotificationService';
 import type { NotificationType } from '../../types/notifications';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -165,7 +166,8 @@ export async function executeBroadcast(
       `Total users in Firestore: ${allUsers.size}`,
       `Users with FCM token registered: ${allTokens.length}`,
       `VITE_FIREBASE_VAPID_KEY set: ${!!import.meta.env.VITE_FIREBASE_VAPID_KEY ? 'YES' : 'NO ← tokens cannot register without this'}`,
-      `Push delivery: handled by Cloud Function (server-side, Admin SDK)`,
+      `VITE_RENDER_API_URL set: ${!!import.meta.env.VITE_RENDER_API_URL ? 'YES' : 'NO ← set after deploying render-server/'}`,
+      `Push delivery: Render.com notification server (Firebase Admin SDK)`,
       allTokens.length > 0
         ? `Sample token prefix: ${allTokens[0].fcmToken.substring(0, 20)}...`
         : 'No tokens registered yet — open app on phone and allow notifications.',
@@ -178,7 +180,7 @@ export async function executeBroadcast(
   }
 
   try {
-    // 1. Resolve target user IDs
+    // 1. Resolve target user IDs (for per-user or to get recipient count)
     const userIds = await resolveUserIds(parsed.target);
 
     if (userIds.length === 0) {
@@ -190,14 +192,24 @@ export async function executeBroadcast(
 
     console.info(`[Broadcast] Target="${targetLabel(parsed.target)}" → ${userIds.length} users`);
 
-    // 2. Write one notification doc per user.
-    //    Cloud Function onNotificationCreated fires for each doc and sends the push.
-    //    Cap at 100 users to avoid Firestore write storms; use targetAll for larger groups.
     const isAll = parsed.target.kind === 'all' || parsed.target.kind === 'topic';
 
+    // 2. Deliver via Render notification server (Admin SDK handles FCM)
+    let renderTarget: string;
     if (isAll) {
-      // For "all users" write ONE sentinel doc with targetAll=true.
-      // The Cloud Function handles multicasting to every registered token server-side.
+      renderTarget = 'all';
+    } else if (parsed.target.kind === 'uid') {
+      renderTarget = `uid:${(parsed.target as any).uid}`;
+    } else {
+      renderTarget = parsed.target.kind;
+    }
+
+    await renderNotify.broadcast(adminId, title, parsed.message, renderTarget).catch((err) => {
+      console.warn('[Broadcast] Render delivery warning:', err?.message ?? err);
+    });
+
+    // 3. Also write notification docs to Firestore for history drawer
+    if (isAll) {
       await addDoc(collection(db, 'notifications'), {
         userId:    '__broadcast__',
         title,
@@ -210,7 +222,6 @@ export async function executeBroadcast(
         createdAt: serverTimestamp(),
       });
     } else {
-      // Per-user: write individual docs (Cloud Function sends each push)
       const CHUNK = 10;
       for (let i = 0; i < userIds.length; i += CHUNK) {
         await Promise.allSettled(
@@ -231,7 +242,7 @@ export async function executeBroadcast(
       }
     }
 
-    // 3. Write broadcast log
+    // 4. Write broadcast log
     const logRef = await addDoc(collection(db, 'broadcast_logs'), {
       admin:          adminId,
       command:        parsed.raw,
@@ -244,7 +255,7 @@ export async function executeBroadcast(
     return {
       ok:             true,
       recipientCount: userIds.length,
-      successCount:   userIds.length, // actual push success is tracked server-side
+      successCount:   userIds.length,
       failureCount:   0,
       logId:          logRef?.id,
     };

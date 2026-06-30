@@ -10,6 +10,7 @@ import {
   getDoc, setDoc,
 } from 'firebase/firestore';
 import { db } from '../firebase/firebase';
+import { renderNotify } from './renderNotificationService';
 import type {
   AppNotification,
   NotificationType,
@@ -192,6 +193,7 @@ export async function notifyProteinAdded(userId: string, grams: number, total: n
     actions: [{ label: 'View Dashboard', actionType: 'view_dashboard' }],
     metadata: { grams, total },
   });
+  renderNotify.proteinAdded(userId, grams, total).catch(() => {});
 }
 
 export async function notifyProteinGoalComplete(userId: string, goal: number): Promise<void> {
@@ -205,6 +207,7 @@ export async function notifyProteinGoalComplete(userId: string, goal: number): P
     actions: [{ label: 'View Stats', actionType: 'view_dashboard' }],
     metadata: { goal },
   });
+  renderNotify.proteinGoalComplete(userId, goal).catch(() => {});
 }
 
 export async function notifyDuplicateEgg(userId: string): Promise<void> {
@@ -216,6 +219,7 @@ export async function notifyDuplicateEgg(userId: string): Promise<void> {
     priority: 'normal',
     actions: [{ label: 'Scan New QR', actionType: 'scan_qr' }],
   });
+  renderNotify.proteinDuplicate(userId).catch(() => {});
 }
 
 export async function notifyGoldenEgg(userId: string): Promise<void> {
@@ -228,6 +232,7 @@ export async function notifyGoldenEgg(userId: string): Promise<void> {
     actionUrl: 'game',
     actions: [{ label: 'Play Game', actionType: 'play_game' }],
   });
+  renderNotify.goldenEgg(userId).catch(() => {});
 }
 
 export async function notifyStreakMilestone(userId: string, days: number): Promise<void> {
@@ -239,6 +244,7 @@ export async function notifyStreakMilestone(userId: string, days: number): Promi
     priority: 'high',
     metadata: { days },
   });
+  renderNotify.streakMilestone(userId, days).catch(() => {});
 }
 
 export async function notifyProteinMilestone(userId: string, total: number): Promise<void> {
@@ -250,6 +256,7 @@ export async function notifyProteinMilestone(userId: string, total: number): Pro
     priority: 'high',
     metadata: { total },
   });
+  renderNotify.proteinMilestone(userId, total).catch(() => {});
 }
 
 export async function notifyChampionRank(userId: string, rank: number): Promise<void> {
@@ -262,6 +269,7 @@ export async function notifyChampionRank(userId: string, rank: number): Promise<
     actionUrl: 'leaderboard',
     metadata: { rank },
   });
+  renderNotify.championRank(userId, rank).catch(() => {});
 }
 
 export async function notifyNewHighScore(userId: string, score: number): Promise<void> {
@@ -273,6 +281,7 @@ export async function notifyNewHighScore(userId: string, score: number): Promise
     priority: 'high',
     metadata: { score },
   });
+  renderNotify.newHighScore(userId, score).catch(() => {});
 }
 
 export async function notifyMissionComplete(userId: string, missionName: string): Promise<void> {
@@ -285,6 +294,7 @@ export async function notifyMissionComplete(userId: string, missionName: string)
     actions: [{ label: 'View Missions', actionType: 'view_achievement' }],
     metadata: { missionName },
   });
+  renderNotify.missionComplete(userId, missionName).catch(() => {});
 }
 
 export async function notifyQRValidated(userId: string, plays: number): Promise<void> {
@@ -297,6 +307,7 @@ export async function notifyQRValidated(userId: string, plays: number): Promise<
     actions: [{ label: 'Play Game', actionType: 'play_game' }],
     metadata: { plays },
   });
+  renderNotify.qrValidated(userId, plays).catch(() => {});
 }
 
 export async function sendAdminAnnouncement(
@@ -331,4 +342,5 @@ export async function notifyDailySummary(
     priority: 'low',
     metadata: { protein, runs, streak, rank: rank ?? 0 },
   });
+  renderNotify.dailySummary(userId, protein, runs, streak, rank).catch(() => {});
 }
