@@ -552,7 +552,7 @@ export default function StickerDetailModal({
             <MetaCell label="Required Streak" value={`${milestone.days} Days`} />
             {formattedDate && <MetaCell label="Unlocked On" value={formattedDate} />}
             {claimed       && <MetaCell label="Owner"       value={ownerName} />}
-            <MetaCell label="Collection" value={`#${collectionIndex} of ${totalCollected}`} />
+            <MetaCell label="Collection" value={`${collectionIndex} of ${totalCollected}`} />
             <MetaCell label="Status"     value={claimed ? 'Collected' : 'Locked'} valueColor={claimed ? '#22C55E' : '#999'} />
           </div>
 
