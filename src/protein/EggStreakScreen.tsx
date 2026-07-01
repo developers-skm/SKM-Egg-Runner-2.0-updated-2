@@ -1,13 +1,9 @@
 /**
- * SKM Egg Streaks — Premium streak tracking screen
+ * SKM Egg Streaks — Premium streak tracking screen v2
  *
- * Layout:
- *   1. Large fire hero card with streak count + emoji evolution
- *   2. Motivational message
- *   3. Today's status banner
- *   4. Weekly batch progress (7-day lock system)
- *   5. Stats row (best streak / total egg days / batches)
- *   6. Recent 30-day calendar
+ * Weekly batches now displayed newest-first.
+ * Sticker road uses SVG artwork via StickerArt.
+ * Calendar uses local date keys (consistent with dateHelpers).
  */
 
 import { useEffect, useState, useCallback } from 'react';
@@ -20,9 +16,12 @@ import {
 } from '../services/protein/eggStreakService';
 import {
   MILESTONES, getClaimedStickers, getMilestone,
+  RARITY_COLOR,
   type MilestoneDef,
 } from '../services/protein/milestoneRewardService';
+import { todayKey, dateKeyFor } from '../utils/dateHelpers';
 import MilestoneRewardModal from './MilestoneRewardModal';
+import StickerArt from './StickerArt';
 
 interface EggStreakScreenProps {
   user: User;
@@ -31,11 +30,11 @@ interface EggStreakScreenProps {
 }
 
 export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStreakScreenProps) {
-  const [data,         setData]         = useState<EggStreakData | null>(null);
-  const [history,      setHistory]      = useState<StreakDayRecord[]>([]);
-  const [claimed,      setClaimed]      = useState<Set<number>>(new Set());
+  const [data,            setData]            = useState<EggStreakData | null>(null);
+  const [history,         setHistory]         = useState<StreakDayRecord[]>([]);
+  const [claimed,         setClaimed]         = useState<Set<number>>(new Set());
   const [activeMilestone, setActiveMilestone] = useState<MilestoneDef | null>(null);
-  const [loading,      setLoading]      = useState(true);
+  const [loading,         setLoading]         = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -45,9 +44,7 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
         getStreakHistory(user.uid, 30),
         getClaimedStickers(user.uid),
       ]);
-      setData(d);
-      setHistory(h);
-      setClaimed(cl);
+      setData(d); setHistory(h); setClaimed(cl);
     } catch (e) {
       console.error('[EggStreak]', e);
     } finally {
@@ -60,36 +57,35 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
   if (loading) return <StreakSkeleton />;
   if (!data)   return null;
 
-  const {
-    currentStreak, bestStreak, totalEggDays, todayCompleted,
-    todayTime, completedBatches, batchProgress,
-  } = data;
+  const { currentStreak, bestStreak, totalEggDays, todayCompleted, todayTime, completedBatches, batchProgress } = data;
 
   const emoji     = getStreakEmoji(currentStreak);
   const title     = getStreakTitle(currentStreak);
   const fireLevel = getStreakFireLevel(currentStreak);
   const message   = getMotivationalMessage(currentStreak, todayCompleted);
-  const batches   = buildBatches(currentStreak, completedBatches);
 
-  // Build a quick map from the history array for O(1) lookup
+  // Weekly batches — build then REVERSE so newest is first
+  const batchesAsc = buildBatches(currentStreak, completedBatches);
+  const batches    = [...batchesAsc].reverse();
+
+  // Build a quick lookup for calendar
   const historyMap = new Map(history.map(r => [r.dateKey, r]));
 
-  // Generate last 30 calendar days, newest first
+  // Last 30 days in local time, newest first
+  const today   = todayKey();
   const last30: string[] = [];
   for (let i = 0; i < 30; i++) {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    last30.push(d.toISOString().slice(0, 10));
+    last30.push(dateKeyFor(d));
   }
-  const today = new Date().toISOString().slice(0, 10);
 
-  const fireColors = ['#F59E0B', '#F97316', '#EF4444', '#DC2626'];
-  const heroGrad = currentStreak >= 30
+  const heroGrad = currentStreak >= 100
+    ? 'linear-gradient(135deg,#92400E,#D97706)'
+    : currentStreak >= 30
     ? 'linear-gradient(135deg,#7C3AED,#EC4899)'
     : currentStreak >= 14
     ? 'linear-gradient(135deg,#B45309,#D97706)'
-    : currentStreak >= 7
-    ? 'linear-gradient(135deg,#D71920,#B31217)'
     : 'linear-gradient(135deg,#D71920,#B31217)';
 
   return (
@@ -103,22 +99,19 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
         position: 'relative',
         overflow: 'hidden',
       }}>
-        {/* Decorative circles */}
         <div style={{ position: 'absolute', top: -50, right: -50, width: 200, height: 200, borderRadius: '50%', background: 'rgba(255,255,255,0.06)', pointerEvents: 'none' }} />
         <div style={{ position: 'absolute', bottom: -60, left: -40, width: 160, height: 160, borderRadius: '50%', background: 'rgba(255,255,255,0.04)', pointerEvents: 'none' }} />
 
-        {/* Fire rings animation */}
+        {/* Fire rings */}
         {fireLevel >= 1 && (
           <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
             {[0, 1, 2].slice(0, fireLevel).map(i => (
               <div key={i} style={{
                 position: 'absolute',
-                width: 120 + i * 60,
-                height: 120 + i * 60,
+                width: 120 + i * 60, height: 120 + i * 60,
                 borderRadius: '50%',
                 border: `2px solid rgba(255,255,255,${0.12 - i * 0.03})`,
-                top: '50%',
-                left: '50%',
+                top: '50%', left: '50%',
                 transform: 'translate(-50%, -50%)',
                 animation: `pulse-ring ${1.5 + i * 0.4}s ease-out infinite`,
                 animationDelay: `${i * 0.35}s`,
@@ -127,53 +120,37 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
           </div>
         )}
 
-        {/* Emoji */}
         <div style={{
-          fontSize: 64,
-          lineHeight: 1,
-          marginBottom: 10,
+          fontSize: 64, lineHeight: 1, marginBottom: 10,
           filter: fireLevel >= 2 ? 'drop-shadow(0 0 16px rgba(255,200,50,0.7))' : 'none',
           animation: currentStreak > 0 ? 'float 2.5s ease-in-out infinite' : 'none',
         }}>
           {emoji}
         </div>
 
-        {/* Streak count */}
         <div style={{
           fontSize: currentStreak >= 100 ? 64 : 80,
-          fontWeight: 900,
-          color: '#fff',
-          lineHeight: 1,
-          letterSpacing: -2,
-          textShadow: '0 4px 20px rgba(0,0,0,0.3)',
+          fontWeight: 900, color: '#fff', lineHeight: 1,
+          letterSpacing: -2, textShadow: '0 4px 20px rgba(0,0,0,0.3)',
         }}>
           {currentStreak}
         </div>
         <div style={{ fontSize: 14, fontWeight: 700, color: 'rgba(255,255,255,0.75)', marginTop: 2, letterSpacing: 1, textTransform: 'uppercase' }}>
           Day Streak
         </div>
-
-        {/* Title badge */}
         <div style={{
-          display: 'inline-block',
-          marginTop: 10,
-          padding: '5px 16px',
-          borderRadius: 50,
-          background: 'rgba(255,255,255,0.2)',
-          backdropFilter: 'blur(8px)',
-          fontSize: 13,
-          fontWeight: 800,
-          color: '#fff',
-          letterSpacing: 0.3,
+          display: 'inline-block', marginTop: 10,
+          padding: '5px 16px', borderRadius: 50,
+          background: 'rgba(255,255,255,0.2)', backdropFilter: 'blur(8px)',
+          fontSize: 13, fontWeight: 800, color: '#fff', letterSpacing: 0.3,
         }}>
           {title}
         </div>
       </div>
 
-      {/* ── Motivational message ── */}
+      {/* ── Motivational ── */}
       <div style={{
-        margin: '12px 14px 0',
-        padding: '14px 16px',
+        margin: '12px 14px 0', padding: '14px 16px',
         background: todayCompleted ? '#F0FDF4' : '#FFFBEB',
         borderRadius: 16,
         borderLeft: `4px solid ${todayCompleted ? '#22C55E' : '#F59E0B'}`,
@@ -213,61 +190,88 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
 
       <div style={{ padding: '0 14px' }}>
 
-        {/* ── Stats row ── */}
+        {/* ── Stats ── */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginTop: 12 }}>
-          <StatTile label="Best Streak" value={`${bestStreak}d`} emoji="🏆" />
-          <StatTile label="Total Eggs" value={String(totalEggDays)} emoji="🥚" />
+          <StatTile label="Best Streak" value={`${bestStreak}d`}        emoji="🏆" />
+          <StatTile label="Total Eggs"  value={String(totalEggDays)}    emoji="🥚" />
           <StatTile label="Batches Done" value={String(completedBatches)} emoji="🔥" />
         </div>
 
-        {/* ── Weekly Batch System ── */}
+        {/* ── Weekly Batches (newest first) ── */}
         <div style={{ background: '#fff', borderRadius: 20, padding: 16, marginTop: 12, boxShadow: '0 2px 10px rgba(0,0,0,0.06)' }}>
           <div style={{ marginBottom: 14 }}>
             <p style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A', margin: '0 0 2px' }}>Weekly Batches</p>
-            <p style={{ fontSize: 11, color: '#bbb', margin: 0 }}>7 days = 1 batch. Completed batches are locked forever.</p>
+            <p style={{ fontSize: 11, color: '#bbb', margin: 0 }}>7 days = 1 batch · Newest week shown first</p>
           </div>
+
           {batches.map(batch => {
-            const rewardLabel = getBatchRewardLabel(batch.batchNumber);
+            const rewardLabel   = getBatchRewardLabel(batch.batchNumber);
+            // Date range: batch.startDay and endDay are day numbers of the streak
+            // Compute actual calendar dates by subtracting from today
+            const daysAgoEnd    = currentStreak - batch.startDay;     // how many days ago was the start of this batch
+            const daysAgoStart  = currentStreak - batch.endDay;       // negative = future
+            const batchStartDate = (() => { const d = new Date(); d.setDate(d.getDate() - daysAgoEnd); return d; })();
+            const batchEndDate   = (() => { const d = new Date(); d.setDate(d.getDate() - Math.max(0, daysAgoStart)); return d; })();
+            const fmt = (d: Date) => d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+            const dateRange = `${fmt(batchStartDate)} – ${fmt(batchEndDate)}`;
+            const daysCompleted = batch.days.filter(d => d.completed).length;
+            const pct = Math.round((daysCompleted / 7) * 100);
+
             return (
               <div key={batch.batchNumber} style={{
-                marginBottom: 12,
-                padding: '12px 14px',
-                borderRadius: 14,
+                marginBottom: 12, padding: '14px',
+                borderRadius: 16,
                 background: batch.isLocked ? '#FAFAFA' : batch.isComplete ? '#F0FDF4' : '#FFF7F0',
                 border: batch.isCurrent ? '2px solid #F59E0B' : batch.isComplete ? '1.5px solid #86EFAC' : '1.5px solid #F0F0F0',
-                opacity: batch.isLocked ? 0.5 : 1,
+                opacity: batch.isLocked ? 0.45 : 1,
               }}>
+                {/* Header row */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    {batch.isComplete && <span style={{ fontSize: 16 }}>🔒</span>}
-                    {batch.isCurrent && <span style={{ fontSize: 16 }}>🔥</span>}
-                    {batch.isLocked  && <span style={{ fontSize: 16 }}>⭕</span>}
-                    <span style={{ fontSize: 12, fontWeight: 900, color: '#1A1A1A' }}>
-                      Batch {batch.batchNumber} — Days {batch.startDay}–{batch.endDay}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                    <span style={{ fontSize: 15 }}>
+                      {batch.isComplete ? '🔒' : batch.isCurrent ? '🔥' : '⭕'}
                     </span>
+                    <div>
+                      <p style={{ fontSize: 12, fontWeight: 900, color: '#1A1A1A', margin: 0 }}>
+                        Week {batch.batchNumber}
+                        {batch.isCurrent && <span style={{ fontSize: 10, fontWeight: 700, color: '#F59E0B', marginLeft: 6 }}>Current</span>}
+                      </p>
+                      <p style={{ fontSize: 9, color: '#bbb', margin: 0, fontWeight: 600 }}>{dateRange}</p>
+                    </div>
                   </div>
-                  {batch.isComplete && rewardLabel && (
-                    <span style={{ fontSize: 11, fontWeight: 800, color: '#166534', background: '#DCFCE7', borderRadius: 8, padding: '2px 8px' }}>
-                      {rewardLabel}
-                    </span>
-                  )}
-                  {batch.isCurrent && (
-                    <span style={{ fontSize: 11, fontWeight: 800, color: '#92400E', background: '#FEF3C7', borderRadius: 8, padding: '2px 8px' }}>
-                      {batchProgress}/7 days
-                    </span>
-                  )}
+                  <div style={{ textAlign: 'right' }}>
+                    {batch.isComplete && rewardLabel && (
+                      <span style={{ fontSize: 10, fontWeight: 800, color: '#166534', background: '#DCFCE7', borderRadius: 8, padding: '2px 8px' }}>
+                        {rewardLabel}
+                      </span>
+                    )}
+                    {batch.isCurrent && (
+                      <span style={{ fontSize: 11, fontWeight: 800, color: '#92400E', background: '#FEF3C7', borderRadius: 8, padding: '2px 8px' }}>
+                        {batchProgress}/7
+                      </span>
+                    )}
+                    {batch.isLocked && (
+                      <span style={{ fontSize: 10, fontWeight: 700, color: '#bbb' }}>Locked</span>
+                    )}
+                  </div>
                 </div>
-                {/* 7 day dots */}
-                <div style={{ display: 'flex', gap: 5 }}>
+
+                {/* Stats row */}
+                <div style={{ display: 'flex', gap: 10, marginBottom: 8, fontSize: 10, fontWeight: 700, color: '#666' }}>
+                  <span>🥚 {daysCompleted}/7 eggs</span>
+                  <span>💪 {daysCompleted * 6}g protein</span>
+                  <span>📊 {pct}%</span>
+                </div>
+
+                {/* 7 day progress bars */}
+                <div style={{ display: 'flex', gap: 4 }}>
                   {batch.days.map((d, i) => (
                     <div key={i} style={{
-                      flex: 1,
-                      height: 8,
-                      borderRadius: 4,
+                      flex: 1, height: 8, borderRadius: 4,
                       background: d.completed
                         ? (batch.isComplete ? '#22C55E' : '#F59E0B')
                         : (batch.isCurrent ? '#E8E8E8' : '#F0F0F0'),
-                      transition: 'background 300ms ease',
+                      transition: 'background 300ms',
                     }} />
                   ))}
                 </div>
@@ -277,13 +281,13 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
         </div>
 
         {/* ── 30-Day Calendar ── */}
-        <div style={{ background: '#fff', borderRadius: 20, padding: 16, marginTop: 12, marginBottom: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.06)' }}>
+        <div style={{ background: '#fff', borderRadius: 20, padding: 16, marginTop: 12, boxShadow: '0 2px 10px rgba(0,0,0,0.06)' }}>
           <div style={{ marginBottom: 12 }}>
-            <p style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A', margin: '0 0 2px' }}>30-Day History</p>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 6 }}>
+            <p style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A', margin: '0 0 6px' }}>30-Day History</p>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               {[
-                { dot: '#22C55E', label: 'Egg scanned' },
-                { dot: '#D71920', label: 'Today (not yet)' },
+                { dot: '#22C55E', label: 'Scanned' },
+                { dot: '#D71920', label: 'Today' },
                 { dot: '#E8E8E8', label: 'Missed' },
               ].map(l => (
                 <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -293,32 +297,24 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
               ))}
             </div>
           </div>
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(10, 1fr)',
-            gap: 4,
-          }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(10, 1fr)', gap: 4 }}>
             {last30.map(dateKey => {
               const rec       = historyMap.get(dateKey);
               const isToday   = dateKey === today;
               const completed = !!rec?.completed;
               const dayNum    = parseInt(dateKey.slice(8, 10), 10);
-              const monthAbbr = new Date(dateKey + 'T12:00:00').toLocaleDateString('en-US', { month: 'short' });
 
-              let bg    = '#F0F0F0';
-              let emoji = '';
-              if (completed) { bg = '#DCFCE7'; emoji = '🥚'; }
-              else if (isToday && !completed) { bg = '#FCE8E8'; emoji = '🔥'; }
+              let bg   = '#F0F0F0';
+              let icon = '';
+              if (completed)        { bg = '#DCFCE7'; icon = '🥚'; }
+              else if (isToday)     { bg = '#FCE8E8'; icon = '🔥'; }
 
               return (
                 <div key={dateKey} style={{
-                  background: bg,
-                  borderRadius: 8,
-                  padding: '5px 2px',
-                  textAlign: 'center',
+                  background: bg, borderRadius: 8, padding: '5px 2px', textAlign: 'center',
                   border: isToday ? '2px solid #D71920' : '1.5px solid transparent',
                 }}>
-                  <div style={{ fontSize: 14, lineHeight: 1 }}>{emoji || '·'}</div>
+                  <div style={{ fontSize: 14, lineHeight: 1 }}>{icon || '·'}</div>
                   <div style={{ fontSize: 8, fontWeight: 700, color: '#999', marginTop: 2 }}>{dayNum}</div>
                 </div>
               );
@@ -326,7 +322,7 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
           </div>
         </div>
 
-        {/* ── Milestone Road with Rewards ── */}
+        {/* ── Milestone Road ── */}
         <div style={{ background: '#fff', borderRadius: 20, padding: 16, marginTop: 12, boxShadow: '0 2px 10px rgba(0,0,0,0.06)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
             <p style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A', margin: 0 }}>Milestone Road</p>
@@ -334,47 +330,57 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
               {claimed.size}/{MILESTONES.length} claimed
             </span>
           </div>
+
           {MILESTONES.map(m => {
-            const reached    = currentStreak >= m.days;
-            const isClaimed  = claimed.has(m.days);
-            const claimable  = reached && !isClaimed;
+            const reached   = currentStreak >= m.days;
+            const isClaimed = claimed.has(m.days);
+            const claimable = reached && !isClaimed;
+            const rc        = RARITY_COLOR[m.rarity];
+            // Days remaining — always computed from actual streak, never from dev offsets
+            const daysLeft  = Math.max(0, m.days - currentStreak);
 
             return (
               <div key={m.days} style={{
                 display: 'flex', alignItems: 'center', gap: 12,
-                marginBottom: 10,
-                padding: '10px 12px',
-                borderRadius: 14,
-                background: isClaimed ? '#F0FDF4' : claimable ? '#FFFBEB' : reached ? '#FFF5F5' : '#FAFAFA',
+                marginBottom: 10, padding: '10px 12px', borderRadius: 14,
+                background: isClaimed ? '#F0FDF4' : claimable ? '#FFFBEB' : '#FAFAFA',
                 border: claimable ? '1.5px solid #F59E0B' : isClaimed ? '1.5px solid #86EFAC' : '1.5px solid transparent',
-                opacity: reached ? 1 : 0.5,
-                transition: 'all 200ms ease',
+                opacity: reached ? 1 : 0.55,
+                transition: 'all 200ms',
               }}>
-                {/* Sticker icon */}
+                {/* SVG sticker */}
                 <div style={{
-                  width: 44, height: 44, borderRadius: 13,
+                  width: 48, height: 48, borderRadius: 14, flexShrink: 0,
                   background: isClaimed
-                    ? `linear-gradient(135deg, ${m.color}, ${m.color2})`
-                    : reached ? '#FCE8E8' : '#F0F0F0',
+                    ? `linear-gradient(135deg,${m.color}22,${m.color2}11)`
+                    : '#F0F0F0',
+                  border: isClaimed ? `1.5px solid ${m.color}44` : '1.5px solid #E8E8E8',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 22, flexShrink: 0,
-                  boxShadow: isClaimed ? `0 4px 12px ${m.color}44` : 'none',
-                  filter: reached ? 'none' : 'grayscale(1)',
+                  boxShadow: isClaimed ? `0 4px 12px ${m.color}33` : 'none',
+                  overflow: 'hidden',
                 }}>
-                  {m.sticker}
+                  <StickerArt days={m.days} fallback={m.sticker} size={36} locked={!reached} />
                 </div>
 
                 {/* Labels */}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ fontSize: 12, fontWeight: 800, color: reached ? '#1A1A1A' : '#bbb', margin: 0 }}>
-                    {m.label}
-                  </p>
-                  <p style={{ fontSize: 10, color: '#999', margin: '1px 0 0' }}>
-                    {m.stickerName} · {m.days} day streak
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                    <p style={{ fontSize: 12, fontWeight: 800, color: reached ? '#1A1A1A' : '#bbb', margin: 0 }}>
+                      {m.label}
+                    </p>
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, color: rc,
+                      background: `${rc}15`, borderRadius: 4, padding: '1px 5px', letterSpacing: 0.3,
+                    }}>
+                      {m.rarity.toUpperCase()}
+                    </span>
+                  </div>
+                  <p style={{ fontSize: 10, color: '#999', margin: 0 }}>
+                    {m.stickerName} · {m.days}d streak
                   </p>
                 </div>
 
-                {/* Right badge / button */}
+                {/* Right side */}
                 {isClaimed && (
                   <div style={{
                     background: '#DCFCE7', borderRadius: 8, padding: '4px 10px',
@@ -397,8 +403,8 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
                   </button>
                 )}
                 {!reached && (
-                  <div style={{ fontSize: 11, fontWeight: 800, color: '#ccc', flexShrink: 0 }}>
-                    {m.days - currentStreak}d left
+                  <div style={{ fontSize: 11, fontWeight: 800, color: '#ccc', flexShrink: 0, textAlign: 'right' }}>
+                    {daysLeft}d left
                   </div>
                 )}
               </div>
@@ -408,11 +414,10 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
 
       </div>
 
-      {/* Milestone reward modal */}
       <MilestoneRewardModal
         uid={user.uid}
         milestone={activeMilestone}
-        onClaimed={() => setClaimed(prev => new Set([...prev, activeMilestone!.days]))}
+        onClaimed={() => { setClaimed(prev => new Set([...prev, activeMilestone!.days])); }}
         onClose={() => setActiveMilestone(null)}
       />
 

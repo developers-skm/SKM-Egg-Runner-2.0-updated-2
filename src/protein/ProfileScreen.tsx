@@ -12,8 +12,12 @@ import {
   FlameIcon, EggIcon, SettingsIcon, ChevronRightIcon,
 } from './Icons';
 import {
-  MILESTONES, getClaimedStickers,
+  MILESTONES, getClaimedStickers, getClaimedWithDates,
+  RARITY_COLOR, RARITY_BG,
+  type MilestoneDef, type Rarity,
 } from '../services/protein/milestoneRewardService';
+import StickerArt from './StickerArt';
+import StickerDetailModal from './StickerDetailModal';
 import {
   isDevUser,
   devAddTestProtein, devAddStreakDays, devResetTodayEgg,
@@ -47,13 +51,17 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
   const [userDoc,     setUserDoc]     = useState<Record<string, unknown>>({});
   const [claimed,     setClaimed]     = useState<Set<number>>(new Set());
   const [loading,     setLoading]     = useState(true);
-  const [isDevRole,   setIsDevRole]   = useState(false);
-  const [devVisible,  setDevVisible]  = useState(false);
-  const [devMode,     setDevMode]     = useState(false);
-  const [devMsg,      setDevMsg]      = useState('');
-  const [devBusy,     setDevBusy]     = useState(false);
-  const versionTapRef                 = useRef(0);
-  const versionTimerRef               = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isDevRole,       setIsDevRole]       = useState(false);
+  const [devVisible,      setDevVisible]      = useState(false);
+  const [devMode,         setDevMode]         = useState(false);
+  const [devMsg,          setDevMsg]          = useState('');
+  const [devBusy,         setDevBusy]         = useState(false);
+  const [claimedDates,    setClaimedDates]    = useState<Map<number, string>>(new Map());
+  const [favorites,       setFavorites]       = useState<Set<number>>(new Set());
+  const [activeSticker,   setActiveSticker]   = useState<MilestoneDef | null>(null);
+  const [rarityFilter,    setRarityFilter]    = useState<Rarity | 'All'>('All');
+  const versionTapRef                         = useRef(0);
+  const versionTimerRef                       = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [profile,       setProfile]       = useState<ExtendedProfile>({ playerName: '', age: '', gender: '', height: '', weight: '', goalWeight: '', phone: '' });
   const [profileErr,    setProfileErr]    = useState('');
@@ -67,14 +75,15 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [si, stg, snap, cl, devRole] = await Promise.all([
+      const [si, stg, snap, cl, dates, devRole] = await Promise.all([
         getStreakInfo(user.uid),
         getTrackerSettings(user.uid),
         getDoc(doc(db, 'users', user.uid)),
         getClaimedStickers(user.uid),
+        getClaimedWithDates(user.uid),
         isDevUser(user.uid),
       ]);
-      setStreak(si); setSettings(stg); setClaimed(cl);
+      setStreak(si); setSettings(stg); setClaimed(cl); setClaimedDates(dates);
       setIsDevRole(devRole);
       if (devRole) setDevVisible(true);
       if (snap.exists()) setUserDoc(snap.data());
@@ -355,15 +364,34 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
             <ActionRow icon={<TargetIcon size={18} color="#D71920" />} label="Change Daily Goal" onClick={() => { setNewGoal(String(settings?.dailyGoal ?? DEFAULT_DAILY_GOAL)); setView('edit_goal'); }} />
           </div>
 
-          {/* Sticker Collection */}
+          {/* ── STICKER COLLECTION GALLERY ── */}
           <div style={{ marginTop: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <p style={{ fontSize: 10, fontWeight: 800, color: '#999', textTransform: 'uppercase', letterSpacing: 1, margin: 0 }}>
-                Sticker Collection
-              </p>
-              <span style={{ fontSize: 11, fontWeight: 700, color: '#D71920' }}>
-                {claimed.size}/{MILESTONES.length} collected
-              </span>
+
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <div>
+                <p style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A', margin: 0 }}>Sticker Collection</p>
+                <p style={{ fontSize: 10, color: '#999', margin: '2px 0 0', fontWeight: 600 }}>
+                  {claimed.size} / {MILESTONES.length} collected
+                </p>
+              </div>
+              <div style={{
+                background: claimed.size === MILESTONES.length ? 'linear-gradient(135deg,#D97706,#F59E0B)' : 'linear-gradient(135deg,#D71920,#B31217)',
+                borderRadius: 20, padding: '4px 12px',
+              }}>
+                <span style={{ fontSize: 11, fontWeight: 900, color: '#fff' }}>
+                  {Math.round((claimed.size / MILESTONES.length) * 100)}%
+                </span>
+              </div>
+            </div>
+
+            {/* Progress bar */}
+            <div style={{ height: 6, background: '#F0F0F0', borderRadius: 3, overflow: 'hidden', marginBottom: 12 }}>
+              <div style={{
+                height: '100%', width: `${(claimed.size / MILESTONES.length) * 100}%`,
+                background: 'linear-gradient(90deg,#D71920,#F59E0B,#22C55E)',
+                borderRadius: 3, transition: 'width 700ms ease',
+              }} />
             </div>
 
             {/* Newest sticker banner */}
@@ -371,77 +399,131 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
               const newest = [...MILESTONES].reverse().find(m => claimed.has(m.days));
               if (!newest) return null;
               return (
-                <div style={{
-                  background: `linear-gradient(135deg, ${newest.color}18, ${newest.color2}10)`,
-                  border: `1.5px solid ${newest.color}35`,
-                  borderRadius: 16, padding: '12px 14px', marginBottom: 10,
-                  display: 'flex', alignItems: 'center', gap: 12,
-                }}>
+                <div
+                  onClick={() => setActiveSticker(newest)}
+                  style={{
+                    background: `linear-gradient(135deg, ${newest.color}20, ${newest.color2}12)`,
+                    border: `2px solid ${newest.color}44`,
+                    borderRadius: 18, padding: '14px 16px', marginBottom: 12,
+                    display: 'flex', alignItems: 'center', gap: 14,
+                    cursor: 'pointer',
+                  }}
+                >
                   <div style={{
-                    width: 44, height: 44, borderRadius: 13,
-                    background: `linear-gradient(135deg, ${newest.color}, ${newest.color2})`,
+                    width: 52, height: 52, borderRadius: 14, flexShrink: 0,
+                    background: `linear-gradient(135deg,${newest.color},${newest.color2})`,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 22, flexShrink: 0, boxShadow: `0 4px 12px ${newest.color}44`,
+                    boxShadow: `0 6px 16px ${newest.color}44`,
+                    overflow: 'hidden',
                   }}>
-                    {newest.sticker}
+                    <StickerArt days={newest.days} fallback={newest.sticker} size={40} />
                   </div>
-                  <div>
-                    <p style={{ fontSize: 11, color: '#999', margin: 0, fontWeight: 700 }}>Newest Sticker</p>
-                    <p style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A', margin: '2px 0 0' }}>{newest.stickerName}</p>
+                  <div style={{ flex: 1 }}>
+                    <p style={{ fontSize: 10, color: '#999', margin: 0, fontWeight: 700 }}>Newest Sticker</p>
+                    <p style={{ fontSize: 14, fontWeight: 900, color: '#1A1A1A', margin: '2px 0 2px' }}>{newest.stickerName}</p>
+                    <span style={{
+                      fontSize: 9, fontWeight: 800, color: RARITY_COLOR[newest.rarity],
+                      background: RARITY_BG[newest.rarity], borderRadius: 4, padding: '2px 6px',
+                    }}>
+                      {newest.rarity.toUpperCase()}
+                    </span>
                   </div>
+                  <span style={{ fontSize: 18, color: '#ccc' }}>›</span>
                 </div>
               );
             })()}
 
-            {/* Progress bar */}
-            <div style={{ background: '#fff', borderRadius: 14, padding: '10px 14px', marginBottom: 10, boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                <span style={{ fontSize: 11, color: '#999', fontWeight: 600 }}>Collection Progress</span>
-                <span style={{ fontSize: 11, color: '#D71920', fontWeight: 800 }}>
-                  {Math.round((claimed.size / MILESTONES.length) * 100)}%
-                </span>
-              </div>
-              <div style={{ height: 6, background: '#F0F0F0', borderRadius: 3, overflow: 'hidden' }}>
-                <div style={{
-                  height: '100%',
-                  width: `${(claimed.size / MILESTONES.length) * 100}%`,
-                  background: 'linear-gradient(90deg,#D71920,#F59E0B)',
-                  borderRadius: 3, transition: 'width 600ms ease',
-                }} />
-              </div>
-            </div>
-
-            {/* Sticker grid */}
-            <div style={{
-              display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8,
-            }}>
-              {MILESTONES.map(m => {
-                const unlocked = claimed.has(m.days);
+            {/* Rarity filter tabs */}
+            <div style={{ display: 'flex', gap: 6, marginBottom: 12, overflowX: 'auto', paddingBottom: 2 }}>
+              {(['All', 'Common', 'Rare', 'Epic', 'Legendary'] as const).map(r => {
+                const active = rarityFilter === r;
+                const col = r === 'All' ? '#D71920' : RARITY_COLOR[r as Rarity];
                 return (
-                  <div key={m.days} style={{
-                    background: unlocked
-                      ? `linear-gradient(135deg, ${m.color}22, ${m.color2}11)`
-                      : '#F5F5F5',
-                    border: unlocked ? `1.5px solid ${m.color}44` : '1.5px solid #E8E8E8',
-                    borderRadius: 14, padding: '10px 6px', textAlign: 'center',
+                  <button key={r} onClick={() => setRarityFilter(r)} style={{
+                    padding: '5px 12px', borderRadius: 20, border: 'none',
+                    background: active ? col : '#F0F0F0',
+                    color: active ? '#fff' : '#666',
+                    fontWeight: 800, fontSize: 10, cursor: 'pointer', whiteSpace: 'nowrap',
+                    transition: 'all 150ms',
                   }}>
-                    <div style={{
-                      fontSize: 26, marginBottom: 4,
-                      filter: unlocked ? 'none' : 'grayscale(1) opacity(0.35)',
-                    }}>
-                      {m.sticker}
-                    </div>
-                    <p style={{ fontSize: 8, fontWeight: 800, color: unlocked ? '#1A1A1A' : '#ccc', margin: 0, lineHeight: 1.2 }}>
-                      {unlocked ? m.stickerName : `${m.days}d`}
-                    </p>
-                    {unlocked && (
-                      <div style={{ fontSize: 8, color: '#22C55E', fontWeight: 800, marginTop: 2 }}>✅</div>
-                    )}
-                  </div>
+                    {r}
+                  </button>
                 );
               })}
             </div>
+
+            {/* Sticker grid — tappable */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+              {MILESTONES
+                .filter(m => rarityFilter === 'All' || m.rarity === rarityFilter)
+                .map(m => {
+                  const unlocked  = claimed.has(m.days);
+                  const isFav     = favorites.has(m.days);
+                  const rc        = RARITY_COLOR[m.rarity];
+                  return (
+                    <div
+                      key={m.days}
+                      onClick={() => setActiveSticker(m)}
+                      style={{
+                        background: unlocked
+                          ? `linear-gradient(135deg, ${m.color}20, ${m.color2}10)`
+                          : '#F5F5F5',
+                        border: unlocked ? `1.5px solid ${m.color}44` : '1.5px solid #E8E8E8',
+                        borderRadius: 16, padding: '10px 6px', textAlign: 'center',
+                        cursor: 'pointer', position: 'relative',
+                        transition: 'transform 150ms',
+                        boxShadow: unlocked ? `0 4px 12px ${m.color}22` : 'none',
+                      }}
+                    >
+                      {isFav && (
+                        <div style={{ position: 'absolute', top: 5, right: 5, fontSize: 9 }}>⭐</div>
+                      )}
+                      <div style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        width: 44, height: 44, margin: '0 auto 6px',
+                        overflow: 'hidden',
+                      }}>
+                        <StickerArt days={m.days} fallback={m.sticker} size={40} locked={!unlocked} />
+                      </div>
+                      <p style={{
+                        fontSize: 8, fontWeight: 800, margin: '0 0 3px', lineHeight: 1.2,
+                        color: unlocked ? '#1A1A1A' : '#ccc',
+                      }}>
+                        {unlocked ? m.stickerName : `${m.days}d`}
+                      </p>
+                      <span style={{
+                        fontSize: 7, fontWeight: 800, color: unlocked ? rc : '#ddd',
+                        background: unlocked ? `${rc}15` : 'transparent',
+                        borderRadius: 3, padding: '1px 4px',
+                        display: 'block',
+                      }}>
+                        {m.rarity.toUpperCase()}
+                      </span>
+                      {unlocked && (
+                        <div style={{ fontSize: 8, color: '#22C55E', fontWeight: 800, marginTop: 3 }}>✅</div>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
           </div>
+
+          {/* Sticker detail modal */}
+          <StickerDetailModal
+            milestone={activeSticker}
+            claimed={activeSticker ? claimed.has(activeSticker.days) : false}
+            claimedDate={activeSticker ? claimedDates.get(activeSticker.days) : undefined}
+            ownerName={user.displayName ?? 'Champion'}
+            collectionIndex={activeSticker ? ([...claimed].sort((a,b)=>a-b).indexOf(activeSticker.days)+1) : 0}
+            totalCollected={claimed.size}
+            isFavorite={activeSticker ? favorites.has(activeSticker.days) : false}
+            onToggleFavorite={days => setFavorites(f => {
+              const next = new Set(f);
+              next.has(days) ? next.delete(days) : next.add(days);
+              return next;
+            })}
+            onClose={() => setActiveSticker(null)}
+          />
 
           {/* App version — secret gesture trigger */}
           <div
