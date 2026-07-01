@@ -8,10 +8,9 @@ import {
   type StreakInfo, type TrackerSettings,
 } from '../services/protein/proteinTrackerService';
 import {
-  UserIcon, EditIcon, LogoutIcon, TrashIcon, BellIcon, TargetIcon,
-  FlameIcon, EggIcon, SettingsIcon, ChevronRightIcon, CheckIcon,
+  UserIcon, EditIcon, LogoutIcon, TrashIcon, TargetIcon,
+  FlameIcon, EggIcon, SettingsIcon, ChevronRightIcon,
 } from './Icons';
-import NotificationSettings from '../components/notifications/NotificationSettings';
 
 type View = 'profile' | 'edit_profile' | 'edit_goal' | 'delete_confirm';
 
@@ -100,13 +99,6 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
       await load(); setView('profile'); setNewGoal('');
     } catch { setGoalErr('Failed to save. Try again.'); }
     finally { setGoalSaving(false); }
-  };
-
-  const handleToggleReminder = async () => {
-    if (!settings) return;
-    const next = !settings.reminderEnabled;
-    await saveTrackerSettings(user.uid, { reminderEnabled: next });
-    setSettings(s => s ? { ...s, reminderEnabled: next } : s);
   };
 
   const handleDelete = async () => {
@@ -314,19 +306,10 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
             <ActionRow icon={<TargetIcon size={18} color="#D71920" />} label="Change Daily Goal" onClick={() => { setNewGoal(String(settings?.dailyGoal ?? DEFAULT_DAILY_GOAL)); setView('edit_goal'); }} />
           </div>
 
-          {/* Notification Settings */}
-          <div style={{ marginTop: 14 }}>
-            <p style={{ fontSize: 10, fontWeight: 800, color: '#999', textTransform: 'uppercase', letterSpacing: 1, margin: '0 0 8px 4px' }}>Notifications</p>
-            <NotificationSettings />
-          </div>
-
           {/* Settings */}
           <div style={{ marginTop: 14 }}>
             <p style={{ fontSize: 10, fontWeight: 800, color: '#999', textTransform: 'uppercase', letterSpacing: 1, margin: '0 0 8px 4px' }}>Settings</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <ActionRow icon={<BellIcon     size={18} color="#D71920" />} label={`Reminders: ${settings?.reminderEnabled ? 'On' : 'Off'}`} onClick={handleToggleReminder} right={settings?.reminderEnabled ? <CheckIcon size={16} color="#22C55E" /> : null} />
-              <ActionRow icon={<SettingsIcon size={18} color="#666" />}    label="Back to Module Select"  onClick={onBackToMenu} />
-            </div>
+            <ActionRow icon={<SettingsIcon size={18} color="#666" />} label="Back to Module Select" onClick={onBackToMenu} />
           </div>
 
           {/* Account actions */}
