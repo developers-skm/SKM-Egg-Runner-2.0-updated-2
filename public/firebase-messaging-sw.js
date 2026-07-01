@@ -63,7 +63,8 @@ self.addEventListener('fetch', function(event) {
         if (cached) return cached;
         return fetch(event.request).then(function(response) {
           if (response.ok) {
-            caches.open(CACHE).then(function(cache) { cache.put(event.request, response.clone()); });
+            var toCache = response.clone();
+            caches.open(CACHE).then(function(cache) { cache.put(event.request, toCache); });
           }
           return response;
         });
