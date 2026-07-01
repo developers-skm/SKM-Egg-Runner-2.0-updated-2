@@ -1,8 +1,16 @@
 import { useEffect, useState, useCallback } from 'react';
 
-// Show developer tools in every non-production build.
-// Set VITE_APP_ENV=production in Firebase Hosting env to hide at launch.
-const IS_DEV = import.meta.env.MODE !== 'production';
+// IS_DEV: true when VITE_DEV_TOOLS=true in .env — survives production deploys.
+// Flip to false in .env only for the official public launch.
+const IS_DEV = import.meta.env.VITE_DEV_TOOLS === 'true';
+
+const DEV_MODE_KEY = 'skm_dev_mode_enabled';
+function readDevMode(): boolean {
+  try { return localStorage.getItem(DEV_MODE_KEY) === 'true'; } catch { return false; }
+}
+function writeDevMode(v: boolean): void {
+  try { localStorage.setItem(DEV_MODE_KEY, v ? 'true' : 'false'); } catch { /* ignore */ }
+}
 import type { User } from 'firebase/auth';
 import { doc, getDoc, updateDoc, deleteDoc, serverTimestamp, collection, getDocs } from 'firebase/firestore';
 import { updateProfile, deleteUser, reauthenticateWithPopup, GoogleAuthProvider, reauthenticateWithPhoneNumber, RecaptchaVerifier } from 'firebase/auth';
@@ -56,7 +64,7 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
   const [claimed,     setClaimed]     = useState<Set<number>>(new Set());
   const [loading,     setLoading]     = useState(true);
   const [isDevRole,       setIsDevRole]       = useState(false);
-  const [devMode,         setDevMode]         = useState(false);
+  const [devMode,         setDevMode]         = useState<boolean>(readDevMode);
   const [devMsg,          setDevMsg]          = useState('');
   const [devBusy,         setDevBusy]         = useState(false);
   const [devDebugOpen,    setDevDebugOpen]    = useState(false);
@@ -650,7 +658,7 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
 
                   {/* Toggle switch */}
                   <div
-                    onClick={() => setDevMode(m => !m)}
+                    onClick={() => setDevMode(m => { const next = !m; writeDevMode(next); return next; })}
                     style={{
                       width: 48, height: 26, borderRadius: 13, cursor: 'pointer',
                       background: devMode ? '#A78BFA' : '#E8E8E8',
