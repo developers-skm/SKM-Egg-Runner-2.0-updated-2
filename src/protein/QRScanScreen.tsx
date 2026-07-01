@@ -27,6 +27,7 @@ import {
   notifyDuplicateEgg, notifyStreakMilestone, notifyProteinMilestone,
 } from '../services/notifications/notificationService';
 import { recordStreakDay } from '../services/protein/eggStreakService';
+import ScanCelebrationOverlay from './ScanCelebrationOverlay';
 
 type Phase = 'idle' | 'opening' | 'scanning' | 'processing' | 'success' | 'duplicate' | 'consumed_other' | 'error';
 
@@ -846,6 +847,18 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── CELEBRATION OVERLAY — shown only on genuine success ── */}
+      {phase === 'success' && result && (
+        <ScanCelebrationOverlay
+          streak={result.streak}
+          protein={result.protein}
+          todayEggs={result.todayEggs}
+          goal={result.goal}
+          todayProtein={result.todayProtein}
+          onDismiss={onScanSuccess}
+        />
       )}
 
       <style>{`
