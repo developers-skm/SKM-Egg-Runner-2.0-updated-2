@@ -1,16 +1,22 @@
 /**
  * Shared date utility functions.
  * Single source of truth — import from here instead of re-defining locally.
+ *
+ * IMPORTANT: All date keys are LOCAL calendar dates (sv-SE locale = YYYY-MM-DD).
+ * Using UTC dates caused streak mismatches in IST (UTC+5:30): before 05:30 UTC
+ * the UTC date is still "yesterday" while the local calendar date is already
+ * "today", breaking the streak increment comparison against lastConsumptionDate
+ * which the game side writes as a local date via toLocaleDateString('sv-SE').
  */
 
-/** Returns today's date as YYYY-MM-DD (UTC). */
+/** Returns today's date as YYYY-MM-DD in the device's local timezone. */
 export function todayKey(): string {
-  return new Date().toISOString().slice(0, 10);
+  return new Date().toLocaleDateString('sv-SE');
 }
 
-/** Returns an arbitrary Date as YYYY-MM-DD (UTC). */
+/** Returns an arbitrary Date as YYYY-MM-DD in the device's local timezone. */
 export function dateKeyFor(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  return d.toLocaleDateString('sv-SE');
 }
 
 /** Formats YYYY-MM-DD as a short weekday label, e.g. "Mon". */
