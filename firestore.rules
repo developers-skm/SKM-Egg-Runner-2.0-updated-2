@@ -302,5 +302,13 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ── MILESTONE REWARDS (claimed sticker list) ──────────────
+    match /milestone_rewards/{uid} {
+      allow read:   if isOwner(uid) || isDeveloper();
+      allow create: if isOwner(uid);
+      allow update: if isOwner(uid);
+      allow delete: if false;
+    }
+
   }
 }

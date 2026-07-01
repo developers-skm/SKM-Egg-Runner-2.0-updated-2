@@ -18,6 +18,11 @@ import {
   getMotivationalMessage, getBatchRewardLabel, buildBatches,
   type EggStreakData, type StreakDayRecord,
 } from '../services/protein/eggStreakService';
+import {
+  MILESTONES, getClaimedStickers, getMilestone,
+  type MilestoneDef,
+} from '../services/protein/milestoneRewardService';
+import MilestoneRewardModal from './MilestoneRewardModal';
 
 interface EggStreakScreenProps {
   user: User;
@@ -26,19 +31,23 @@ interface EggStreakScreenProps {
 }
 
 export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStreakScreenProps) {
-  const [data,    setData]    = useState<EggStreakData | null>(null);
-  const [history, setHistory] = useState<StreakDayRecord[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [data,         setData]         = useState<EggStreakData | null>(null);
+  const [history,      setHistory]      = useState<StreakDayRecord[]>([]);
+  const [claimed,      setClaimed]      = useState<Set<number>>(new Set());
+  const [activeMilestone, setActiveMilestone] = useState<MilestoneDef | null>(null);
+  const [loading,      setLoading]      = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [d, h] = await Promise.all([
+      const [d, h, cl] = await Promise.all([
         getEggStreakData(user.uid),
         getStreakHistory(user.uid, 30),
+        getClaimedStickers(user.uid),
       ]);
       setData(d);
       setHistory(h);
+      setClaimed(cl);
     } catch (e) {
       console.error('[EggStreak]', e);
     } finally {
@@ -317,43 +326,78 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
           </div>
         </div>
 
-        {/* ── Milestone road ── */}
+        {/* ── Milestone Road with Rewards ── */}
         <div style={{ background: '#fff', borderRadius: 20, padding: 16, marginTop: 12, boxShadow: '0 2px 10px rgba(0,0,0,0.06)' }}>
-          <p style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A', margin: '0 0 12px' }}>Milestone Road</p>
-          {[
-            { days: 3,   emoji: '🐣', label: 'Hatching' },
-            { days: 7,   emoji: '🔥', label: 'On Fire' },
-            { days: 14,  emoji: '🔥🔥', label: 'Double Fire' },
-            { days: 21,  emoji: '⭐', label: 'Consistent' },
-            { days: 30,  emoji: '👑', label: 'Egg Master' },
-            { days: 50,  emoji: '💎', label: 'Diamond Egg' },
-            { days: 75,  emoji: '🚀', label: 'Unstoppable' },
-            { days: 100, emoji: '🏆', label: 'Century Streak' },
-          ].map(m => {
-            const reached = currentStreak >= m.days;
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <p style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A', margin: 0 }}>Milestone Road</p>
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#bbb' }}>
+              {claimed.size}/{MILESTONES.length} claimed
+            </span>
+          </div>
+          {MILESTONES.map(m => {
+            const reached    = currentStreak >= m.days;
+            const isClaimed  = claimed.has(m.days);
+            const claimable  = reached && !isClaimed;
+
             return (
               <div key={m.days} style={{
                 display: 'flex', alignItems: 'center', gap: 12,
                 marginBottom: 10,
-                opacity: reached ? 1 : 0.45,
+                padding: '10px 12px',
+                borderRadius: 14,
+                background: isClaimed ? '#F0FDF4' : claimable ? '#FFFBEB' : reached ? '#FFF5F5' : '#FAFAFA',
+                border: claimable ? '1.5px solid #F59E0B' : isClaimed ? '1.5px solid #86EFAC' : '1.5px solid transparent',
+                opacity: reached ? 1 : 0.5,
+                transition: 'all 200ms ease',
               }}>
+                {/* Sticker icon */}
                 <div style={{
-                  width: 40, height: 40, borderRadius: 12,
-                  background: reached ? '#FCE8E8' : '#F0F0F0',
+                  width: 44, height: 44, borderRadius: 13,
+                  background: isClaimed
+                    ? `linear-gradient(135deg, ${m.color}, ${m.color2})`
+                    : reached ? '#FCE8E8' : '#F0F0F0',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 20, flexShrink: 0,
+                  fontSize: 22, flexShrink: 0,
+                  boxShadow: isClaimed ? `0 4px 12px ${m.color}44` : 'none',
+                  filter: reached ? 'none' : 'grayscale(1)',
                 }}>
-                  {m.emoji}
+                  {m.sticker}
                 </div>
-                <div style={{ flex: 1 }}>
-                  <p style={{ fontSize: 12, fontWeight: 800, color: reached ? '#1A1A1A' : '#bbb', margin: 0 }}>{m.label}</p>
-                  <p style={{ fontSize: 10, color: '#ccc', margin: 0 }}>{m.days} day streak</p>
+
+                {/* Labels */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: 12, fontWeight: 800, color: reached ? '#1A1A1A' : '#bbb', margin: 0 }}>
+                    {m.label}
+                  </p>
+                  <p style={{ fontSize: 10, color: '#999', margin: '1px 0 0' }}>
+                    {m.stickerName} · {m.days} day streak
+                  </p>
                 </div>
-                {reached && (
-                  <div style={{ fontSize: 16 }}>✅</div>
+
+                {/* Right badge / button */}
+                {isClaimed && (
+                  <div style={{
+                    background: '#DCFCE7', borderRadius: 8, padding: '4px 10px',
+                    display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
+                  }}>
+                    <span style={{ fontSize: 10, fontWeight: 800, color: '#166534' }}>✅ Claimed</span>
+                  </div>
+                )}
+                {claimable && (
+                  <button
+                    onClick={() => setActiveMilestone(getMilestone(m.days) ?? null)}
+                    style={{
+                      background: 'linear-gradient(135deg,#F59E0B,#D97706)',
+                      border: 'none', borderRadius: 10, padding: '6px 12px',
+                      cursor: 'pointer', flexShrink: 0,
+                      boxShadow: '0 3px 10px rgba(245,158,11,0.45)',
+                    }}
+                  >
+                    <span style={{ fontSize: 11, fontWeight: 900, color: '#fff' }}>🎁 Claim</span>
+                  </button>
                 )}
                 {!reached && (
-                  <div style={{ fontSize: 11, fontWeight: 800, color: '#bbb' }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: '#ccc', flexShrink: 0 }}>
                     {m.days - currentStreak}d left
                   </div>
                 )}
@@ -363,6 +407,14 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
         </div>
 
       </div>
+
+      {/* Milestone reward modal */}
+      <MilestoneRewardModal
+        uid={user.uid}
+        milestone={activeMilestone}
+        onClaimed={() => setClaimed(prev => new Set([...prev, activeMilestone!.days]))}
+        onClose={() => setActiveMilestone(null)}
+      />
 
       <style>{`
         @keyframes float {

@@ -11,6 +11,9 @@ import {
   UserIcon, EditIcon, LogoutIcon, TrashIcon, TargetIcon,
   FlameIcon, EggIcon, SettingsIcon, ChevronRightIcon,
 } from './Icons';
+import {
+  MILESTONES, getClaimedStickers,
+} from '../services/protein/milestoneRewardService';
 
 type View = 'profile' | 'edit_profile' | 'edit_goal' | 'delete_confirm';
 
@@ -36,6 +39,7 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
   const [streak,   setStreak]   = useState<StreakInfo>({ currentStreak: 0, bestStreak: 0, lastActiveDate: '' });
   const [settings, setSettings] = useState<TrackerSettings | null>(null);
   const [userDoc,  setUserDoc]  = useState<Record<string, unknown>>({});
+  const [claimed,  setClaimed]  = useState<Set<number>>(new Set());
   const [loading,  setLoading]  = useState(true);
 
   const [profile,       setProfile]       = useState<ExtendedProfile>({ playerName: '', age: '', gender: '', height: '', weight: '', goalWeight: '', phone: '' });
@@ -50,12 +54,13 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [si, stg, snap] = await Promise.all([
+      const [si, stg, snap, cl] = await Promise.all([
         getStreakInfo(user.uid),
         getTrackerSettings(user.uid),
         getDoc(doc(db, 'users', user.uid)),
+        getClaimedStickers(user.uid),
       ]);
-      setStreak(si); setSettings(stg);
+      setStreak(si); setSettings(stg); setClaimed(cl);
       if (snap.exists()) setUserDoc(snap.data());
     } catch (e) { console.error('[Profile]', e); }
     finally { setLoading(false); }
@@ -304,6 +309,94 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
             <ActionRow icon={<EditIcon   size={18} color="#D71920" />} label="Edit Profile"      onClick={() => { setProfile({ playerName, age: String(userDoc.age ?? ''), gender: String(userDoc.gender ?? ''), height: String(userDoc.height ?? ''), weight: String(userDoc.weight ?? ''), goalWeight: String(userDoc.goalWeight ?? ''), phone: String(userDoc.phone ?? '') }); setView('edit_profile'); }} />
             <ActionRow icon={<TargetIcon size={18} color="#D71920" />} label="Change Daily Goal" onClick={() => { setNewGoal(String(settings?.dailyGoal ?? DEFAULT_DAILY_GOAL)); setView('edit_goal'); }} />
+          </div>
+
+          {/* Sticker Collection */}
+          <div style={{ marginTop: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <p style={{ fontSize: 10, fontWeight: 800, color: '#999', textTransform: 'uppercase', letterSpacing: 1, margin: 0 }}>
+                Sticker Collection
+              </p>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#D71920' }}>
+                {claimed.size}/{MILESTONES.length} collected
+              </span>
+            </div>
+
+            {/* Newest sticker banner */}
+            {claimed.size > 0 && (() => {
+              const newest = [...MILESTONES].reverse().find(m => claimed.has(m.days));
+              if (!newest) return null;
+              return (
+                <div style={{
+                  background: `linear-gradient(135deg, ${newest.color}18, ${newest.color2}10)`,
+                  border: `1.5px solid ${newest.color}35`,
+                  borderRadius: 16, padding: '12px 14px', marginBottom: 10,
+                  display: 'flex', alignItems: 'center', gap: 12,
+                }}>
+                  <div style={{
+                    width: 44, height: 44, borderRadius: 13,
+                    background: `linear-gradient(135deg, ${newest.color}, ${newest.color2})`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 22, flexShrink: 0, boxShadow: `0 4px 12px ${newest.color}44`,
+                  }}>
+                    {newest.sticker}
+                  </div>
+                  <div>
+                    <p style={{ fontSize: 11, color: '#999', margin: 0, fontWeight: 700 }}>Newest Sticker</p>
+                    <p style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A', margin: '2px 0 0' }}>{newest.stickerName}</p>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Progress bar */}
+            <div style={{ background: '#fff', borderRadius: 14, padding: '10px 14px', marginBottom: 10, boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <span style={{ fontSize: 11, color: '#999', fontWeight: 600 }}>Collection Progress</span>
+                <span style={{ fontSize: 11, color: '#D71920', fontWeight: 800 }}>
+                  {Math.round((claimed.size / MILESTONES.length) * 100)}%
+                </span>
+              </div>
+              <div style={{ height: 6, background: '#F0F0F0', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%',
+                  width: `${(claimed.size / MILESTONES.length) * 100}%`,
+                  background: 'linear-gradient(90deg,#D71920,#F59E0B)',
+                  borderRadius: 3, transition: 'width 600ms ease',
+                }} />
+              </div>
+            </div>
+
+            {/* Sticker grid */}
+            <div style={{
+              display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8,
+            }}>
+              {MILESTONES.map(m => {
+                const unlocked = claimed.has(m.days);
+                return (
+                  <div key={m.days} style={{
+                    background: unlocked
+                      ? `linear-gradient(135deg, ${m.color}22, ${m.color2}11)`
+                      : '#F5F5F5',
+                    border: unlocked ? `1.5px solid ${m.color}44` : '1.5px solid #E8E8E8',
+                    borderRadius: 14, padding: '10px 6px', textAlign: 'center',
+                  }}>
+                    <div style={{
+                      fontSize: 26, marginBottom: 4,
+                      filter: unlocked ? 'none' : 'grayscale(1) opacity(0.35)',
+                    }}>
+                      {m.sticker}
+                    </div>
+                    <p style={{ fontSize: 8, fontWeight: 800, color: unlocked ? '#1A1A1A' : '#ccc', margin: 0, lineHeight: 1.2 }}>
+                      {unlocked ? m.stickerName : `${m.days}d`}
+                    </p>
+                    {unlocked && (
+                      <div style={{ fontSize: 8, color: '#22C55E', fontWeight: 800, marginTop: 2 }}>✅</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {/* Settings */}
