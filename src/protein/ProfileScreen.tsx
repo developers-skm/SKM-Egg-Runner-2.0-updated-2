@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import type { User } from 'firebase/auth';
 import { doc, getDoc, updateDoc, deleteDoc, serverTimestamp, collection, getDocs } from 'firebase/firestore';
 import { updateProfile, deleteUser, reauthenticateWithPopup, GoogleAuthProvider, reauthenticateWithPhoneNumber, RecaptchaVerifier } from 'firebase/auth';
@@ -14,6 +14,12 @@ import {
 import {
   MILESTONES, getClaimedStickers,
 } from '../services/protein/milestoneRewardService';
+import {
+  isDevUser,
+  devAddTestProtein, devAddStreakDays, devResetTodayEgg,
+  devSimulateTomorrow, devUnlockAllMilestones, devUnlockMilestone,
+  devResetStreakData, devTriggerTestNotification,
+} from '../services/protein/devToolsService';
 
 type View = 'profile' | 'edit_profile' | 'edit_goal' | 'delete_confirm';
 
@@ -35,12 +41,19 @@ interface ExtendedProfile {
 }
 
 export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToMenu }: ProfileScreenProps) {
-  const [view,     setView]     = useState<View>('profile');
-  const [streak,   setStreak]   = useState<StreakInfo>({ currentStreak: 0, bestStreak: 0, lastActiveDate: '' });
-  const [settings, setSettings] = useState<TrackerSettings | null>(null);
-  const [userDoc,  setUserDoc]  = useState<Record<string, unknown>>({});
-  const [claimed,  setClaimed]  = useState<Set<number>>(new Set());
-  const [loading,  setLoading]  = useState(true);
+  const [view,        setView]        = useState<View>('profile');
+  const [streak,      setStreak]      = useState<StreakInfo>({ currentStreak: 0, bestStreak: 0, lastActiveDate: '' });
+  const [settings,    setSettings]    = useState<TrackerSettings | null>(null);
+  const [userDoc,     setUserDoc]     = useState<Record<string, unknown>>({});
+  const [claimed,     setClaimed]     = useState<Set<number>>(new Set());
+  const [loading,     setLoading]     = useState(true);
+  const [isDevRole,   setIsDevRole]   = useState(false);
+  const [devVisible,  setDevVisible]  = useState(false);
+  const [devMode,     setDevMode]     = useState(false);
+  const [devMsg,      setDevMsg]      = useState('');
+  const [devBusy,     setDevBusy]     = useState(false);
+  const versionTapRef                 = useRef(0);
+  const versionTimerRef               = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [profile,       setProfile]       = useState<ExtendedProfile>({ playerName: '', age: '', gender: '', height: '', weight: '', goalWeight: '', phone: '' });
   const [profileErr,    setProfileErr]    = useState('');
@@ -54,17 +67,48 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [si, stg, snap, cl] = await Promise.all([
+      const [si, stg, snap, cl, devRole] = await Promise.all([
         getStreakInfo(user.uid),
         getTrackerSettings(user.uid),
         getDoc(doc(db, 'users', user.uid)),
         getClaimedStickers(user.uid),
+        isDevUser(user.uid),
       ]);
       setStreak(si); setSettings(stg); setClaimed(cl);
+      setIsDevRole(devRole);
+      if (devRole) setDevVisible(true);
       if (snap.exists()) setUserDoc(snap.data());
     } catch (e) { console.error('[Profile]', e); }
     finally { setLoading(false); }
   }, [user.uid]);
+
+  // Secret gesture: tap app version 7 times to reveal dev panel
+  const handleVersionTap = () => {
+    versionTapRef.current += 1;
+    if (versionTimerRef.current) clearTimeout(versionTimerRef.current);
+    versionTimerRef.current = setTimeout(() => { versionTapRef.current = 0; }, 3000);
+    if (versionTapRef.current >= 7) {
+      versionTapRef.current = 0;
+      setDevVisible(true);
+      setDevMsg('Developer Tools unlocked!');
+      setTimeout(() => setDevMsg(''), 2000);
+    }
+  };
+
+  const runDevAction = async (label: string, fn: () => Promise<void>) => {
+    setDevBusy(true);
+    setDevMsg(`Running: ${label}…`);
+    try {
+      await fn();
+      setDevMsg(`✅ ${label} done`);
+      await load();
+    } catch (e: unknown) {
+      setDevMsg(`❌ Error: ${(e as Error).message ?? String(e)}`);
+    } finally {
+      setDevBusy(false);
+      setTimeout(() => setDevMsg(''), 3000);
+    }
+  };
 
   useEffect(() => { load(); }, [load]);
 
@@ -399,6 +443,77 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
             </div>
           </div>
 
+          {/* App version — secret gesture trigger */}
+          <div
+            onClick={handleVersionTap}
+            style={{ textAlign: 'center', padding: '12px 0 4px', cursor: 'default', userSelect: 'none' }}
+          >
+            <span style={{ fontSize: 10, color: '#ddd', fontWeight: 500 }}>SKM Egg Runner 2.0</span>
+          </div>
+
+          {/* Developer Tools */}
+          {devVisible && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 14 }}>🛠</span>
+                  <p style={{ fontSize: 10, fontWeight: 800, color: '#8B5CF6', textTransform: 'uppercase', letterSpacing: 1, margin: 0 }}>
+                    Developer Tools {isDevRole ? '(role: dev)' : ''}
+                  </p>
+                </div>
+                {/* Toggle */}
+                <button
+                  onClick={() => setDevMode(m => !m)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '6px 12px', borderRadius: 20,
+                    border: 'none', cursor: 'pointer',
+                    background: devMode ? '#7C3AED' : '#E8E8E8',
+                    color: devMode ? '#fff' : '#666',
+                    fontWeight: 800, fontSize: 11,
+                    transition: 'background 200ms',
+                  }}
+                >
+                  <span>{devMode ? 'ON' : 'OFF'}</span>
+                </button>
+              </div>
+
+              {devMsg && (
+                <div style={{
+                  background: devMsg.startsWith('✅') ? '#F0FDF4' : devMsg.startsWith('❌') ? '#FEF2F2' : '#F5F3FF',
+                  border: `1px solid ${devMsg.startsWith('✅') ? '#86EFAC' : devMsg.startsWith('❌') ? '#FECACA' : '#C4B5FD'}`,
+                  borderRadius: 10, padding: '8px 12px', marginBottom: 10, fontSize: 11, fontWeight: 700,
+                  color: devMsg.startsWith('✅') ? '#166534' : devMsg.startsWith('❌') ? '#991B1B' : '#5B21B6',
+                }}>
+                  {devMsg}
+                </div>
+              )}
+
+              {devMode && (
+                <div style={{ background: '#F5F3FF', border: '1.5px solid #C4B5FD', borderRadius: 20, padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <p style={{ fontSize: 9, fontWeight: 800, color: '#8B5CF6', textTransform: 'uppercase', letterSpacing: 1, margin: '0 0 4px' }}>
+                    Testing Actions
+                  </p>
+
+                  <DevBtn disabled={devBusy} label="🥚 Add Test Protein (+6g)"   onClick={() => runDevAction('Add Test Protein', () => devAddTestProtein(user.uid))} />
+                  <DevBtn disabled={devBusy} label="🔥 Add 1 Streak Day"          onClick={() => runDevAction('Add 1 Streak Day',   () => devAddStreakDays(user.uid, 1))} />
+                  <DevBtn disabled={devBusy} label="🔥 Add 7 Streak Days"         onClick={() => runDevAction('Add 7 Streak Days',  () => devAddStreakDays(user.uid, 7))} />
+                  <DevBtn disabled={devBusy} label="🔥 Add 30 Streak Days"        onClick={() => runDevAction('Add 30 Streak Days', () => devAddStreakDays(user.uid, 30))} />
+                  <DevBtn disabled={devBusy} label="❌ Reset Today's Egg"         onClick={() => runDevAction("Reset Today's Egg",  () => devResetTodayEgg(user.uid))} color="#EF4444" />
+                  <DevBtn disabled={devBusy} label="📅 Simulate Tomorrow"         onClick={() => runDevAction('Simulate Tomorrow',   () => devSimulateTomorrow(user.uid))} />
+                  <DevBtn disabled={devBusy} label="🏆 Unlock Next Milestone"     onClick={() => {
+                    const next = MILESTONES.find(m => !claimed.has(m.days));
+                    if (!next) { setDevMsg('All milestones already unlocked'); return; }
+                    runDevAction(`Unlock ${next.days}d Milestone`, () => devUnlockMilestone(user.uid, next.days));
+                  }} />
+                  <DevBtn disabled={devBusy} label="💎 Unlock All Stickers"       onClick={() => runDevAction('Unlock All Stickers', () => devUnlockAllMilestones(user.uid))} />
+                  <DevBtn disabled={devBusy} label="📢 Trigger Test Notification" onClick={() => runDevAction('Test Notification',   () => devTriggerTestNotification(user.uid))} />
+                  <DevBtn disabled={devBusy} label="🗑 Reset All Streak Data"     onClick={() => runDevAction('Reset Streak Data',   () => devResetStreakData(user.uid))} color="#EF4444" />
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Settings */}
           <div style={{ marginTop: 14 }}>
             <p style={{ fontSize: 10, fontWeight: 800, color: '#999', textTransform: 'uppercase', letterSpacing: 1, margin: '0 0 8px 4px' }}>Settings</p>
@@ -490,5 +605,25 @@ function SelectField({ label, value, onChange, options }: { label: string; value
         {options.map(o => <option key={o} value={o}>{o}</option>)}
       </select>
     </div>
+  );
+}
+
+function DevBtn({ label, onClick, disabled, color = '#7C3AED' }: { label: string; onClick: () => void; disabled?: boolean; color?: string }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        width: '100%', padding: '11px 14px', borderRadius: 13,
+        border: `1.5px solid ${color}44`,
+        background: disabled ? '#F0EDF8' : `${color}12`,
+        color: disabled ? '#aaa' : color,
+        fontWeight: 700, fontSize: 12, cursor: disabled ? 'not-allowed' : 'pointer',
+        textAlign: 'left', opacity: disabled ? 0.6 : 1,
+        transition: 'background 150ms',
+      }}
+    >
+      {label}
+    </button>
   );
 }

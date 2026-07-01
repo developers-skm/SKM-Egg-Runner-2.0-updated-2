@@ -857,6 +857,7 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
           todayEggs={result.todayEggs}
           goal={result.goal}
           todayProtein={result.todayProtein}
+          isMilestone={result.isMilestone}
           onDismiss={onScanSuccess}
         />
       )}

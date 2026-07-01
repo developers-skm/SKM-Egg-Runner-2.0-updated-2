@@ -1,15 +1,13 @@
 /**
- * SKM Premium Scan Celebration Overlay
+ * SKM Premium Scan Celebration Overlay — v2
  *
- * Renders as a fixed full-screen overlay above everything.
- * Shown only after a valid egg scan (phase === 'success').
- * Auto-dismisses after 2.5 s OR on tap of the Continue button.
- *
- * Touches NOTHING in scan/protein/streak logic — reads only the
- * ScanResult values passed to it as props.
+ * Full-screen, multi-stage celebration after a valid egg scan.
+ * MANUAL CLOSE ONLY — no auto-dismiss.
+ * Stage order: mascot bounce → crack + fire + streak count-up → protein count-up → message → progress → button
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { MILESTONES } from '../services/protein/milestoneRewardService';
 
 interface ScanCelebrationProps {
   streak:       number;
@@ -17,72 +15,64 @@ interface ScanCelebrationProps {
   todayEggs:    number;
   goal:         number;
   todayProtein: number;
+  isMilestone?: boolean;
   onDismiss:    () => void;
 }
 
 // ─── Motivational messages ────────────────────────────────────
 
 const MESSAGES = [
-  { icon: '🥚', line1: 'Great start!',              line2: 'Your streak has grown.' },
-  { icon: '🔥', line1: 'Keep it alive!',            line2: 'Come back tomorrow.' },
-  { icon: '💪', line1: 'Strong habits,',            line2: 'strong health.' },
-  { icon: '⭐', line1: 'Amazing consistency!',      line2: "You're building something special." },
-  { icon: '🏆', line1: 'One egg closer',            line2: 'to greatness.' },
-  { icon: '🌟', line1: 'Unstoppable!',              line2: 'Every day counts.' },
-  { icon: '🥇', line1: 'Champions show up',        line2: 'every single day.' },
+  { icon: '🔥', line1: 'Amazing!',           line2: "You're building a healthy habit." },
+  { icon: '🥚', line1: 'Another great day!', line2: 'Keep your streak alive.' },
+  { icon: '💪', line1: 'Consistency',        line2: 'beats perfection.' },
+  { icon: '🏆', line1: 'Every egg counts.',  line2: "Champions never skip." },
+  { icon: '⭐', line1: 'Your future self',   line2: 'will thank you.' },
+  { icon: '🌟', line1: 'Unstoppable!',       line2: 'Every single day.' },
+  { icon: '🥇', line1: 'Champions show up',  line2: 'every single day.' },
 ];
 
-// ─── Fire level by streak ─────────────────────────────────────
+// ─── Fire by streak ───────────────────────────────────────────
 
-function fireEmoji(streak: number): string {
-  if (streak >= 365) return '🔥🔥🔥🔥';
-  if (streak >= 100) return '🔥🔥🔥';
-  if (streak >= 30)  return '🔥🔥';
-  if (streak >= 7)   return '🔥';
-  return '🌱';
+function fireEmoji(s: number)  { return s >= 100 ? '🔥🔥🔥🔥' : s >= 30 ? '🔥🔥🔥' : s >= 7 ? '🔥🔥' : s >= 3 ? '🔥' : '🌱'; }
+function fireColor(s: number)  { return s >= 100 ? '#F59E0B' : s >= 30 ? '#EF4444' : s >= 7 ? '#F97316' : '#22C55E'; }
+function heroGradient(s: number) {
+  if (s >= 100) return 'linear-gradient(160deg,#78350F 0%,#D97706 50%,#92400E 100%)';
+  if (s >= 30)  return 'linear-gradient(160deg,#4C1D95 0%,#7C3AED 50%,#B31217 100%)';
+  if (s >= 7)   return 'linear-gradient(160deg,#B31217 0%,#EF4444 50%,#F97316 100%)';
+  return 'linear-gradient(160deg,#D71920 0%,#B31217 60%,#991B1B 100%)';
 }
 
-function fireColor(streak: number): string {
-  if (streak >= 100) return '#F59E0B'; // golden
-  if (streak >= 30)  return '#EF4444'; // red fire
-  if (streak >= 7)   return '#F97316'; // orange
-  return '#22C55E';                     // green sprout
-}
+// ─── Particle system ──────────────────────────────────────────
 
-function fireSize(streak: number): number {
-  if (streak >= 100) return 52;
-  if (streak >= 30)  return 44;
-  if (streak >= 7)   return 36;
-  return 28;
-}
-
-// ─── Particle generator ───────────────────────────────────────
-
-interface Particle {
-  id: number;
-  x: number;      // % from left
-  size: number;
-  color: string;
-  duration: number;
-  delay: number;
-  drift: number;   // px horizontal drift
-}
-
-const COLORS = ['#FFD700','#D71920','#F59E0B','#fff','#EC4899','#34D399','#60A5FA'];
-
+interface Particle { id: number; x: number; size: number; color: string; duration: number; delay: number; drift: number; shape: 'circle' | 'square' | 'diamond'; }
+const COLORS = ['#FFD700','#D71920','#F59E0B','#fff','#EC4899','#34D399','#60A5FA','#A78BFA','#FB923C'];
 function makeParticles(n: number): Particle[] {
   return Array.from({ length: n }, (_, i) => ({
-    id:       i,
-    x:        5 + Math.random() * 90,
-    size:     4 + Math.random() * 7,
-    color:    COLORS[i % COLORS.length],
-    duration: 1200 + Math.random() * 900,
-    delay:    Math.random() * 600,
-    drift:    (Math.random() - 0.5) * 80,
+    id: i, x: 3 + Math.random() * 94,
+    size: 5 + Math.random() * 9,
+    color: COLORS[i % COLORS.length],
+    duration: 1400 + Math.random() * 1200,
+    delay: Math.random() * 800,
+    drift: (Math.random() - 0.5) * 120,
+    shape: (['circle','square','diamond'] as const)[i % 3],
   }));
 }
 
-// ─── Protein count-up hook ────────────────────────────────────
+// ─── Feather system ───────────────────────────────────────────
+
+interface Feather { id: number; x: number; size: number; duration: number; delay: number; drift: number; rotate: number; }
+function makeFeathers(n: number): Feather[] {
+  return Array.from({ length: n }, (_, i) => ({
+    id: i, x: Math.random() * 100,
+    size: 10 + Math.random() * 14,
+    duration: 2200 + Math.random() * 1800,
+    delay: Math.random() * 1200,
+    drift: (Math.random() - 0.5) * 150,
+    rotate: Math.random() * 720,
+  }));
+}
+
+// ─── Count-up hooks ───────────────────────────────────────────
 
 function useCountUp(target: number, durationMs: number, startDelay: number): number {
   const [val, setVal] = useState(0);
@@ -90,11 +80,9 @@ function useCountUp(target: number, durationMs: number, startDelay: number): num
     const t = setTimeout(() => {
       const start = performance.now();
       const tick = () => {
-        const elapsed = performance.now() - start;
-        const progress = Math.min(elapsed / durationMs, 1);
-        // ease-out
-        setVal(Math.round(target * (1 - Math.pow(1 - progress, 3))));
-        if (progress < 1) requestAnimationFrame(tick);
+        const p = Math.min((performance.now() - start) / durationMs, 1);
+        setVal(Math.round(target * (1 - Math.pow(1 - p, 3))));
+        if (p < 1) requestAnimationFrame(tick);
       };
       requestAnimationFrame(tick);
     }, startDelay);
@@ -102,8 +90,6 @@ function useCountUp(target: number, durationMs: number, startDelay: number): num
   }, [target, durationMs, startDelay]);
   return val;
 }
-
-// ─── Streak number count-up hook ─────────────────────────────
 
 function useCountUpFrom(from: number, to: number, durationMs: number, startDelay: number): number {
   const [val, setVal] = useState(from);
@@ -113,10 +99,9 @@ function useCountUpFrom(from: number, to: number, durationMs: number, startDelay
       const range = to - from;
       const start = performance.now();
       const tick = () => {
-        const elapsed  = performance.now() - start;
-        const progress = Math.min(elapsed / durationMs, 1);
-        setVal(Math.round(from + range * (1 - Math.pow(1 - progress, 3))));
-        if (progress < 1) requestAnimationFrame(tick);
+        const p = Math.min((performance.now() - start) / durationMs, 1);
+        setVal(Math.round(from + range * (1 - Math.pow(1 - p, 3))));
+        if (p < 1) requestAnimationFrame(tick);
       };
       requestAnimationFrame(tick);
     }, startDelay);
@@ -127,307 +112,430 @@ function useCountUpFrom(from: number, to: number, durationMs: number, startDelay
 
 // ─── Component ────────────────────────────────────────────────
 
+type Stage = 'mascot' | 'crack' | 'fire' | 'protein' | 'message' | 'progress' | 'done';
+
 export default function ScanCelebrationOverlay({
-  streak, protein, todayEggs, goal, todayProtein, onDismiss,
+  streak, protein, todayEggs, goal, todayProtein, isMilestone, onDismiss,
 }: ScanCelebrationProps) {
 
-  const [visible,   setVisible]   = useState(true);
-  const [egAnim,    setEgAnim]    = useState<'drop' | 'glow' | 'fire' | 'done'>('drop');
-  const timerRef                  = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const particles                 = useRef(makeParticles(32)).current;
-  const msgRef                    = useRef(MESSAGES[Math.floor(Math.random() * MESSAGES.length)]).current;
+  const [visible, setVisible] = useState(true);
+  const [stage,   setStage]   = useState<Stage>('mascot');
+  const [cracked, setCracked] = useState(false);
+  const particles             = useRef(makeParticles(44)).current;
+  const feathers              = useRef(makeFeathers(18)).current;
+  const msgRef                = useRef(MESSAGES[Math.floor(Math.random() * MESSAGES.length)]).current;
 
-  const displayedStreak = useCountUpFrom(Math.max(0, streak - 1), streak, 600, 700);
-  const displayedProtein = useCountUp(protein, 500, 900);
+  const displayedStreak  = useCountUpFrom(Math.max(0, streak - 1), streak, 700, 1000);
+  const displayedProtein = useCountUp(protein, 600, 1600);
 
-  // Animation phases
+  const fc  = fireColor(streak);
+  const fe  = fireEmoji(streak);
+  const pct = Math.min(100, Math.round((todayProtein / goal) * 100));
+  const batchProgress = streak % 7 === 0 && streak > 0 ? 7 : streak % 7;
+  const weekDots      = Array.from({ length: 7 }, (_, i) => i < batchProgress);
+  const goalMet       = todayProtein >= goal;
+
+  // Newest claimed milestone (for milestone banner)
+  const MILESTONE_DAYS = MILESTONES.map(m => m.days);
+  const isMilestoneHit = isMilestone && MILESTONE_DAYS.includes(streak);
+  const milestoneDef   = isMilestoneHit ? MILESTONES.find(m => m.days === streak) : null;
+
+  // Stage sequencing
   useEffect(() => {
-    const t1 = setTimeout(() => setEgAnim('glow'), 300);
-    const t2 = setTimeout(() => setEgAnim('fire'), 700);
-    const t3 = setTimeout(() => setEgAnim('done'), 1100);
-    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
-  }, []);
-
-  // Auto-dismiss at 2.5 s
-  useEffect(() => {
-    timerRef.current = setTimeout(dismiss, 2500);
-    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+    const t1 = setTimeout(() => setStage('crack'),   600);
+    const t2 = setTimeout(() => setCracked(true),    900);
+    const t3 = setTimeout(() => setStage('fire'),    1000);
+    const t4 = setTimeout(() => setStage('protein'), 1500);
+    const t5 = setTimeout(() => setStage('message'), 2200);
+    const t6 = setTimeout(() => setStage('progress'),2800);
+    const t7 = setTimeout(() => setStage('done'),    3200);
+    return () => [t1,t2,t3,t4,t5,t6,t7].forEach(clearTimeout);
   }, []);
 
   function dismiss() {
-    if (timerRef.current) clearTimeout(timerRef.current);
     setVisible(false);
-    // Small delay so fade-out completes before unmounting
     setTimeout(onDismiss, 280);
   }
 
-  // Weekly batch progress (how far into current 7-day batch)
-  const batchProgress = streak % 7 === 0 && streak > 0 ? 7 : streak % 7;
-  const weekDots      = Array.from({ length: 7 }, (_, i) => i < batchProgress);
-
-  const fc    = fireColor(streak);
-  const fe    = fireEmoji(streak);
-  const fs    = fireSize(streak);
-  const pct   = Math.min(100, Math.round((todayProtein / goal) * 100));
-  const goalMet = todayProtein >= goal;
+  const cardVisible = stage !== 'mascot';
 
   return (
     <div
-      onClick={dismiss}
       style={{
         position: 'fixed', inset: 0, zIndex: 9998,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: 'rgba(0,0,0,0.55)',
-        backdropFilter: 'blur(14px)',
-        WebkitBackdropFilter: 'blur(14px)',
-        padding: '0 20px',
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(0,0,0,0.65)',
+        backdropFilter: 'blur(18px)',
+        WebkitBackdropFilter: 'blur(18px)',
+        padding: '12px 16px',
         animation: visible ? 'cel-fade-in 220ms ease' : 'cel-fade-out 260ms ease forwards',
+        overflowY: 'auto',
       }}
     >
-      {/* Floating particles */}
+      {/* Particles */}
       {particles.map(p => (
-        <div
-          key={p.id}
-          style={{
-            position: 'fixed',
-            left: `${p.x}%`,
-            bottom: '-10px',
-            width: p.size,
-            height: p.size,
-            borderRadius: p.id % 3 === 0 ? '50%' : 3,
-            background: p.color,
-            pointerEvents: 'none',
-            animation: `cel-particle ${p.duration}ms ease-out ${p.delay}ms forwards`,
-            '--drift': `${p.drift}px`,
-          } as React.CSSProperties}
-        />
+        <div key={p.id} style={{
+          position: 'fixed',
+          left: `${p.x}%`, bottom: '-12px',
+          width: p.size, height: p.size,
+          borderRadius: p.shape === 'circle' ? '50%' : p.shape === 'diamond' ? 3 : 2,
+          background: p.color,
+          transform: p.shape === 'diamond' ? 'rotate(45deg)' : 'none',
+          pointerEvents: 'none',
+          animation: `cel-particle ${p.duration}ms ease-out ${p.delay}ms forwards`,
+          '--drift': `${p.drift}px`,
+        } as React.CSSProperties} />
       ))}
 
-      {/* Main card — stop click propagation so tapping the card doesn't dismiss */}
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          width: '100%', maxWidth: 360,
-          background: '#fff',
-          borderRadius: 32,
-          overflow: 'hidden',
-          boxShadow: '0 32px 80px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.08)',
-          animation: 'cel-card-in 320ms cubic-bezier(0.34,1.56,0.64,1)',
-        }}
-      >
-        {/* ── Hero band ── */}
+      {/* Feathers */}
+      {feathers.map(f => (
+        <div key={f.id} style={{
+          position: 'fixed',
+          left: `${f.x}%`, top: '-20px',
+          fontSize: f.size,
+          pointerEvents: 'none',
+          animation: `cel-feather ${f.duration}ms ease-in ${f.delay}ms forwards`,
+          '--drift': `${f.drift}px`,
+          '--rotate': `${f.rotate}deg`,
+        } as React.CSSProperties}>🪶</div>
+      ))}
+
+      {/* ── STAGE 1: Full-screen mascot drop ── */}
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        marginBottom: cardVisible ? 0 : 0,
+        animation: stage === 'mascot' ? 'cel-mascot-drop 500ms cubic-bezier(0.34,1.56,0.64,1)' : 'none',
+      }}>
+        {/* Egg mascot */}
         <div style={{
-          background: streak >= 100
-            ? 'linear-gradient(135deg,#92400E,#D97706)'
-            : streak >= 30
-            ? 'linear-gradient(135deg,#7C3AED,#B31217)'
-            : 'linear-gradient(135deg,#D71920,#B31217)',
-          padding: '28px 20px 24px',
-          textAlign: 'center',
+          fontSize: cardVisible ? 64 : 96,
+          lineHeight: 1,
+          transition: 'font-size 300ms ease',
+          animation: cracked
+            ? 'cel-crack 400ms cubic-bezier(0.34,1.56,0.64,1)'
+            : stage === 'done'
+            ? 'cel-mascot-float 3s ease-in-out infinite'
+            : stage === 'mascot'
+            ? 'cel-mascot-wave 1.2s ease-in-out infinite'
+            : 'none',
+          filter: stage === 'fire' || stage === 'done'
+            ? `drop-shadow(0 0 28px ${fc}cc) drop-shadow(0 0 60px ${fc}66)`
+            : stage === 'crack'
+            ? 'drop-shadow(0 0 40px rgba(255,215,0,1)) brightness(1.3)'
+            : 'drop-shadow(0 8px 20px rgba(0,0,0,0.4))',
           position: 'relative',
-          overflow: 'hidden',
-        }}>
-          {/* Decorative rings */}
-          <div style={{ position: 'absolute', top: -50, right: -50, width: 180, height: 180, borderRadius: '50%', background: 'rgba(255,255,255,0.06)', pointerEvents: 'none' }} />
-          <div style={{ position: 'absolute', bottom: -60, left: -40, width: 150, height: 150, borderRadius: '50%', background: 'rgba(255,255,255,0.04)', pointerEvents: 'none' }} />
-
-          {/* Egg mascot */}
-          <div style={{
-            fontSize: 72,
-            lineHeight: 1,
-            marginBottom: 8,
-            display: 'inline-block',
-            animation:
-              egAnim === 'drop'  ? 'cel-drop 300ms cubic-bezier(0.34,1.56,0.64,1)' :
-              egAnim === 'glow'  ? 'cel-glow-pulse 400ms ease-in-out' :
-              egAnim === 'fire'  ? 'cel-fire 400ms ease-in-out' :
-              'cel-float 3s ease-in-out infinite',
-            filter: egAnim === 'glow' || egAnim === 'done'
-              ? `drop-shadow(0 0 20px rgba(255,200,50,0.8))`
-              : 'drop-shadow(0 6px 12px rgba(0,0,0,0.3))',
-          }}>
-            🥚
-          </div>
-
-          {/* Fire indicator */}
-          <div style={{
-            fontSize: fs,
-            lineHeight: 1,
-            marginBottom: 10,
-            animation: egAnim === 'fire' || egAnim === 'done' ? 'cel-fire-flicker 0.8s ease-in-out infinite alternate' : 'none',
-            filter: `drop-shadow(0 0 8px ${fc}aa)`,
-            opacity: egAnim === 'drop' || egAnim === 'glow' ? 0 : 1,
-            transition: 'opacity 300ms ease',
-          }}>
-            {fe}
-          </div>
-
-          {/* Streak number */}
-          <div style={{
-            display: 'inline-flex', flexDirection: 'column', alignItems: 'center',
-            animation: 'cel-num-pop 400ms cubic-bezier(0.34,1.56,0.64,1) 700ms both',
-          }}>
-            <span style={{
-              fontSize: streak >= 100 ? 62 : 76,
-              fontWeight: 900, color: '#fff', lineHeight: 1,
-              letterSpacing: -2,
-              textShadow: '0 4px 20px rgba(0,0,0,0.3)',
-            }}>
-              {displayedStreak}
-            </span>
-            <span style={{ fontSize: 13, fontWeight: 700, color: 'rgba(255,255,255,0.75)', letterSpacing: 1.5, textTransform: 'uppercase', marginTop: 2 }}>
-              Day Streak
-            </span>
-          </div>
+          zIndex: 2,
+          cursor: 'pointer',
+          marginBottom: 0,
+        }} onClick={dismiss}>
+          {cracked ? '🐣' : '🥚'}
         </div>
 
-        {/* ── Body ── */}
-        <div style={{ padding: '20px 22px 22px' }}>
-
-          {/* Protein count-up */}
+        {/* Golden light burst on crack */}
+        {cracked && (
           <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-            marginBottom: 14,
-            animation: 'cel-num-pop 350ms cubic-bezier(0.34,1.56,0.64,1) 900ms both',
+            position: 'absolute',
+            width: 200, height: 200,
+            borderRadius: '50%',
+            background: 'radial-gradient(circle, rgba(255,215,0,0.6) 0%, rgba(255,165,0,0.3) 40%, transparent 70%)',
+            animation: 'cel-burst 600ms ease-out forwards',
+            pointerEvents: 'none',
+            zIndex: 1,
+          }} />
+        )}
+
+        {/* Sparkles around mascot */}
+        {stage !== 'mascot' && ['✨','⭐','💫','✨','⭐'].map((s, i) => (
+          <div key={i} style={{
+            position: 'absolute',
+            fontSize: 14 + i * 2,
+            pointerEvents: 'none',
+            animation: `cel-sparkle 1.5s ease-in-out ${i * 200}ms infinite`,
+            top: `${-20 + Math.sin(i * 72 * Math.PI / 180) * 55}px`,
+            left: `${50 + Math.cos(i * 72 * Math.PI / 180) * 55}%`,
+          }}>{s}</div>
+        ))}
+      </div>
+
+      {/* ── Main card ── */}
+      {cardVisible && (
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{
+            width: '100%', maxWidth: 380,
+            background: 'rgba(255,255,255,0.97)',
+            borderRadius: 32,
+            overflow: 'hidden',
+            boxShadow: '0 32px 80px rgba(0,0,0,0.6), 0 0 0 1.5px rgba(255,255,255,0.15)',
+            animation: 'cel-card-in 380ms cubic-bezier(0.34,1.56,0.64,1)',
+            marginTop: 8,
+          }}
+        >
+          {/* ── Hero band ── */}
+          <div style={{
+            background: heroGradient(streak),
+            padding: '22px 20px 20px',
+            textAlign: 'center',
+            position: 'relative', overflow: 'hidden',
           }}>
-            <span style={{ fontSize: 22 }}>💪</span>
-            <span style={{ fontSize: 26, fontWeight: 900, color: '#D71920', lineHeight: 1 }}>
-              +{displayedProtein}g
-            </span>
-            <span style={{ fontSize: 14, fontWeight: 700, color: '#999' }}>Protein</span>
-          </div>
+            {/* Decorative rings */}
+            <div style={{ position: 'absolute', top: -50, right: -50, width: 200, height: 200, borderRadius: '50%', background: 'rgba(255,255,255,0.07)', pointerEvents: 'none' }} />
+            <div style={{ position: 'absolute', bottom: -60, left: -40, width: 160, height: 160, borderRadius: '50%', background: 'rgba(255,255,255,0.05)', pointerEvents: 'none' }} />
 
-          {/* Weekly dots */}
-          <div style={{ marginBottom: 16 }}>
-            <p style={{ fontSize: 10, fontWeight: 800, color: '#bbb', textTransform: 'uppercase', letterSpacing: 1, margin: '0 0 7px', textAlign: 'center' }}>
-              Weekly Progress
-            </p>
-            <div style={{ display: 'flex', justifyContent: 'center', gap: 6 }}>
-              {weekDots.map((filled, i) => (
-                <div
-                  key={i}
-                  style={{
-                    width: 32, height: 32, borderRadius: 10,
-                    background: filled
-                      ? `linear-gradient(135deg, ${fc}, ${fc}cc)`
-                      : '#F0F0F0',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 16,
-                    boxShadow: filled ? `0 3px 8px ${fc}44` : 'none',
-                    animation: filled ? `cel-dot-in 250ms cubic-bezier(0.34,1.56,0.64,1) ${i * 60 + 300}ms both` : 'none',
-                  }}
-                >
-                  {filled ? '🥚' : ''}
-                </div>
-              ))}
-            </div>
-            <p style={{ fontSize: 11, fontWeight: 700, color: '#999', margin: '6px 0 0', textAlign: 'center' }}>
-              {batchProgress} / 7 days this week
-            </p>
-          </div>
+            {/* STAGE 2: Fire appears */}
+            {(stage === 'fire' || stage === 'protein' || stage === 'message' || stage === 'progress' || stage === 'done') && (
+              <div style={{
+                fontSize: streak >= 50 ? 36 : 28,
+                marginBottom: 6,
+                animation: 'cel-fire-flicker 0.7s ease-in-out infinite alternate',
+                filter: `drop-shadow(0 0 12px ${fc}cc)`,
+              }}>
+                {fe}
+              </div>
+            )}
 
-          {/* Progress bar */}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: '#bbb' }}>Daily Goal</span>
-              <span style={{ fontSize: 11, fontWeight: 800, color: goalMet ? '#22C55E' : '#D71920' }}>
-                {todayProtein}g / {goal}g
+            {/* Streak number */}
+            <div style={{
+              animation: 'cel-num-pop 450ms cubic-bezier(0.34,1.56,0.64,1) 1000ms both',
+            }}>
+              <span style={{
+                fontSize: streak >= 100 ? 58 : 70,
+                fontWeight: 900, color: '#fff', lineHeight: 1,
+                letterSpacing: -2,
+                textShadow: '0 4px 24px rgba(0,0,0,0.35)',
+                display: 'block',
+              }}>
+                {displayedStreak}
+              </span>
+              <span style={{
+                fontSize: 12, fontWeight: 800, color: 'rgba(255,255,255,0.8)',
+                letterSpacing: 2, textTransform: 'uppercase', marginTop: 3, display: 'block',
+              }}>
+                Day Streak
               </span>
             </div>
-            <div style={{ height: 7, background: '#F0F0F0', borderRadius: 4, overflow: 'hidden' }}>
+          </div>
+
+          {/* ── Body ── */}
+          <div style={{ padding: '18px 20px 22px' }}>
+
+            {/* STAGE 3: Protein count-up */}
+            {(stage === 'protein' || stage === 'message' || stage === 'progress' || stage === 'done') && (
               <div style={{
-                height: '100%', width: `${pct}%`,
-                background: goalMet ? '#22C55E' : 'linear-gradient(90deg,#D71920,#F59E0B)',
-                borderRadius: 4,
-                transition: 'width 800ms ease 400ms',
-              }} />
-            </div>
-          </div>
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+                marginBottom: 16, padding: '14px 0',
+                background: 'linear-gradient(135deg,#FCE8E8,#FFF5F5)',
+                borderRadius: 18,
+                animation: 'cel-num-pop 380ms cubic-bezier(0.34,1.56,0.64,1)',
+              }}>
+                <span style={{ fontSize: 28 }}>💪</span>
+                <div>
+                  <span style={{ fontSize: 32, fontWeight: 900, color: '#D71920', lineHeight: 1 }}>
+                    +{displayedProtein}g
+                  </span>
+                  <p style={{ fontSize: 11, fontWeight: 700, color: '#999', margin: '2px 0 0' }}>Protein Added</p>
+                </div>
+              </div>
+            )}
 
-          {/* Motivational message */}
-          <div style={{
-            background: '#FFF7F0',
-            borderRadius: 14,
-            padding: '12px 14px',
-            marginBottom: 18,
-            display: 'flex', alignItems: 'center', gap: 10,
-            animation: 'cel-num-pop 300ms cubic-bezier(0.34,1.56,0.64,1) 1100ms both',
-          }}>
-            <span style={{ fontSize: 22, flexShrink: 0 }}>{msgRef.icon}</span>
-            <div>
-              <p style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A', margin: 0 }}>{msgRef.line1}</p>
-              <p style={{ fontSize: 11, color: '#999', margin: '2px 0 0', fontWeight: 600 }}>{msgRef.line2}</p>
-            </div>
-          </div>
+            {/* STAGE 4: Random motivation */}
+            {(stage === 'message' || stage === 'progress' || stage === 'done') && (
+              <div style={{
+                background: '#FFF7F0',
+                border: '1.5px solid #FFE4CC',
+                borderRadius: 16, padding: '12px 14px', marginBottom: 14,
+                display: 'flex', alignItems: 'center', gap: 12,
+                animation: 'cel-num-pop 340ms cubic-bezier(0.34,1.56,0.64,1)',
+              }}>
+                <span style={{ fontSize: 26, flexShrink: 0 }}>{msgRef.icon}</span>
+                <div>
+                  <p style={{ fontSize: 14, fontWeight: 900, color: '#1A1A1A', margin: 0 }}>{msgRef.line1}</p>
+                  <p style={{ fontSize: 11, color: '#999', margin: '2px 0 0', fontWeight: 600 }}>{msgRef.line2}</p>
+                </div>
+              </div>
+            )}
 
-          {/* Continue button */}
-          <button
-            onClick={dismiss}
-            style={{
-              width: '100%', padding: '16px 0', borderRadius: 18,
-              border: 'none', cursor: 'pointer',
-              background: 'linear-gradient(135deg,#D71920,#B31217)',
-              color: '#fff', fontWeight: 900, fontSize: 16, letterSpacing: 0.3,
-              boxShadow: '0 8px 24px rgba(215,25,32,0.45)',
-              animation: 'cel-num-pop 300ms cubic-bezier(0.34,1.56,0.64,1) 1200ms both',
-            }}
-          >
-            🥚 Keep Going
-          </button>
+            {/* STAGE 5: Progress */}
+            {(stage === 'progress' || stage === 'done') && (
+              <>
+                {/* Weekly dots */}
+                <div style={{ marginBottom: 14 }}>
+                  <p style={{ fontSize: 9, fontWeight: 800, color: '#bbb', textTransform: 'uppercase', letterSpacing: 1.2, margin: '0 0 8px', textAlign: 'center' }}>
+                    Weekly Journey
+                  </p>
+                  <div style={{ display: 'flex', justifyContent: 'center', gap: 7 }}>
+                    {weekDots.map((filled, i) => (
+                      <div key={i} style={{
+                        width: 34, height: 34, borderRadius: 11,
+                        background: filled ? `linear-gradient(135deg,${fc},${fc}bb)` : '#F0F0F0',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 17,
+                        boxShadow: filled ? `0 3px 10px ${fc}55` : 'none',
+                        animation: filled ? `cel-dot-in 280ms cubic-bezier(0.34,1.56,0.64,1) ${i * 70}ms both` : 'none',
+                      }}>
+                        {filled ? '🥚' : ''}
+                      </div>
+                    ))}
+                  </div>
+                  <p style={{ fontSize: 11, fontWeight: 700, color: '#999', margin: '7px 0 0', textAlign: 'center' }}>
+                    {batchProgress} / 7 days this week
+                  </p>
+                </div>
+
+                {/* Daily protein bar */}
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#bbb' }}>Daily Protein Goal</span>
+                    <span style={{ fontSize: 11, fontWeight: 900, color: goalMet ? '#22C55E' : '#D71920' }}>
+                      {todayProtein}g / {goal}g
+                    </span>
+                  </div>
+                  <div style={{ height: 9, background: '#F0F0F0', borderRadius: 6, overflow: 'hidden' }}>
+                    <div style={{
+                      height: '100%', width: `${pct}%`,
+                      background: goalMet ? 'linear-gradient(90deg,#16A34A,#22C55E)' : `linear-gradient(90deg,#D71920,${fc})`,
+                      borderRadius: 6, transition: 'width 900ms ease 200ms',
+                    }} />
+                  </div>
+                  {goalMet && (
+                    <p style={{ fontSize: 11, color: '#22C55E', fontWeight: 800, margin: '5px 0 0', textAlign: 'center' }}>
+                      🎉 Daily goal reached!
+                    </p>
+                  )}
+                </div>
+
+                {/* Eggs count */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  marginBottom: 16,
+                  fontSize: 12, fontWeight: 700, color: '#888',
+                }}>
+                  🥚 <span style={{ color: '#D71920', fontWeight: 900 }}>{todayEggs}</span> egg{todayEggs !== 1 ? 's' : ''} scanned today
+                </div>
+              </>
+            )}
+
+            {/* Milestone banner */}
+            {(stage === 'progress' || stage === 'done') && milestoneDef && (
+              <div style={{
+                background: `linear-gradient(135deg,${milestoneDef.color}22,${milestoneDef.color2}18)`,
+                border: `2px solid ${milestoneDef.color}55`,
+                borderRadius: 18, padding: '12px 16px', marginBottom: 16,
+                display: 'flex', alignItems: 'center', gap: 12,
+                animation: 'cel-num-pop 400ms cubic-bezier(0.34,1.56,0.64,1)',
+              }}>
+                <div style={{
+                  width: 44, height: 44, borderRadius: 13, flexShrink: 0,
+                  background: `linear-gradient(135deg,${milestoneDef.color},${milestoneDef.color2})`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 22, boxShadow: `0 4px 14px ${milestoneDef.color}44`,
+                }}>
+                  🎁
+                </div>
+                <div>
+                  <p style={{ fontSize: 12, fontWeight: 900, color: milestoneDef.color, margin: 0 }}>
+                    Reward Ready!
+                  </p>
+                  <p style={{ fontSize: 11, color: '#666', margin: '2px 0 0', fontWeight: 600 }}>
+                    Visit Streaks to claim your {streak}-day sticker
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* ── Continue button — only shown in done stage ── */}
+            {stage === 'done' && (
+              <button
+                onClick={dismiss}
+                style={{
+                  width: '100%', padding: '17px 0', borderRadius: 20,
+                  border: 'none', cursor: 'pointer',
+                  background: `linear-gradient(135deg,#D71920,#B31217)`,
+                  color: '#fff', fontWeight: 900, fontSize: 17, letterSpacing: 0.4,
+                  boxShadow: '0 10px 30px rgba(215,25,32,0.5)',
+                  animation: 'cel-num-pop 350ms cubic-bezier(0.34,1.56,0.64,1)',
+                  position: 'relative', overflow: 'hidden',
+                }}
+              >
+                <span style={{ position: 'relative', zIndex: 1 }}>
+                  {goalMet ? '🎉 Awesome!' : streak >= 7 ? '🔥 Keep Growing' : '🥚 Continue'}
+                </span>
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       <style>{`
         @keyframes cel-fade-in  { from { opacity: 0; } to { opacity: 1; } }
         @keyframes cel-fade-out { from { opacity: 1; } to { opacity: 0; } }
 
         @keyframes cel-card-in {
-          from { transform: scale(0.78) translateY(40px); opacity: 0; }
+          from { transform: scale(0.80) translateY(50px); opacity: 0; }
           to   { transform: scale(1)    translateY(0);    opacity: 1; }
         }
 
-        @keyframes cel-drop {
-          0%   { transform: translateY(-40px) scale(0.8); opacity: 0; }
-          60%  { transform: translateY(8px)   scale(1.08); opacity: 1; }
-          80%  { transform: translateY(-4px)  scale(0.96); }
-          100% { transform: translateY(0)     scale(1); }
+        @keyframes cel-mascot-drop {
+          0%   { transform: translateY(-80px) scale(0.6) rotate(-10deg); opacity: 0; }
+          60%  { transform: translateY(12px)  scale(1.1) rotate(4deg);   opacity: 1; }
+          80%  { transform: translateY(-6px)  scale(0.96) rotate(-2deg); }
+          100% { transform: translateY(0)     scale(1)   rotate(0deg); }
         }
 
-        @keyframes cel-glow-pulse {
-          0%,100% { transform: scale(1);    filter: drop-shadow(0 0 0px rgba(255,200,50,0)); }
-          50%     { transform: scale(1.12); filter: drop-shadow(0 0 24px rgba(255,200,50,0.9)); }
+        @keyframes cel-mascot-wave {
+          0%,100% { transform: rotate(0deg) scale(1); }
+          25%     { transform: rotate(-12deg) scale(1.05); }
+          75%     { transform: rotate(12deg)  scale(1.05); }
         }
 
-        @keyframes cel-fire {
-          0%   { transform: scale(1); }
-          30%  { transform: scale(1.15) rotate(-4deg); }
-          60%  { transform: scale(0.95) rotate(3deg); }
-          100% { transform: scale(1)   rotate(0deg); }
+        @keyframes cel-mascot-float {
+          0%,100% { transform: translateY(0) rotate(0deg); }
+          33%     { transform: translateY(-8px) rotate(-3deg); }
+          66%     { transform: translateY(-4px) rotate(3deg); }
         }
 
-        @keyframes cel-float {
-          0%,100% { transform: translateY(0); }
-          50%     { transform: translateY(-7px); }
+        @keyframes cel-crack {
+          0%   { transform: scale(1)    rotate(0deg); filter: brightness(1); }
+          20%  { transform: scale(0.9)  rotate(-6deg); filter: brightness(2) drop-shadow(0 0 40px gold); }
+          50%  { transform: scale(1.3)  rotate(6deg);  filter: brightness(2.5) drop-shadow(0 0 60px gold); }
+          70%  { transform: scale(0.95) rotate(-3deg); filter: brightness(1.5); }
+          100% { transform: scale(1)    rotate(0deg); filter: brightness(1); }
+        }
+
+        @keyframes cel-burst {
+          0%   { transform: scale(0); opacity: 1; }
+          100% { transform: scale(4); opacity: 0; }
+        }
+
+        @keyframes cel-sparkle {
+          0%,100% { transform: scale(0.7) rotate(0deg);   opacity: 0.4; }
+          50%     { transform: scale(1.3) rotate(180deg);  opacity: 1; }
         }
 
         @keyframes cel-fire-flicker {
-          from { transform: scale(1)    rotate(-2deg); }
-          to   { transform: scale(1.08) rotate(2deg); }
+          from { transform: scale(1)    rotate(-3deg) translateY(0); }
+          to   { transform: scale(1.1)  rotate(3deg)  translateY(-3px); }
         }
 
         @keyframes cel-num-pop {
-          from { transform: scale(0.6) translateY(12px); opacity: 0; }
-          to   { transform: scale(1)   translateY(0);    opacity: 1; }
+          from { transform: scale(0.55) translateY(16px); opacity: 0; }
+          to   { transform: scale(1)    translateY(0);    opacity: 1; }
         }
 
         @keyframes cel-dot-in {
-          from { transform: scale(0); opacity: 0; }
-          to   { transform: scale(1); opacity: 1; }
+          from { transform: scale(0) rotate(-30deg); opacity: 0; }
+          to   { transform: scale(1) rotate(0deg);   opacity: 1; }
         }
 
         @keyframes cel-particle {
-          0%   { transform: translateY(0) translateX(0) scale(1); opacity: 1; }
-          100% { transform: translateY(-420px) translateX(var(--drift)) scale(0.3); opacity: 0; }
+          0%   { transform: translateY(0) translateX(0) scale(1) rotate(0deg);   opacity: 1; }
+          100% { transform: translateY(-480px) translateX(var(--drift)) scale(0.2) rotate(360deg); opacity: 0; }
+        }
+
+        @keyframes cel-feather {
+          0%   { transform: translateY(0) translateX(0) rotate(0deg);   opacity: 0.9; }
+          100% { transform: translateY(110vh) translateX(var(--drift)) rotate(var(--rotate)); opacity: 0; }
         }
       `}</style>
     </div>
