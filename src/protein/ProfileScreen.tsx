@@ -1,4 +1,8 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
+
+// Show developer tools in every non-production build.
+// Set VITE_APP_ENV=production in Firebase Hosting env to hide at launch.
+const IS_DEV = import.meta.env.MODE !== 'production';
 import type { User } from 'firebase/auth';
 import { doc, getDoc, updateDoc, deleteDoc, serverTimestamp, collection, getDocs } from 'firebase/firestore';
 import { updateProfile, deleteUser, reauthenticateWithPopup, GoogleAuthProvider, reauthenticateWithPhoneNumber, RecaptchaVerifier } from 'firebase/auth';
@@ -52,16 +56,16 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
   const [claimed,     setClaimed]     = useState<Set<number>>(new Set());
   const [loading,     setLoading]     = useState(true);
   const [isDevRole,       setIsDevRole]       = useState(false);
-  const [devVisible,      setDevVisible]      = useState(false);
   const [devMode,         setDevMode]         = useState(false);
   const [devMsg,          setDevMsg]          = useState('');
   const [devBusy,         setDevBusy]         = useState(false);
+  const [devDebugOpen,    setDevDebugOpen]    = useState(false);
   const [claimedDates,    setClaimedDates]    = useState<Map<number, string>>(new Map());
   const [favorites,       setFavorites]       = useState<Set<number>>(new Set());
   const [activeSticker,   setActiveSticker]   = useState<MilestoneDef | null>(null);
   const [rarityFilter,    setRarityFilter]    = useState<Rarity | 'All'>('All');
-  const versionTapRef                         = useRef(0);
-  const versionTimerRef                       = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [lockedToast,     setLockedToast]     = useState<number | null>(null); // days value of locked sticker tapped
+  const [shakingDays,     setShakingDays]     = useState<number | null>(null); // for shake animation
 
   const [profile,       setProfile]       = useState<ExtendedProfile>({ playerName: '', age: '', gender: '', height: '', weight: '', goalWeight: '', phone: '' });
   const [profileErr,    setProfileErr]    = useState('');
@@ -85,24 +89,10 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
       ]);
       setStreak(si); setSettings(stg); setClaimed(cl); setClaimedDates(dates);
       setIsDevRole(devRole);
-      if (devRole) setDevVisible(true);
       if (snap.exists()) setUserDoc(snap.data());
     } catch (e) { console.error('[Profile]', e); }
     finally { setLoading(false); }
   }, [user.uid]);
-
-  // Secret gesture: tap app version 7 times to reveal dev panel
-  const handleVersionTap = () => {
-    versionTapRef.current += 1;
-    if (versionTimerRef.current) clearTimeout(versionTimerRef.current);
-    versionTimerRef.current = setTimeout(() => { versionTapRef.current = 0; }, 3000);
-    if (versionTapRef.current >= 7) {
-      versionTapRef.current = 0;
-      setDevVisible(true);
-      setDevMsg('Developer Tools unlocked!');
-      setTimeout(() => setDevMsg(''), 2000);
-    }
-  };
 
   const runDevAction = async (label: string, fn: () => Promise<void>) => {
     setDevBusy(true);
@@ -452,61 +442,134 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
               })}
             </div>
 
-            {/* Sticker grid — tappable */}
+            {/* Sticker grid */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
               {MILESTONES
                 .filter(m => rarityFilter === 'All' || m.rarity === rarityFilter)
                 .map(m => {
-                  const unlocked  = claimed.has(m.days);
-                  const isFav     = favorites.has(m.days);
-                  const rc        = RARITY_COLOR[m.rarity];
+                  const unlocked = claimed.has(m.days);
+                  const isFav    = favorites.has(m.days);
+                  const rc       = RARITY_COLOR[m.rarity];
+                  const shaking  = shakingDays === m.days;
+
+                  if (unlocked) {
+                    // ── COLLECTED: fully clickable, opens detail modal ──
+                    return (
+                      <div
+                        key={m.days}
+                        onClick={() => setActiveSticker(m)}
+                        style={{
+                          background: `linear-gradient(135deg, ${m.color}20, ${m.color2}10)`,
+                          border: `1.5px solid ${m.color}44`,
+                          borderRadius: 16, padding: '10px 6px', textAlign: 'center',
+                          cursor: 'pointer', position: 'relative',
+                          boxShadow: `0 4px 14px ${m.color}28`,
+                          transition: 'transform 120ms, box-shadow 120ms',
+                        }}
+                        onPointerDown={e => (e.currentTarget.style.transform = 'scale(0.94)')}
+                        onPointerUp={e   => (e.currentTarget.style.transform = 'scale(1)')}
+                        onPointerLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+                      >
+                        {isFav && (
+                          <div style={{ position: 'absolute', top: 4, right: 4, fontSize: 9 }}>⭐</div>
+                        )}
+                        <div style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          width: 44, height: 44, margin: '0 auto 6px', overflow: 'hidden',
+                        }}>
+                          <StickerArt days={m.days} fallback={m.sticker} size={40} />
+                        </div>
+                        <p style={{ fontSize: 8, fontWeight: 800, color: '#1A1A1A', margin: '0 0 3px', lineHeight: 1.2 }}>
+                          {m.stickerName}
+                        </p>
+                        <span style={{
+                          fontSize: 7, fontWeight: 800, color: rc,
+                          background: `${rc}15`, borderRadius: 3, padding: '1px 4px', display: 'block',
+                        }}>
+                          {m.rarity.toUpperCase()}
+                        </span>
+                        <div style={{ fontSize: 8, color: '#22C55E', fontWeight: 800, marginTop: 3 }}>✅</div>
+                      </div>
+                    );
+                  }
+
+                  // ── LOCKED: no modal, shake + toast on tap ──
                   return (
                     <div
                       key={m.days}
-                      onClick={() => setActiveSticker(m)}
+                      onClick={() => {
+                        setLockedToast(m.days);
+                        setShakingDays(m.days);
+                        setTimeout(() => setShakingDays(null), 500);
+                        setTimeout(() => setLockedToast(null), 2200);
+                      }}
                       style={{
-                        background: unlocked
-                          ? `linear-gradient(135deg, ${m.color}20, ${m.color2}10)`
-                          : '#F5F5F5',
-                        border: unlocked ? `1.5px solid ${m.color}44` : '1.5px solid #E8E8E8',
+                        background: '#F5F5F5',
+                        border: '1.5px solid #E8E8E8',
                         borderRadius: 16, padding: '10px 6px', textAlign: 'center',
-                        cursor: 'pointer', position: 'relative',
-                        transition: 'transform 150ms',
-                        boxShadow: unlocked ? `0 4px 12px ${m.color}22` : 'none',
+                        cursor: 'default', position: 'relative',
+                        opacity: 0.6,
+                        animation: shaking ? 'sticker-lock-shake 0.45s ease' : 'none',
                       }}
                     >
-                      {isFav && (
-                        <div style={{ position: 'absolute', top: 5, right: 5, fontSize: 9 }}>⭐</div>
-                      )}
+                      {/* Lock overlay */}
+                      <div style={{
+                        position: 'absolute', top: 4, left: 4,
+                        fontSize: 9, lineHeight: 1,
+                        background: 'rgba(0,0,0,0.35)', borderRadius: 5,
+                        padding: '2px 4px', color: '#fff', fontWeight: 800,
+                      }}>🔒</div>
+
                       <div style={{
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        width: 44, height: 44, margin: '0 auto 6px',
-                        overflow: 'hidden',
+                        width: 44, height: 44, margin: '0 auto 6px', overflow: 'hidden',
                       }}>
-                        <StickerArt days={m.days} fallback={m.sticker} size={40} locked={!unlocked} />
+                        <StickerArt days={m.days} fallback={m.sticker} size={40} locked />
                       </div>
-                      <p style={{
-                        fontSize: 8, fontWeight: 800, margin: '0 0 3px', lineHeight: 1.2,
-                        color: unlocked ? '#1A1A1A' : '#ccc',
-                      }}>
-                        {unlocked ? m.stickerName : `${m.days}d`}
+                      <p style={{ fontSize: 8, fontWeight: 800, color: '#bbb', margin: '0 0 3px', lineHeight: 1.2 }}>
+                        {m.days}d streak
                       </p>
                       <span style={{
-                        fontSize: 7, fontWeight: 800, color: unlocked ? rc : '#ddd',
-                        background: unlocked ? `${rc}15` : 'transparent',
-                        borderRadius: 3, padding: '1px 4px',
-                        display: 'block',
+                        fontSize: 7, fontWeight: 700, color: '#ccc',
+                        borderRadius: 3, padding: '1px 4px', display: 'block',
                       }}>
                         {m.rarity.toUpperCase()}
                       </span>
-                      {unlocked && (
-                        <div style={{ fontSize: 8, color: '#22C55E', fontWeight: 800, marginTop: 3 }}>✅</div>
-                      )}
                     </div>
                   );
                 })}
             </div>
+
+            {/* Lock toast — shown when a locked sticker is tapped */}
+            {lockedToast !== null && (
+              <div style={{
+                marginTop: 10,
+                background: '#1A1A1A', borderRadius: 12, padding: '10px 14px',
+                display: 'flex', alignItems: 'center', gap: 8,
+                animation: 'sticker-toast-in 220ms cubic-bezier(0.34,1.56,0.64,1)',
+              }}>
+                <span style={{ fontSize: 14 }}>🔒</span>
+                <p style={{ fontSize: 12, fontWeight: 700, color: '#fff', margin: 0 }}>
+                  Reach a {lockedToast}-day streak to unlock this sticker.
+                </p>
+              </div>
+            )}
           </div>
+
+          <style>{`
+            @keyframes sticker-lock-shake {
+              0%,100% { transform: translateX(0); }
+              18%     { transform: translateX(-5px) rotate(-3deg); }
+              36%     { transform: translateX(5px)  rotate(3deg); }
+              54%     { transform: translateX(-4px) rotate(-2deg); }
+              72%     { transform: translateX(4px)  rotate(2deg); }
+              88%     { transform: translateX(-2px); }
+            }
+            @keyframes sticker-toast-in {
+              from { transform: translateY(8px); opacity: 0; }
+              to   { transform: translateY(0);   opacity: 1; }
+            }
+          `}</style>
 
           {/* Sticker detail modal */}
           <StickerDetailModal
@@ -525,74 +588,149 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
             onClose={() => setActiveSticker(null)}
           />
 
-          {/* App version — secret gesture trigger */}
-          <div
-            onClick={handleVersionTap}
-            style={{ textAlign: 'center', padding: '12px 0 4px', cursor: 'default', userSelect: 'none' }}
-          >
-            <span style={{ fontSize: 10, color: '#ddd', fontWeight: 500 }}>SKM Egg Runner 2.0</span>
-          </div>
+          {/* ── DEVELOPER TOOLS — always visible in non-production builds ── */}
+          {IS_DEV && (
+            <div style={{ marginTop: 14 }}>
 
-          {/* Developer Tools */}
-          {devVisible && (
-            <div style={{ marginTop: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              {/* Development build badge */}
+              <div style={{
+                background: 'linear-gradient(135deg,#064E3B,#065F46)',
+                borderRadius: 16, padding: '10px 14px', marginBottom: 10,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 14 }}>🛠</span>
-                  <p style={{ fontSize: 10, fontWeight: 800, color: '#8B5CF6', textTransform: 'uppercase', letterSpacing: 1, margin: 0 }}>
-                    Developer Tools {isDevRole ? '(role: dev)' : ''}
-                  </p>
+                  <div style={{
+                    width: 8, height: 8, borderRadius: '50%', background: '#34D399',
+                    boxShadow: '0 0 6px #34D399', flexShrink: 0,
+                    animation: 'dev-pulse 2s ease-in-out infinite',
+                  }} />
+                  <div>
+                    <p style={{ fontSize: 10, fontWeight: 900, color: '#34D399', margin: 0, letterSpacing: 0.5 }}>
+                      🟢 DEVELOPMENT BUILD
+                    </p>
+                    <p style={{ fontSize: 9, color: '#6EE7B7', margin: 0, fontWeight: 600 }}>
+                      {isDevRole ? 'Role: Developer' : 'Testing environment'} · v2.0
+                    </p>
+                  </div>
                 </div>
-                {/* Toggle */}
-                <button
-                  onClick={() => setDevMode(m => !m)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 8,
-                    padding: '6px 12px', borderRadius: 20,
-                    border: 'none', cursor: 'pointer',
-                    background: devMode ? '#7C3AED' : '#E8E8E8',
-                    color: devMode ? '#fff' : '#666',
-                    fontWeight: 800, fontSize: 11,
-                    transition: 'background 200ms',
-                  }}
-                >
-                  <span>{devMode ? 'ON' : 'OFF'}</span>
-                </button>
+                <span style={{
+                  fontSize: 9, fontWeight: 800, color: '#064E3B',
+                  background: '#34D399', borderRadius: 6, padding: '2px 7px',
+                }}>DEV</span>
               </div>
 
-              {devMsg && (
+              {/* Card */}
+              <div style={{
+                background: '#fff', borderRadius: 20,
+                border: '2px solid #C4B5FD',
+                boxShadow: '0 4px 20px rgba(124,58,237,0.1)',
+                overflow: 'hidden',
+              }}>
+                {/* Card header with toggle */}
                 <div style={{
-                  background: devMsg.startsWith('✅') ? '#F0FDF4' : devMsg.startsWith('❌') ? '#FEF2F2' : '#F5F3FF',
-                  border: `1px solid ${devMsg.startsWith('✅') ? '#86EFAC' : devMsg.startsWith('❌') ? '#FECACA' : '#C4B5FD'}`,
-                  borderRadius: 10, padding: '8px 12px', marginBottom: 10, fontSize: 11, fontWeight: 700,
-                  color: devMsg.startsWith('✅') ? '#166534' : devMsg.startsWith('❌') ? '#991B1B' : '#5B21B6',
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '14px 16px',
+                  background: devMode ? 'linear-gradient(135deg,#7C3AED,#6D28D9)' : '#F9F7FF',
+                  borderBottom: devMode ? 'none' : '1.5px solid #EDE9FE',
                 }}>
-                  {devMsg}
-                </div>
-              )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{
+                      width: 36, height: 36, borderRadius: 11,
+                      background: devMode ? 'rgba(255,255,255,0.2)' : '#EDE9FE',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 17,
+                    }}>🛠</div>
+                    <div>
+                      <p style={{ fontSize: 13, fontWeight: 900, color: devMode ? '#fff' : '#1A1A1A', margin: 0 }}>Developer Tools</p>
+                      <p style={{ fontSize: 10, color: devMode ? 'rgba(255,255,255,0.7)' : '#8B5CF6', margin: 0, fontWeight: 600 }}>
+                        {devMode ? 'Mode active — testing enabled' : 'Tap to enable testing mode'}
+                      </p>
+                    </div>
+                  </div>
 
-              {devMode && (
-                <div style={{ background: '#F5F3FF', border: '1.5px solid #C4B5FD', borderRadius: 20, padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <p style={{ fontSize: 9, fontWeight: 800, color: '#8B5CF6', textTransform: 'uppercase', letterSpacing: 1, margin: '0 0 4px' }}>
-                    Testing Actions
-                  </p>
-
-                  <DevBtn disabled={devBusy} label="🥚 Add Test Protein (+6g)"   onClick={() => runDevAction('Add Test Protein', () => devAddTestProtein(user.uid))} />
-                  <DevBtn disabled={devBusy} label="🔥 Add 1 Streak Day"          onClick={() => runDevAction('Add 1 Streak Day',   () => devAddStreakDays(user.uid, 1))} />
-                  <DevBtn disabled={devBusy} label="🔥 Add 7 Streak Days"         onClick={() => runDevAction('Add 7 Streak Days',  () => devAddStreakDays(user.uid, 7))} />
-                  <DevBtn disabled={devBusy} label="🔥 Add 30 Streak Days"        onClick={() => runDevAction('Add 30 Streak Days', () => devAddStreakDays(user.uid, 30))} />
-                  <DevBtn disabled={devBusy} label="❌ Reset Today's Egg"         onClick={() => runDevAction("Reset Today's Egg",  () => devResetTodayEgg(user.uid))} color="#EF4444" />
-                  <DevBtn disabled={devBusy} label="📅 Simulate Tomorrow"         onClick={() => runDevAction('Simulate Tomorrow',   () => devSimulateTomorrow(user.uid))} />
-                  <DevBtn disabled={devBusy} label="🏆 Unlock Next Milestone"     onClick={() => {
-                    const next = MILESTONES.find(m => !claimed.has(m.days));
-                    if (!next) { setDevMsg('All milestones already unlocked'); return; }
-                    runDevAction(`Unlock ${next.days}d Milestone`, () => devUnlockMilestone(user.uid, next.days));
-                  }} />
-                  <DevBtn disabled={devBusy} label="💎 Unlock All Stickers"       onClick={() => runDevAction('Unlock All Stickers', () => devUnlockAllMilestones(user.uid))} />
-                  <DevBtn disabled={devBusy} label="📢 Trigger Test Notification" onClick={() => runDevAction('Test Notification',   () => devTriggerTestNotification(user.uid))} />
-                  <DevBtn disabled={devBusy} label="🗑 Reset All Streak Data"     onClick={() => runDevAction('Reset Streak Data',   () => devResetStreakData(user.uid))} color="#EF4444" />
+                  {/* Toggle switch */}
+                  <div
+                    onClick={() => setDevMode(m => !m)}
+                    style={{
+                      width: 48, height: 26, borderRadius: 13, cursor: 'pointer',
+                      background: devMode ? '#A78BFA' : '#E8E8E8',
+                      position: 'relative', transition: 'background 200ms', flexShrink: 0,
+                    }}
+                  >
+                    <div style={{
+                      position: 'absolute', top: 3,
+                      left: devMode ? 25 : 3,
+                      width: 20, height: 20, borderRadius: '50%',
+                      background: devMode ? '#fff' : '#ccc',
+                      transition: 'left 200ms',
+                      boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
+                    }} />
+                  </div>
                 </div>
-              )}
+
+                {/* Status message */}
+                {devMsg && (
+                  <div style={{
+                    margin: '10px 14px 0',
+                    background: devMsg.startsWith('✅') ? '#F0FDF4' : devMsg.startsWith('❌') ? '#FEF2F2' : '#F5F3FF',
+                    border: `1px solid ${devMsg.startsWith('✅') ? '#86EFAC' : devMsg.startsWith('❌') ? '#FECACA' : '#C4B5FD'}`,
+                    borderRadius: 10, padding: '8px 12px', fontSize: 11, fontWeight: 700,
+                    color: devMsg.startsWith('✅') ? '#166534' : devMsg.startsWith('❌') ? '#991B1B' : '#5B21B6',
+                  }}>
+                    {devMsg}
+                  </div>
+                )}
+
+                {/* Action buttons — only when mode is ON */}
+                {devMode && (
+                  <div style={{ padding: '12px 14px 14px', display: 'flex', flexDirection: 'column', gap: 7 }}>
+
+                    <DevSectionLabel label="Protein & Eggs" />
+                    <DevBtn disabled={devBusy} label="🥚 Add Test Protein (+6g)" onClick={() => runDevAction('Add Test Protein', () => devAddTestProtein(user.uid))} />
+                    <DevBtn disabled={devBusy} label="❌ Reset Today's Egg"      onClick={() => runDevAction("Reset Today's Egg", () => devResetTodayEgg(user.uid))} color="#EF4444" />
+
+                    <DevSectionLabel label="Streak Simulation" />
+                    <DevBtn disabled={devBusy} label="🔥 Add 1 Streak Day"   onClick={() => runDevAction('Add 1 Streak Day',   () => devAddStreakDays(user.uid, 1))} />
+                    <DevBtn disabled={devBusy} label="🔥 Add 7-Day Streak"   onClick={() => runDevAction('Add 7 Streak Days',  () => devAddStreakDays(user.uid, 7))} />
+                    <DevBtn disabled={devBusy} label="🔥 Add 30-Day Streak"  onClick={() => runDevAction('Add 30 Streak Days', () => devAddStreakDays(user.uid, 30))} />
+                    <DevBtn disabled={devBusy} label="📅 Simulate Tomorrow"  onClick={() => runDevAction('Simulate Tomorrow',   () => devSimulateTomorrow(user.uid))} />
+                    <DevBtn disabled={devBusy} label="🗑 Reset Streak Data"  onClick={() => runDevAction('Reset Streak Data',   () => devResetStreakData(user.uid))} color="#EF4444" />
+
+                    <DevSectionLabel label="Milestones & Stickers" />
+                    <DevBtn disabled={devBusy} label="🏆 Unlock Test Milestone" onClick={() => {
+                      const next = MILESTONES.find(m => !claimed.has(m.days));
+                      if (!next) { setDevMsg('All milestones already unlocked'); return; }
+                      runDevAction(`Unlock ${next.days}d Milestone`, () => devUnlockMilestone(user.uid, next.days));
+                    }} />
+                    <DevBtn disabled={devBusy} label="🪪 Unlock All Stickers"   onClick={() => runDevAction('Unlock All Stickers', () => devUnlockAllMilestones(user.uid))} />
+
+                    <DevSectionLabel label="Notifications & Debug" />
+                    <DevBtn disabled={devBusy} label="📢 Send Test Notification" onClick={() => runDevAction('Test Notification', () => devTriggerTestNotification(user.uid))} />
+                    <DevBtn disabled={devBusy} label="♻ Refresh Profile Data"   onClick={() => runDevAction('Refresh', async () => { await load(); })} />
+                    <DevBtn disabled={devBusy} label="📊 View Debug Information" onClick={() => setDevDebugOpen(d => !d)} />
+
+                    {devDebugOpen && (
+                      <div style={{
+                        background: '#1E1B4B', borderRadius: 12, padding: 12,
+                        fontFamily: 'monospace', fontSize: 10, color: '#A5B4FC',
+                        lineHeight: 1.7,
+                      }}>
+                        <p style={{ color: '#818CF8', fontWeight: 800, margin: '0 0 6px', fontSize: 11 }}>Debug Info</p>
+                        <p style={{ margin: 0 }}>uid: {user.uid}</p>
+                        <p style={{ margin: 0 }}>email: {user.email}</p>
+                        <p style={{ margin: 0 }}>role: {isDevRole ? 'developer' : 'user'}</p>
+                        <p style={{ margin: 0 }}>streak: {streak.currentStreak}d (best: {streak.bestStreak}d)</p>
+                        <p style={{ margin: 0 }}>goal: {settings?.dailyGoal ?? 60}g/day</p>
+                        <p style={{ margin: 0 }}>stickers: {claimed.size}/{MILESTONES.length}</p>
+                        <p style={{ margin: 0 }}>lastActive: {streak.lastActiveDate || '—'}</p>
+                        <p style={{ margin: 0 }}>build: {import.meta.env.MODE}</p>
+                        <p style={{ margin: 0 }}>provider: {user.providerData[0]?.providerId ?? '—'}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <style>{`@keyframes dev-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }`}</style>
             </div>
           )}
 
@@ -696,16 +834,28 @@ function DevBtn({ label, onClick, disabled, color = '#7C3AED' }: { label: string
       onClick={onClick}
       disabled={disabled}
       style={{
-        width: '100%', padding: '11px 14px', borderRadius: 13,
-        border: `1.5px solid ${color}44`,
-        background: disabled ? '#F0EDF8' : `${color}12`,
-        color: disabled ? '#aaa' : color,
+        width: '100%', padding: '11px 14px', borderRadius: 12,
+        border: `1.5px solid ${color}33`,
+        background: disabled ? '#F5F5F5' : `${color}10`,
+        color: disabled ? '#bbb' : color,
         fontWeight: 700, fontSize: 12, cursor: disabled ? 'not-allowed' : 'pointer',
-        textAlign: 'left', opacity: disabled ? 0.6 : 1,
-        transition: 'background 150ms',
+        textAlign: 'left', opacity: disabled ? 0.7 : 1,
+        transition: 'background 120ms',
       }}
     >
       {label}
     </button>
+  );
+}
+
+function DevSectionLabel({ label }: { label: string }) {
+  return (
+    <p style={{
+      fontSize: 9, fontWeight: 800, color: '#8B5CF6',
+      textTransform: 'uppercase', letterSpacing: 1,
+      margin: '6px 0 2px 2px',
+    }}>
+      {label}
+    </p>
   );
 }
