@@ -320,41 +320,54 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-      {/* ── PREMIUM HEADER ── */}
+      {/* ── WHITE TOP HEADER BAR ── */}
+      <div style={{
+        height: 64, background: '#fff', flexShrink: 0,
+        display: 'flex', alignItems: 'center',
+        padding: '0 16px', gap: 10,
+        borderBottom: '1px solid #F0F0F0',
+        boxShadow: '0 1px 8px rgba(0,0,0,0.06)',
+      }}>
+        {/* Back arrow — plain, no pill */}
+        <button onClick={onBackToMenu} style={{
+          width: 36, height: 36, borderRadius: 10,
+          background: '#F5F5F5', border: 'none',
+          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexShrink: 0,
+        }}
+          onPointerDown={e => (e.currentTarget.style.background = '#EBEBEB')}
+          onPointerUp={e   => (e.currentTarget.style.background = '#F5F5F5')}
+          onPointerLeave={e => (e.currentTarget.style.background = '#F5F5F5')}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1A1A1A" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 12H5M12 5l-7 7 7 7"/>
+          </svg>
+        </button>
+
+        {/* Mascot + title */}
+        <span style={{ fontSize: 26, lineHeight: 1, flexShrink: 0 }}>🥚</span>
+        <span style={{ fontSize: 16, fontWeight: 900, color: '#1A1A1A', letterSpacing: -0.3 }}>SKM Protein</span>
+
+        <div style={{ flex: 1 }} />
+
+        {/* Avatar chip */}
+        {user.photoURL ? (
+          <img src={user.photoURL} alt="" style={{ width: 34, height: 34, borderRadius: '50%', objectFit: 'cover', border: '2px solid #D71920', flexShrink: 0 }} />
+        ) : (
+          <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg,#D71920,#B31217)', border: '2px solid #D71920', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <span style={{ fontSize: 13, fontWeight: 900, color: '#fff' }}>{playerName[0]?.toUpperCase() ?? '?'}</span>
+          </div>
+        )}
+      </div>
+
+      {/* ── RED PROFILE HERO ── */}
       <div style={{
         background: 'linear-gradient(160deg,#D71920 0%,#B31217 55%,#7C1015 100%)',
-        padding: '0 0 28px', flexShrink: 0, position: 'relative', overflow: 'hidden',
+        padding: '24px 20px 28px', flexShrink: 0, position: 'relative', overflow: 'hidden',
       }}>
         {/* Decorative circles */}
         <div style={{ position: 'absolute', top: -60, right: -60, width: 220, height: 220, borderRadius: '50%', background: 'rgba(255,255,255,0.05)', pointerEvents: 'none' }} />
         <div style={{ position: 'absolute', bottom: -40, left: -30, width: 160, height: 160, borderRadius: '50%', background: 'rgba(255,255,255,0.04)', pointerEvents: 'none' }} />
-
-        {/* Navigation bar */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 16px 20px' }}>
-          <button onClick={onBackToMenu} style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.2)',
-            borderRadius: 20, padding: '7px 14px 7px 10px',
-            cursor: 'pointer', backdropFilter: 'blur(8px)',
-          }}>
-            <span style={{ fontSize: 16, lineHeight: 1 }}>←</span>
-            <span style={{ fontSize: 13, lineHeight: 1 }}>🥚</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: '#fff' }}>SKM Protein</span>
-          </button>
-
-          {/* Edit profile shortcut */}
-          <button
-            onClick={() => { setProfile({ playerName, age: String(userDoc.age ?? ''), gender: String(userDoc.gender ?? ''), height: String(userDoc.height ?? ''), weight: String(userDoc.weight ?? ''), goalWeight: String(userDoc.goalWeight ?? ''), phone: String(userDoc.phone ?? '') }); setView('edit_profile'); }}
-            style={{
-              width: 36, height: 36, borderRadius: 12,
-              background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.2)',
-              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              backdropFilter: 'blur(8px)',
-            }}
-          >
-            <EditIcon size={16} color="#fff" />
-          </button>
-        </div>
 
         {/* Avatar + name row */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '0 20px 20px' }}>
@@ -437,9 +450,8 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
             {(userDoc.weight as number) && <InfoRow label="Weight" value={`${userDoc.weight} kg`} />}
           </SectionCard>
 
-          {/* Actions */}
+          {/* Actions — Change Daily Goal only */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
-            <ActionRow icon={<EditIcon   size={18} color="#D71920" />} label="Edit Profile"      onClick={() => { setProfile({ playerName, age: String(userDoc.age ?? ''), gender: String(userDoc.gender ?? ''), height: String(userDoc.height ?? ''), weight: String(userDoc.weight ?? ''), goalWeight: String(userDoc.goalWeight ?? ''), phone: String(userDoc.phone ?? '') }); setView('edit_profile'); }} />
             <ActionRow icon={<TargetIcon size={18} color="#D71920" />} label="Change Daily Goal" onClick={() => { setNewGoal(String(settings?.dailyGoal ?? DEFAULT_DAILY_GOAL)); setView('edit_goal'); }} />
           </div>
 
@@ -455,8 +467,9 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
                 </p>
               </div>
               <div style={{
-                background: claimed.size === MILESTONES.length ? 'linear-gradient(135deg,#D97706,#F59E0B)' : 'linear-gradient(135deg,#D71920,#B31217)',
+                background: 'linear-gradient(135deg,#D71920,#B31217)',
                 borderRadius: 20, padding: '4px 12px',
+                boxShadow: '0 3px 10px rgba(215,25,32,0.3)',
               }}>
                 <span style={{ fontSize: 11, fontWeight: 900, color: '#fff' }}>
                   {Math.round((claimed.size / MILESTONES.length) * 100)}%
@@ -464,14 +477,39 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
               </div>
             </div>
 
-            {/* Progress bar */}
-            <div style={{ height: 6, background: '#F0F0F0', borderRadius: 3, overflow: 'hidden', marginBottom: 12 }}>
+            {/* Red-only progress bar */}
+            <div style={{ height: 8, background: '#F0F0F0', borderRadius: 12, overflow: 'hidden', marginBottom: 10, position: 'relative' }}>
               <div style={{
-                height: '100%', width: `${(claimed.size / MILESTONES.length) * 100}%`,
-                background: 'linear-gradient(90deg,#D71920,#F59E0B,#22C55E)',
-                borderRadius: 3, transition: 'width 700ms ease',
+                height: '100%',
+                width: `${(claimed.size / MILESTONES.length) * 100}%`,
+                background: 'linear-gradient(90deg,#D71920,#FF4D4F)',
+                borderRadius: 12,
+                transition: 'width 400ms ease',
+                boxShadow: '0 0 8px rgba(215,25,32,0.35)',
               }} />
             </div>
+
+            {/* Next unlock info */}
+            {(() => {
+              const next = MILESTONES.find(m => !claimed.has(m.days));
+              if (!next) return (
+                <div style={{ marginBottom: 12, padding: '8px 12px', background: '#F0FDF4', borderRadius: 10, border: '1px solid #86EFAC' }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, color: '#166534', margin: 0 }}>🏆 All stickers collected! You're a legend.</p>
+                </div>
+              );
+              const remaining = next.days - streak.currentStreak;
+              return (
+                <div style={{ marginBottom: 12, padding: '8px 12px', background: '#FEF2F2', borderRadius: 10, border: '1px solid #FECACA', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <p style={{ fontSize: 9, fontWeight: 800, color: '#bbb', textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 1px' }}>Next Unlock</p>
+                    <p style={{ fontSize: 12, fontWeight: 800, color: '#1A1A1A', margin: 0 }}>{next.stickerName}</p>
+                  </div>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: '#D71920', background: '#fff', borderRadius: 8, padding: '3px 8px', border: '1px solid #FECACA', whiteSpace: 'nowrap' }}>
+                    {remaining > 0 ? `${remaining} days left` : 'Claim now!'}
+                  </span>
+                </div>
+              );
+            })()}
 
             {/* Newest sticker banner */}
             {claimed.size > 0 && (() => {
@@ -823,15 +861,9 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
             </div>
           )}
 
-          {/* Settings */}
-          <div style={{ marginTop: 14 }}>
-            <p style={{ fontSize: 10, fontWeight: 800, color: '#999', textTransform: 'uppercase', letterSpacing: 1, margin: '0 0 8px 4px' }}>Settings</p>
-            <ActionRow icon={<SettingsIcon size={18} color="#666" />} label="Back to Module Select" onClick={onBackToMenu} />
-          </div>
-
           {/* Account actions */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
-            <ActionRow icon={<LogoutIcon size={18} color="#D71920" />} label="Logout"         onClick={onLogout}                    variant="outline" />
+            <ActionRow icon={<LogoutIcon size={18} color="#D71920" />} label="Logout"         onClick={onLogout}                       variant="outline" />
             <ActionRow icon={<TrashIcon  size={18} color="#D71920" />} label="Delete Account" onClick={() => setView('delete_confirm')} variant="danger" />
           </div>
 
