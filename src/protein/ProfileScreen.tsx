@@ -680,31 +680,7 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
             <div style={{ marginTop: 14 }}>
 
               {/* Development build badge */}
-              <div style={{
-                background: 'linear-gradient(135deg,#064E3B,#065F46)',
-                borderRadius: 16, padding: '10px 14px', marginBottom: 10,
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{
-                    width: 8, height: 8, borderRadius: '50%', background: '#34D399',
-                    boxShadow: '0 0 6px #34D399', flexShrink: 0,
-                    animation: 'dev-pulse 2s ease-in-out infinite',
-                  }} />
-                  <div>
-                    <p style={{ fontSize: 10, fontWeight: 900, color: '#34D399', margin: 0, letterSpacing: 0.5 }}>
-                      🟢 DEVELOPMENT BUILD
-                    </p>
-                    <p style={{ fontSize: 9, color: '#6EE7B7', margin: 0, fontWeight: 600 }}>
-                      {isDevRole ? 'Role: Developer' : 'Testing environment'} · v2.0
-                    </p>
-                  </div>
-                </div>
-                <span style={{
-                  fontSize: 9, fontWeight: 800, color: '#064E3B',
-                  background: '#34D399', borderRadius: 6, padding: '2px 7px',
-                }}>DEV</span>
-              </div>
+             
 
               {/* Card */}
               <div style={{
