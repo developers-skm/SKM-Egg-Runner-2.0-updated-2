@@ -13,6 +13,7 @@
 
 import { getTokenForUser } from './fcmSender';
 import { renderNotify }    from './renderNotificationService';
+import { createNotification } from './notificationService';
 
 const ENABLE = import.meta.env.VITE_ENABLE_LOGIN_NOTIFICATION !== 'false';
 
@@ -42,6 +43,15 @@ export async function sendLoginNotification(uid: string, email?: string): Promis
     return;
   }
   console.info('[Render] Token confirmed ✓ (prefix:', token.substring(0, 20) + '...)');
+
+  // Save to Firestore so it appears in the notification history drawer
+  createNotification({
+    userId: uid,
+    title:   '👋 Welcome Back!',
+    message: 'You have successfully signed in to SKM. Have a great day!',
+    type:    'login',
+    priority: 'normal',
+  }).catch(() => {});
 
   // STEP 5+6+7 — POST to Render, server delivers push
   console.info('[Render] STEP 5 — Calling POST /notify/login...');

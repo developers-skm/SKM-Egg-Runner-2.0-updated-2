@@ -75,7 +75,25 @@ export function clickActionFor(type: string, override?: string): string {
     case 'achievement_unlocked':
     case 'level_up':
     case 'champion_rank_improved':
+    case 'sticker_unlocked':
+    case 'sticker_collection_progress':
+    case 'mystery_reward':
       return `${APP_URL}/?tab=profile`;
+
+    case 'week_complete':
+    case 'new_week_started':
+    case 'evening_reminder':
+    case 'midnight_reminder':
+      return `${APP_URL}/?tab=streaks`;
+
+    case 'missed_one_day':
+    case 'missed_three_days':
+    case 'morning_reminder':
+    case 'afternoon_reminder':
+      return `${APP_URL}/?tab=tracker`;
+
+    case 'weekly_summary':
+      return `${APP_URL}/?tab=stats`;
 
     case 'login':
     case 'system_update':

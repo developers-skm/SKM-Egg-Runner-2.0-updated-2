@@ -5,7 +5,7 @@ import {
   Clock, Sparkles, Layers, Flame, ArrowLeft,
 } from 'lucide-react';
 import type { MilestoneDef } from '../services/protein/milestoneRewardService';
-import { RARITY_COLOR, RARITY_BG } from '../services/protein/milestoneRewardService';
+import { RARITY_COLOR, RARITY_BG, STICKER_PNG } from '../services/protein/milestoneRewardService';
 import StickerArt from './StickerArt';
 
 interface StickerDetailModalProps {
@@ -84,10 +84,24 @@ export default function StickerDetailModal({
     ctx.font = 'bold 96px system-ui, sans-serif';
     ctx.fillText(milestone.stickerName, W / 2, 310);
 
-    // Sticker emoji / art (fallback to emoji since canvas can't render SVG easily)
-    ctx.font = '320px serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(milestone.sticker, W / 2, 720);
+    // Sticker art — draw PNG if available, otherwise fall back to emoji
+    const pngSrc = STICKER_PNG[milestone.days];
+    if (pngSrc) {
+      await new Promise<void>(resolve => {
+        const img = new Image();
+        img.onload = () => {
+          const imgSize = 380;
+          ctx.drawImage(img, (W - imgSize) / 2, 380, imgSize, imgSize);
+          resolve();
+        };
+        img.onerror = () => resolve();
+        img.src = pngSrc;
+      });
+    } else {
+      ctx.font = '320px serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(milestone.sticker, W / 2, 720);
+    }
 
     // Streak pill background
     ctx.fillStyle = 'rgba(0,0,0,0.2)';

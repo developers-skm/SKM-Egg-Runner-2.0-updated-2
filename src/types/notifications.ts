@@ -25,22 +25,45 @@ export type NotificationType =
   | 'streak_reminder'
   | 'daily_goal_reminder'
   | 'daily_summary'
+  | 'morning_reminder'
+  | 'afternoon_reminder'
+  | 'evening_reminder'
+  | 'midnight_reminder'
   // Achievements / Milestones
   | 'achievement_unlocked'
   | 'level_up'
   | 'protein_milestone'
   | 'streak_milestone'
+  // Stickers
+  | 'sticker_unlocked'
+  | 'sticker_collection_progress'
+  // Weekly batch
+  | 'week_complete'
+  | 'new_week_started'
+  // Collection & rewards
+  | 'mystery_reward'
+  | 'new_collection'
+  // Special occasions
+  | 'birthday'
+  | 'anniversary'
+  // Re-engagement
+  | 'missed_one_day'
+  | 'missed_three_days'
+  // Profile progress
+  | 'weekly_summary'
   // Admin
   | 'admin_announcement'
   | 'system_update'
   | 'campaign'
-  | 'maintenance';
+  | 'maintenance'
+  // Auth
+  | 'login';
 
 export type NotificationPriority = 'low' | 'normal' | 'high' | 'urgent';
 
 export interface NotificationAction {
   label: string;
-  actionType: 'scan_qr' | 'play_game' | 'view_achievement' | 'view_profile' | 'view_dashboard' | 'dismiss' | 'open_url';
+  actionType: 'scan_qr' | 'play_game' | 'view_achievement' | 'view_profile' | 'view_dashboard' | 'view_sticker' | 'view_streak' | 'view_progress' | 'dismiss' | 'open_url';
   url?: string;
 }
 
@@ -88,4 +111,11 @@ export interface ReminderState {
   proteinRemindersToday: number;
   lastGameReminder?: string;
   gameRemindersToday: number;
+  // tracks which daily reminder slots already fired today
+  morningReminderDate?:   string;
+  afternoonReminderDate?: string;
+  eveningReminderDate?:   string;
+  midnightReminderDate?:  string;
+  totalRemindersToday?:   number;
+  lastReminderDate?:      string;
 }

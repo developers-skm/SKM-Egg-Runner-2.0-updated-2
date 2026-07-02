@@ -29,8 +29,11 @@ interface DrawerSection {
 
 export default function NotificationDrawer({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const { notifications, drawerOpen, closeDrawer, markAllRead, clearAll, unreadCount } = useNotifications();
-  const [tab,     setTab]     = useState<FilterTab>('all');
-  const [visible, setVisible] = useState(false);
+  const [tab,          setTab]          = useState<FilterTab>('all');
+  const [visible,      setVisible]      = useState(false);
+  const [markingRead,  setMarkingRead]  = useState(false);
+  const [clearing,     setClearing]     = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const overlayRef = useRef<HTMLDivElement>(null);
 
   // Animate in/out
@@ -82,6 +85,47 @@ export default function NotificationDrawer({ onOpenSettings }: { onOpenSettings?
         }}
       />
 
+      {/* ── Confirm Clear All dialog ── */}
+      {confirmClear && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 1300,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.5)', padding: 24,
+        }}>
+          <div style={{
+            background: '#fff', borderRadius: 20, padding: 24,
+            width: '100%', maxWidth: 300, textAlign: 'center',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+          }}>
+            <div style={{ width: 48, height: 48, borderRadius: '50%', background: '#FCE8E8', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
+              <Trash2 size={22} color="#D71920" />
+            </div>
+            <p style={{ fontSize: 16, fontWeight: 900, color: '#1A1A1A', margin: '0 0 6px' }}>Clear All Notifications?</p>
+            <p style={{ fontSize: 12, color: '#888', margin: '0 0 20px', lineHeight: 1.5 }}>
+              This will permanently delete all {notifications.length} notification{notifications.length !== 1 ? 's' : ''}. This cannot be undone.
+            </p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={() => setConfirmClear(false)}
+                style={{ flex: 1, padding: '12px 0', borderRadius: 12, border: '1.5px solid #E5E5E5', background: '#fff', fontSize: 13, fontWeight: 700, color: '#666', cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setConfirmClear(false);
+                  setClearing(true);
+                  try { await clearAll(); } finally { setClearing(false); }
+                }}
+                style={{ flex: 1, padding: '12px 0', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg,#D71920,#B31217)', fontSize: 13, fontWeight: 700, color: '#fff', cursor: 'pointer' }}
+              >
+                Delete All
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Drawer panel */}
       <div
         style={{
@@ -130,15 +174,27 @@ export default function NotificationDrawer({ onOpenSettings }: { onOpenSettings?
           {/* Action row */}
           <div style={{ display: 'flex', gap: 8 }}>
             {unreadCount > 0 && (
-              <button onClick={markAllRead} style={actionBtn}>
+              <button
+                onClick={async () => {
+                  if (markingRead) return;
+                  setMarkingRead(true);
+                  try { await markAllRead(); } finally { setMarkingRead(false); }
+                }}
+                disabled={markingRead}
+                style={{ ...actionBtn, opacity: markingRead ? 0.6 : 1 }}
+              >
                 <CheckCheck size={12} />
-                Mark all read
+                {markingRead ? 'Marking…' : 'Mark all read'}
               </button>
             )}
             {notifications.length > 0 && (
-              <button onClick={clearAll} style={{ ...actionBtn, background: 'rgba(255,255,255,0.12)' }}>
+              <button
+                onClick={() => setConfirmClear(true)}
+                disabled={clearing}
+                style={{ ...actionBtn, background: 'rgba(255,255,255,0.12)', opacity: clearing ? 0.6 : 1 }}
+              >
                 <Trash2 size={12} />
-                Clear all
+                {clearing ? 'Clearing…' : 'Clear all'}
               </button>
             )}
           </div>

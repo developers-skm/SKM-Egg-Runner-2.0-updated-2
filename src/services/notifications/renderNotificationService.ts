@@ -196,6 +196,95 @@ function buildText(path: string, body: Record<string, unknown>): { title: string
         msg:   `Protein: ${body['protein'] ?? 0}g · Runs: ${body['runs'] ?? 0} · Streak: ${body['streak'] ?? 0} days`,
         url:   '/?tab=tracker',
       };
+    case 'sticker_unlocked': {
+      const rarity = String(body['rarity'] ?? '');
+      const name   = String(body['stickerName'] ?? 'a sticker');
+      const emoji  = rarity === 'Legendary' ? '👑' : rarity === 'Epic' ? '🌟' : rarity === 'Rare' ? '✨' : '🎉';
+      return {
+        title: rarity === 'Legendary' ? '👑 Legendary Achievement!' :
+               rarity === 'Epic'      ? '🌟 Rare Sticker Found!'    : '🎉 New Sticker Unlocked!',
+        msg:   `You earned: ${emoji} ${name}. Tap to view your collection.`,
+        url:   '/?tab=profile',
+      };
+    }
+    case 'sticker_collection_progress':
+      return {
+        title: '📖 Sticker Album Updated',
+        msg:   `You now own ${body['owned'] ?? '?'} of ${body['total'] ?? '?'} stickers. Collect them all!`,
+        url:   '/?tab=profile',
+      };
+    case 'week_complete':
+      return {
+        title: '📦 Week Complete!',
+        msg:   "Congratulations! You've completed this week's nutrition batch.",
+        url:   '/?tab=streaks',
+      };
+    case 'new_week_started':
+      return {
+        title: '📅 New Week Started',
+        msg:   "A fresh batch begins today. Let's keep growing.",
+        url:   '/?tab=streaks',
+      };
+    case 'mystery_reward':
+      return {
+        title: '🎁 Mystery Reward Ready',
+        msg:   'You have an unopened reward. Tap to reveal it.',
+        url:   '/?tab=profile',
+      };
+    case 'missed_one_day':
+      return {
+        title: '💛 We Missed You',
+        msg:   'Come back today and start a fresh streak.',
+        url:   '/?tab=tracker',
+      };
+    case 'missed_three_days':
+      return {
+        title: '🥚 Your Journey Awaits',
+        msg:   'Healthy habits begin again with one egg.',
+        url:   '/?tab=tracker',
+      };
+    case 'birthday':
+      return {
+        title: '🎂 Happy Birthday!',
+        msg:   'Celebrate with a healthy start today.',
+        url:   '/?tab=tracker',
+      };
+    case 'anniversary':
+      return {
+        title: '🎉 Anniversary',
+        msg:   `You've been part of SKM Protein for one year. Thanks for staying healthy with us!`,
+        url:   '/?tab=profile',
+      };
+    case 'weekly_summary':
+      return {
+        title: '📈 Weekly Summary',
+        msg:   `Eggs: ${body['eggs'] ?? 0} · Protein: ${body['protein'] ?? 0}g · Streak: ${body['streak'] ?? 0} Days`,
+        url:   '/?tab=stats',
+      };
+    case 'morning_reminder':
+      return {
+        title: '🥚 Good Morning!',
+        msg:   "Today's healthy streak starts with one egg. Scan your first SKM egg today.",
+        url:   '/?tab=tracker',
+      };
+    case 'afternoon_reminder':
+      return {
+        title: '💪 Protein Check',
+        msg:   `You've consumed ${body['consumed'] ?? 0}g today. ${body['remaining'] ?? ''}g remaining to reach your goal.`,
+        url:   '/?tab=tracker',
+      };
+    case 'evening_reminder':
+      return {
+        title: `🔥 Keep Your ${body['streak'] ?? '?'}-Day Streak Alive`,
+        msg:   "Don't lose today's streak. One egg keeps the fire burning.",
+        url:   '/?tab=tracker',
+      };
+    case 'midnight_reminder':
+      return {
+        title: '⏰ Final Reminder',
+        msg:   "Today is almost over. Scan your egg before midnight to continue your streak.",
+        url:   '/?tab=tracker',
+      };
     case 'admin_announcement':
     case 'broadcast':
       return {
@@ -338,4 +427,19 @@ export const renderNotify = {
 
   broadcast: (uid: string, title: string, message: string, target = 'all') =>
     post('broadcast', { uid, title, message, target, type: 'admin_announcement' }),
+
+  stickerUnlocked: (uid: string, stickerName: string, rarity: string) =>
+    post('sticker', { uid, stickerName, rarity, type: 'sticker_unlocked' }),
+
+  weekComplete: (uid: string) =>
+    post('weekly', { uid, type: 'week_complete' }),
+
+  newWeekStarted: (uid: string) =>
+    post('weekly', { uid, type: 'new_week_started' }),
+
+  reEngage: (uid: string, type: 'missed_one_day' | 'missed_three_days') =>
+    post('protein', { uid, type }),
+
+  mysteryReward: (uid: string) =>
+    post('achievement', { uid, type: 'mystery_reward' }),
 };

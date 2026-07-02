@@ -38,9 +38,10 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.scheduledDailySummary = exports.onNotificationCreated = void 0;
+exports.scheduledDailySummary = exports.purgeOldNotifications = exports.onNotificationCreated = void 0;
 const admin = __importStar(require("firebase-admin"));
 const firestore_1 = require("firebase-functions/v2/firestore");
+const scheduler_1 = require("firebase-functions/v2/scheduler");
 const firebase_functions_1 = require("firebase-functions");
 admin.initializeApp();
 const db = admin.firestore();
@@ -73,7 +74,17 @@ function clickActionFor(type, actionUrl) {
         case 'protein_milestone':
         case 'streak_milestone':
         case 'champion_rank_improved':
+        case 'sticker_unlocked':
+        case 'sticker_collection_progress':
+        case 'mystery_reward':
             return 'https://skm-egg-runner.web.app/?tab=profile';
+        case 'week_complete':
+        case 'new_week_started':
+        case 'evening_reminder':
+        case 'midnight_reminder':
+            return 'https://skm-egg-runner.web.app/?tab=streaks';
+        case 'weekly_summary':
+            return 'https://skm-egg-runner.web.app/?tab=stats';
         default:
             return 'https://skm-egg-runner.web.app/';
     }
@@ -238,21 +249,40 @@ async function cleanupInvalidTokens(response, tokens) {
     }
     await batch.commit();
 }
-// ─── Scheduled: daily summary push at 8 PM ───────────────────────────────────
-exports.scheduledDailySummary = (0, firestore_1.onDocumentCreated)(
-// Triggered when a daily_summary notification is created (from client reminder logic)
-// The Cloud Function amplifies it to a push — no separate scheduler needed here.
-// For a true cron-based daily push, use firebase-functions v2 scheduler (requires Blaze plan):
-//   import { onSchedule } from 'firebase-functions/v2/scheduler';
-// We keep it trigger-based to avoid Blaze-only requirements for initial setup.
-'daily_summary_triggers/{docId}', async (event) => {
+// ─── Scheduled: purge notifications older than 90 days ───────────────────────
+// Runs daily at 03:00 UTC. Requires Blaze plan (Cloud Scheduler).
+// Delete in batches of 400 to avoid Firestore write limits.
+exports.purgeOldNotifications = (0, scheduler_1.onSchedule)('every 24 hours', async () => {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 90);
+    const cutoffTs = admin.firestore.Timestamp.fromDate(cutoff);
+    firebase_functions_1.logger.info('[Purge] Deleting notifications older than', cutoff.toISOString());
+    let totalDeleted = 0;
+    let hasMore = true;
+    while (hasMore) {
+        const snap = await db.collection('notifications')
+            .where('createdAt', '<', cutoffTs)
+            .limit(400)
+            .get();
+        if (snap.empty) {
+            hasMore = false;
+            break;
+        }
+        const batch = db.batch();
+        snap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+        totalDeleted += snap.size;
+        if (snap.size < 400)
+            hasMore = false;
+    }
+    firebase_functions_1.logger.info(`[Purge] Done. Deleted ${totalDeleted} notifications older than 90 days.`);
+});
+// ─── Scheduled: daily summary trigger (placeholder) ──────────────────────────
+exports.scheduledDailySummary = (0, firestore_1.onDocumentCreated)('daily_summary_triggers/{docId}', async (event) => {
     var _a;
     const data = (_a = event.data) === null || _a === void 0 ? void 0 : _a.data();
     if (!data)
         return;
     firebase_functions_1.logger.info('[FCM] daily_summary_triggers fired:', event.params.docId);
-    // The trigger doc contains { userId, protein, runs, streak }
-    // The main notification has already been written to /notifications by the client.
-    // This function is a no-op placeholder — actual push is handled by onNotificationCreated.
 });
 //# sourceMappingURL=index.js.map

@@ -5,26 +5,33 @@
 import React from 'react';
 import {
   Egg, Flame, Trophy, Swords, Crown, QrCode,
-  Bell, Megaphone, Zap, Star, Target, X, Check
+  Bell, Megaphone, Zap, Star, Target, X,
+  User, Gift, Sticker, Package, Calendar, Sparkles, HeartCrack,
 } from 'lucide-react';
 import { useNotifications } from '../../context/NotificationContext';
 import type { AppNotification, NotificationType } from '../../types/notifications';
 
 interface Props { notification: AppNotification }
 
-function typeIcon(type: NotificationType): React.ReactNode {
+function typeIcon(type: NotificationType | 'login'): React.ReactNode {
   const s = 16;
   switch (type) {
+    case 'login':
+      return <User size={s} color="#6366F1" />;
     case 'protein_added':
     case 'protein_goal_complete':
     case 'protein_goal_missed':
     case 'protein_reminder':
     case 'daily_goal_reminder':
+    case 'morning_reminder':
+    case 'afternoon_reminder':
     case 'golden_egg_scanned':
       return <Egg size={s} color="#D71920" />;
     case 'protein_streak_increased':
     case 'streak_reminder':
     case 'streak_milestone':
+    case 'evening_reminder':
+    case 'midnight_reminder':
       return <Flame size={s} color="#F97316" />;
     case 'protein_milestone':
     case 'achievement_unlocked':
@@ -41,21 +48,39 @@ function typeIcon(type: NotificationType): React.ReactNode {
       return <QrCode size={s} color="#10B981" />;
     case 'daily_reward_available':
     case 'daily_summary':
+    case 'weekly_summary':
       return <Star size={s} color="#3B82F6" />;
     case 'game_reminder':
       return <Target size={s} color="#6366F1" />;
+    case 'sticker_unlocked':
+    case 'sticker_collection_progress':
+      return <Sticker size={s} color="#EC4899" />;
+    case 'mystery_reward':
+    case 'new_collection':
+    case 'birthday':
+    case 'anniversary':
+      return <Gift size={s} color="#F59E0B" />;
+    case 'week_complete':
+    case 'new_week_started':
+      return <Package size={s} color="#10B981" />;
+    case 'missed_one_day':
+    case 'missed_three_days':
+    case 'protein_streak_lost':
+      return <HeartCrack size={s} color="#F97316" />;
     case 'admin_announcement':
     case 'campaign':
       return <Megaphone size={s} color="#D71920" />;
     case 'system_update':
     case 'maintenance':
       return <Zap size={s} color="#64748B" />;
+    case 'new_week_started':
+      return <Calendar size={s} color="#10B981" />;
     default:
       return <Bell size={s} color="#9CA3AF" />;
   }
 }
 
-function typeAccent(type: NotificationType): string {
+function typeAccent(type: NotificationType | 'login'): string {
   switch (type) {
     case 'protein_added':
     case 'protein_goal_complete':
@@ -84,6 +109,29 @@ function typeAccent(type: NotificationType): string {
       return '#D71920';
     case 'system_update':
       return '#64748B';
+    case 'login':
+      return '#6366F1';
+    case 'sticker_unlocked':
+    case 'sticker_collection_progress':
+      return '#EC4899';
+    case 'mystery_reward':
+    case 'new_collection':
+    case 'birthday':
+    case 'anniversary':
+      return '#F59E0B';
+    case 'week_complete':
+    case 'new_week_started':
+      return '#10B981';
+    case 'missed_one_day':
+    case 'missed_three_days':
+    case 'protein_streak_lost':
+      return '#F97316';
+    case 'evening_reminder':
+    case 'midnight_reminder':
+      return '#F97316';
+    case 'morning_reminder':
+    case 'afternoon_reminder':
+      return '#D71920';
     default:
       return '#9CA3AF';
   }

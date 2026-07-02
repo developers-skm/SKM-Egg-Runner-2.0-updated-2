@@ -16,6 +16,7 @@ interface ScanCelebrationProps {
   goal:         number;
   todayProtein: number;
   isMilestone?: boolean;
+  playVictory?: boolean; // true only after a genuinely new successful scan
   onDismiss:    () => void;
 }
 
@@ -114,12 +115,91 @@ function useCountUpFrom(from: number, to: number, durationMs: number, startDelay
 
 type Stage = 'mascot' | 'crack' | 'fire' | 'protein' | 'message' | 'progress' | 'done';
 
+// ─── Victory sound ────────────────────────────────────────────
+// Played exactly once per mount when playVictory=true.
+// Fade-in 150ms, volume 70%, fade-out 300ms before end.
+// Ducks any playing BGM to 35% while active, then restores.
+
+function playVictorySound(): () => void {
+  try {
+    const audio = new Audio('/victory sound.mp3');
+    audio.volume = 0;
+    audio.preload = 'auto';
+
+    // Duck BGM if it exists (global SKM bgm element tagged with id="skm-bgm")
+    const bgm = document.getElementById('skm-bgm') as HTMLAudioElement | null;
+    const bgmOrigVol = bgm ? bgm.volume : 1;
+    if (bgm && !bgm.paused) bgm.volume = bgmOrigVol * 0.35;
+
+    // Optional haptic on supported devices
+    try { if (navigator.vibrate) navigator.vibrate(50); } catch { /* unsupported */ }
+
+    audio.play().catch(() => {});
+
+    // Fade in over 150ms
+    const FADE_IN = 150;
+    const TARGET_VOL = 0.7;
+    const fadeInStart = performance.now();
+    const fadeInTick = () => {
+      const t = Math.min((performance.now() - fadeInStart) / FADE_IN, 1);
+      audio.volume = TARGET_VOL * t;
+      if (t < 1) requestAnimationFrame(fadeInTick);
+    };
+    requestAnimationFrame(fadeInTick);
+
+    // Fade out 300ms before natural end; restore BGM after
+    const FADE_OUT = 300;
+    const scheduleFadeOut = () => {
+      if (!isFinite(audio.duration) || audio.duration === 0) return;
+      const fadeOutAt = Math.max(0, (audio.duration - FADE_OUT / 1000) * 1000);
+      const timer = setTimeout(() => {
+        const fadeOutStart = performance.now();
+        const fadeOutTick = () => {
+          const t = Math.min((performance.now() - fadeOutStart) / FADE_OUT, 1);
+          audio.volume = TARGET_VOL * (1 - t);
+          if (t < 1) requestAnimationFrame(fadeOutTick);
+          else {
+            audio.pause();
+            if (bgm && !bgm.paused) bgm.volume = bgmOrigVol;
+          }
+        };
+        requestAnimationFrame(fadeOutTick);
+      }, fadeOutAt);
+      return timer;
+    };
+
+    let fadeTimer: ReturnType<typeof setTimeout> | undefined;
+    audio.addEventListener('loadedmetadata', () => { fadeTimer = scheduleFadeOut(); }, { once: true });
+    audio.addEventListener('ended', () => {
+      if (bgm && !bgm.paused) bgm.volume = bgmOrigVol;
+    }, { once: true });
+
+    // Cleanup: fade out and restore BGM
+    return () => {
+      if (fadeTimer !== undefined) clearTimeout(fadeTimer);
+      audio.volume = 0;
+      audio.pause();
+      if (bgm && !bgm.paused) bgm.volume = bgmOrigVol;
+    };
+  } catch {
+    return () => {};
+  }
+}
+
 export default function ScanCelebrationOverlay({
-  streak, protein, todayEggs, goal, todayProtein, isMilestone, onDismiss,
+  streak, protein, todayEggs, goal, todayProtein, isMilestone, playVictory = false, onDismiss,
 }: ScanCelebrationProps) {
 
   const [visible, setVisible] = useState(true);
   const [stage,   setStage]   = useState<Stage>('mascot');
+
+  // Play victory sound exactly once on mount when playVictory=true
+  useEffect(() => {
+    if (!playVictory) return;
+    const cleanup = playVictorySound();
+    return cleanup;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // mount-only, intentional
   const [cracked, setCracked] = useState(false);
   const particles             = useRef(makeParticles(44)).current;
   const feathers              = useRef(makeFeathers(18)).current;

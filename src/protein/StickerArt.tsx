@@ -1,20 +1,15 @@
-/**
- * StickerArt — renders the inline SVG artwork for a milestone sticker.
- * Falls back to the legacy emoji if no SVG exists for the given days value.
- */
-
-import { STICKER_SVG } from '../services/protein/milestoneRewardService';
+import { STICKER_PNG } from '../services/protein/milestoneRewardService';
 
 interface StickerArtProps {
   days:      number;
-  fallback:  string;  // legacy emoji
+  fallback:  string;
   size?:     number;
   locked?:   boolean;
   style?:    React.CSSProperties;
 }
 
 export default function StickerArt({ days, fallback, size = 56, locked = false, style }: StickerArtProps) {
-  const svg = STICKER_SVG[days];
+  const src = STICKER_PNG[days];
 
   const wrapStyle: React.CSSProperties = {
     width:  size,
@@ -27,7 +22,7 @@ export default function StickerArt({ days, fallback, size = 56, locked = false, 
     ...style,
   };
 
-  if (!svg) {
+  if (!src) {
     return (
       <span style={{ ...wrapStyle, fontSize: size * 0.55, lineHeight: 1 }}>
         {locked ? '❓' : fallback}
@@ -36,9 +31,22 @@ export default function StickerArt({ days, fallback, size = 56, locked = false, 
   }
 
   return (
-    <span
-      style={wrapStyle}
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
+    <span style={wrapStyle}>
+      <img
+        src={src}
+        alt={`${days}-day sticker`}
+        width={size}
+        height={size}
+        style={{ objectFit: 'contain', width: size, height: size }}
+        onError={e => {
+          const span = e.currentTarget.parentElement;
+          if (span) {
+            span.textContent = locked ? '❓' : fallback;
+            (span as HTMLElement).style.fontSize = `${size * 0.55}px`;
+            (span as HTMLElement).style.lineHeight = '1';
+          }
+        }}
+      />
+    </span>
   );
 }

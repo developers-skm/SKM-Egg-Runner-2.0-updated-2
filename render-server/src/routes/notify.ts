@@ -313,6 +313,86 @@ notifyRoutes.post('/daily-summary', async (req: Request, res: Response): Promise
   res.json({ success: result.ok, uid, type: 'daily_summary', reason: result.error });
 });
 
+// ─── POST /notify/sticker ─────────────────────────────────────────────────────
+// Body: { uid, stickerName, rarity, type? }
+//   type: 'sticker_unlocked' | 'sticker_collection_progress'
+
+notifyRoutes.post('/sticker', async (req: Request, res: Response): Promise<void> => {
+  const { uid, stickerName, rarity, owned, total, type = 'sticker_unlocked', title, body } = req.body ?? {};
+  if (!uid) { res.status(400).json({ error: 'uid is required' }); return; }
+  if (!uidGuard(req, res, uid)) return;
+
+  let pushTitle: string = title ?? '';
+  let pushBody:  string = body  ?? '';
+  let priority: NotifPriority = 'normal';
+
+  if (!pushTitle) {
+    switch (type) {
+      case 'sticker_collection_progress':
+        pushTitle = '📖 Sticker Album Updated';
+        pushBody  = `You now own ${owned ?? '?'} of ${total ?? '?'} stickers. Collect them all!`;
+        priority  = 'low';
+        break;
+      default: { // sticker_unlocked
+        const r = String(rarity ?? '');
+        const emoji = r === 'Legendary' ? '👑' : r === 'Epic' ? '🌟' : r === 'Rare' ? '✨' : '🎉';
+        pushTitle = r === 'Legendary' ? '👑 Legendary Achievement!'
+                  : r === 'Epic'      ? '🌟 Rare Sticker Found!'
+                  : r === 'Rare'      ? '✨ Rare Sticker Found!'
+                  :                     '🎉 New Sticker Unlocked!';
+        pushBody  = `You earned: ${emoji} ${stickerName ?? 'a sticker'}. Tap to view your collection.`;
+        priority  = r === 'Legendary' ? 'high' : 'normal';
+      }
+    }
+  }
+
+  const payload: PushPayload = {
+    title: pushTitle, body: pushBody, type, priority,
+    clickAction: clickActionFor(type),
+    data: { stickerName: stickerName ?? '', rarity: rarity ?? '' },
+  };
+
+  console.info(`[NOTIFY] sticker/${type} uid=${uid} stickerName=${stickerName}`);
+  const result = await sendToUser(uid, payload);
+  res.json({ success: result.ok, uid, type, reason: result.error });
+});
+
+// ─── POST /notify/weekly ──────────────────────────────────────────────────────
+// Body: { uid, type? }
+//   type: 'week_complete' | 'new_week_started'
+
+notifyRoutes.post('/weekly', async (req: Request, res: Response): Promise<void> => {
+  const { uid, type = 'week_complete', title, body } = req.body ?? {};
+  if (!uid) { res.status(400).json({ error: 'uid is required' }); return; }
+  if (!uidGuard(req, res, uid)) return;
+
+  let pushTitle: string = title ?? '';
+  let pushBody:  string = body  ?? '';
+  const priority: NotifPriority = 'high';
+
+  if (!pushTitle) {
+    switch (type) {
+      case 'new_week_started':
+        pushTitle = '📅 New Week Started';
+        pushBody  = "A fresh batch begins today. Let's keep growing.";
+        break;
+      default: // week_complete
+        pushTitle = '📦 Week Complete!';
+        pushBody  = "Congratulations! You've completed this week's nutrition batch.";
+    }
+  }
+
+  const payload: PushPayload = {
+    title: pushTitle, body: pushBody, type, priority,
+    clickAction: clickActionFor(type),
+    data: {},
+  };
+
+  console.info(`[NOTIFY] weekly/${type} uid=${uid}`);
+  const result = await sendToUser(uid, payload);
+  res.json({ success: result.ok, uid, type, reason: result.error });
+});
+
 // ─── POST /notify/broadcast ───────────────────────────────────────────────────
 // Developer only. Body: { uid, title, message, target? }
 //   target: 'all' | 'game' | 'protein' | uid:<string>

@@ -157,9 +157,12 @@ self.addEventListener('notificationclick', function(event) {
   var data = event.notification.data || {};
   var targetUrl = data.url || '/';
 
-  if (event.action === 'scan_qr')    targetUrl = '/?open=scan';
-  if (event.action === 'play_game')  targetUrl = '/?open=game';
-  if (event.action === 'view_stats') targetUrl = '/?open=profile';
+  if (event.action === 'scan_qr')       targetUrl = '/?open=scan';
+  if (event.action === 'play_game')     targetUrl = '/?open=game';
+  if (event.action === 'view_stats')    targetUrl = '/?open=profile';
+  if (event.action === 'view_sticker')  targetUrl = '/?open=profile';
+  if (event.action === 'view_streak')   targetUrl = '/?open=streaks';
+  if (event.action === 'view_progress') targetUrl = '/?open=stats';
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(windowClients) {
@@ -206,6 +209,27 @@ function buildActions(type) {
     case 'streak_milestone':
     case 'protein_milestone':
       return [{ action: 'view_stats', title: 'View Stats' }];
+
+    case 'sticker_unlocked':
+    case 'sticker_collection_progress':
+    case 'mystery_reward':
+      return [{ action: 'view_sticker', title: 'View Sticker' }];
+
+    case 'week_complete':
+    case 'new_week_started':
+    case 'evening_reminder':
+    case 'midnight_reminder':
+    case 'streak_reminder':
+      return [{ action: 'view_streak', title: 'View Streak' }];
+
+    case 'weekly_summary':
+      return [{ action: 'view_progress', title: 'Open Progress' }];
+
+    case 'missed_one_day':
+    case 'missed_three_days':
+    case 'morning_reminder':
+    case 'afternoon_reminder':
+      return [{ action: 'scan_qr', title: 'Scan Now' }];
 
     default:
       return [];

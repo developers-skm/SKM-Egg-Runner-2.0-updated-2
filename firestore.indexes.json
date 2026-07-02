@@ -17,59 +17,28 @@
       ]
     },
     {
-      "collectionGroup": "days",
-      "queryScope": "COLLECTION_GROUP",
-      "fields": [
-        { "fieldPath": "date", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "users",
+      "collectionGroup": "notifications",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "createdAt", "order": "ASCENDING" }
+        { "fieldPath": "userId",    "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     },
     {
-      "collectionGroup": "users",
+      "collectionGroup": "notifications",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "lastLogin", "order": "DESCENDING" }
+        { "fieldPath": "userId",    "order": "ASCENDING" },
+        { "fieldPath": "read",      "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     },
     {
-      "collectionGroup": "users",
+      "collectionGroup": "notifications",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "lifetimeConsumption", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "qrCodes",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "playCount", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "login_streaks",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "currentStreak", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "game_missions",
-      "queryScope": "COLLECTION_GROUP",
-      "fields": [
-        { "fieldPath": "completed", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "entries",
-      "queryScope": "COLLECTION_GROUP",
-      "fields": [
-        { "fieldPath": "date", "order": "ASCENDING" }
+        { "fieldPath": "targetAll", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     }
   ],

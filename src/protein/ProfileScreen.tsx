@@ -350,6 +350,25 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
             }}>
               {streakLevel}
             </div>
+            {/* Edit profile button */}
+            <button
+              onClick={() => { setProfile({ playerName: user.displayName ?? '', age: String(userDoc.age ?? ''), gender: String(userDoc.gender ?? ''), height: String(userDoc.height ?? ''), weight: String(userDoc.weight ?? ''), goalWeight: String(userDoc.goalWeight ?? ''), phone: String(userDoc.phone ?? '') }); setView('edit_profile'); }}
+              style={{
+                position: 'absolute', top: -4, right: -4,
+                width: 24, height: 24, borderRadius: '50%',
+                background: '#fff', border: '2px solid #D71920',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.2)', padding: 0,
+              }}
+              onPointerDown={e => (e.currentTarget.style.transform = 'scale(0.88)')}
+              onPointerUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+              onPointerLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#D71920" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+            </button>
           </div>
 
           {/* Name + meta */}

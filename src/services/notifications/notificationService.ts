@@ -24,7 +24,7 @@ import { DEFAULT_NOTIFICATION_SETTINGS } from '../../types/notifications';
 const NOTIFICATIONS_COL = 'notifications';
 const NOTIF_SETTINGS_COL = 'notification_settings';
 const REMINDER_STATE_COL = 'reminder_state';
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 100;
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -85,37 +85,73 @@ export async function fetchNotifications(
   userId: string,
   options: { unreadOnly?: boolean; pageSize?: number } = {}
 ): Promise<AppNotification[]> {
+  // Single-field query only — no composite index needed
   const constraints: any[] = [
     where('userId', '==', userId),
-    orderBy('createdAt', 'desc'),
     limit(options.pageSize ?? PAGE_SIZE),
   ];
   if (options.unreadOnly) constraints.push(where('read', '==', false));
 
   const q = query(collection(db, NOTIFICATIONS_COL), ...constraints);
   const snap = await getDocs(q);
-  return snap.docs.map(d => firestoreDocToNotification(d.id, d.data()));
+  const results = snap.docs.map(d => firestoreDocToNotification(d.id, d.data()));
+  // Sort newest-first client-side
+  return results.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 }
 
 // ─── Real-time listener ─────────────────────────────────────────────────────
+// Two parallel listeners merged client-side.
+// IMPORTANT: We use only single-field queries (no composite index needed).
+// Sorting is done client-side after merge so Firestore never needs a
+// composite (userId + createdAt) index — the notification drawer works
+// immediately without deploying any Firestore indexes.
 
 export function subscribeToNotifications(
   userId: string,
   onUpdate: (notifications: AppNotification[]) => void
 ): () => void {
-  const q = query(
+  let userDocs:      AppNotification[] = [];
+  let broadcastDocs: AppNotification[] = [];
+
+  function emit() {
+    const seen = new Set<string>();
+    const merged: AppNotification[] = [];
+    for (const n of [...userDocs, ...broadcastDocs]) {
+      if (!seen.has(n.id)) { seen.add(n.id); merged.push(n); }
+    }
+    // Sort newest-first client-side — no Firestore composite index required
+    merged.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    onUpdate(merged.slice(0, PAGE_SIZE));
+  }
+
+  // Single-field where only — no orderBy — avoids composite index requirement
+  const qUser = query(
     collection(db, NOTIFICATIONS_COL),
     where('userId', '==', userId),
-    orderBy('createdAt', 'desc'),
+    limit(PAGE_SIZE)
+  );
+
+  const qBroadcast = query(
+    collection(db, NOTIFICATIONS_COL),
+    where('targetAll', '==', true),
     limit(50)
   );
 
-  return onSnapshot(q, (snap) => {
-    const notifications = snap.docs.map(d => firestoreDocToNotification(d.id, d.data()));
-    onUpdate(notifications);
-  }, () => {
-    // Firestore permission error (e.g. user not allowed) — silently no-op
+  const unsubUser = onSnapshot(qUser, snap => {
+    userDocs = snap.docs.map(d => firestoreDocToNotification(d.id, d.data()));
+    emit();
+  }, (err) => {
+    console.error('[Notifications] User query failed:', err.code, err.message);
   });
+
+  const unsubBroadcast = onSnapshot(qBroadcast, snap => {
+    broadcastDocs = snap.docs.map(d => firestoreDocToNotification(d.id, d.data()));
+    emit();
+  }, (err) => {
+    console.error('[Notifications] Broadcast query failed:', err.code, err.message);
+  });
+
+  return () => { unsubUser(); unsubBroadcast(); };
 }
 
 // ─── Mark as read ───────────────────────────────────────────────────────────
@@ -125,16 +161,21 @@ export async function markAsRead(notificationId: string): Promise<void> {
 }
 
 export async function markAllAsRead(userId: string): Promise<void> {
+  // Single-field query only (no composite index needed).
+  // Filter unread client-side to avoid requiring (userId + read) composite index.
   const q = query(
     collection(db, NOTIFICATIONS_COL),
     where('userId', '==', userId),
-    where('read', '==', false)
+    limit(500)
   );
   const snap = await getDocs(q);
   if (snap.empty) return;
 
+  const unread = snap.docs.filter(d => d.data().read === false);
+  if (unread.length === 0) return;
+
   const batch = writeBatch(db);
-  snap.docs.forEach(d => batch.update(d.ref, { read: true }));
+  unread.forEach(d => batch.update(d.ref, { read: true }));
   await batch.commit();
 }
 
@@ -145,13 +186,23 @@ export async function deleteNotification(notificationId: string): Promise<void> 
 }
 
 export async function clearAllNotifications(userId: string): Promise<void> {
-  const q = query(collection(db, NOTIFICATIONS_COL), where('userId', '==', userId));
-  const snap = await getDocs(q);
-  if (snap.empty) return;
+  // Delete in chunks of 400 (Firestore batch limit is 500; keep headroom).
+  let hasMore = true;
+  while (hasMore) {
+    const q = query(
+      collection(db, NOTIFICATIONS_COL),
+      where('userId', '==', userId),
+      limit(400)
+    );
+    const snap = await getDocs(q);
+    if (snap.empty) { hasMore = false; break; }
 
-  const batch = writeBatch(db);
-  snap.docs.forEach(d => batch.delete(d.ref));
-  await batch.commit();
+    const batch = writeBatch(db);
+    snap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+
+    if (snap.size < 400) hasMore = false;
+  }
 }
 
 // ─── Settings ───────────────────────────────────────────────────────────────
@@ -323,6 +374,224 @@ export async function sendAdminAnnouncement(
     type: 'admin_announcement',
     priority: 'high',
     targetAll,
+  });
+}
+
+// ─── Sticker notifications ───────────────────────────────────────────────────
+
+export async function notifyStickerUnlocked(
+  userId: string,
+  stickerName: string,
+  rarity: 'Common' | 'Rare' | 'Epic' | 'Legendary',
+): Promise<void> {
+  const emoji =
+    rarity === 'Legendary' ? '👑' :
+    rarity === 'Epic'      ? '🌟' :
+    rarity === 'Rare'      ? '✨' : '🎉';
+
+  const title =
+    rarity === 'Legendary' ? '👑 Legendary Achievement!' :
+    rarity === 'Epic'      ? '🌟 Rare Sticker Found!'    :
+    rarity === 'Rare'      ? '✨ Rare Sticker Found!'    :
+                             '🎉 New Sticker Unlocked!';
+
+  const message =
+    rarity === 'Legendary' ? `You unlocked an exclusive sticker: ${emoji} ${stickerName}. Only a few users will earn this.` :
+    rarity === 'Epic'      ? `You've unlocked a rare collectible: ${stickerName}. Check it out now!` :
+    rarity === 'Rare'      ? `You've unlocked a rare collectible: ${stickerName}. Check it out now!` :
+                             `You earned: 🔥 ${stickerName}. Tap to view your collection.`;
+
+  await createNotification({
+    userId,
+    title,
+    message,
+    type: 'sticker_unlocked',
+    priority: rarity === 'Legendary' ? 'urgent' : rarity === 'Epic' ? 'high' : 'normal',
+    actions: [{ label: 'View Sticker', actionType: 'view_sticker' }],
+    metadata: { stickerName, rarity },
+  });
+  renderNotify.stickerUnlocked(userId, stickerName, rarity).catch(() => {});
+}
+
+export async function notifyStickerProgress(
+  userId: string,
+  owned: number,
+  total: number,
+): Promise<void> {
+  const pct = Math.round((owned / total) * 100);
+  await createNotification({
+    userId,
+    title: '📖 Sticker Album Updated',
+    message: `You now own ${owned} of ${total} stickers. Collect them all!`,
+    type: 'sticker_collection_progress',
+    priority: 'low',
+    actions: [{ label: 'View Collection', actionType: 'view_sticker' }],
+    metadata: { owned, total, pct },
+  });
+}
+
+export async function notifyStickerCollectionMilestone(
+  userId: string,
+  pct: number,
+): Promise<void> {
+  await createNotification({
+    userId,
+    title: '🏅 Collection Milestone',
+    message: `${pct}% of your sticker album is complete. Keep collecting!`,
+    type: 'sticker_collection_progress',
+    priority: 'normal',
+    actions: [{ label: 'View Collection', actionType: 'view_sticker' }],
+    metadata: { pct },
+  });
+}
+
+// ─── Weekly batch notifications ──────────────────────────────────────────────
+
+export async function notifyWeekComplete(userId: string): Promise<void> {
+  await createNotification({
+    userId,
+    title: '📦 Week Complete!',
+    message: "Congratulations! You've completed this week's nutrition batch.",
+    type: 'week_complete',
+    priority: 'high',
+    actions: [{ label: 'View Streak', actionType: 'view_streak' }],
+  });
+  renderNotify.weekComplete(userId).catch(() => {});
+}
+
+export async function notifyNewWeekStarted(userId: string): Promise<void> {
+  await createNotification({
+    userId,
+    title: '📅 New Week Started',
+    message: 'A fresh batch begins today. Let\'s keep growing.',
+    type: 'new_week_started',
+    priority: 'normal',
+    actions: [{ label: 'View Streak', actionType: 'view_streak' }],
+  });
+  renderNotify.newWeekStarted(userId).catch(() => {});
+}
+
+// ─── Re-engagement ────────────────────────────────────────────────────────────
+
+export async function notifyMissedOneDay(userId: string): Promise<void> {
+  await createNotification({
+    userId,
+    title: '💛 We Missed You',
+    message: 'Come back today and start a fresh streak.',
+    type: 'missed_one_day',
+    priority: 'normal',
+    actions: [{ label: 'Scan Now', actionType: 'scan_qr' }],
+  });
+  renderNotify.reEngage(userId, 'missed_one_day').catch(() => {});
+}
+
+export async function notifyMissedThreeDays(userId: string): Promise<void> {
+  await createNotification({
+    userId,
+    title: '🥚 Your Journey Awaits',
+    message: 'Healthy habits begin again with one egg.',
+    type: 'missed_three_days',
+    priority: 'high',
+    actions: [{ label: 'Scan Now', actionType: 'scan_qr' }],
+  });
+  renderNotify.reEngage(userId, 'missed_three_days').catch(() => {});
+}
+
+// ─── Streak lost ──────────────────────────────────────────────────────────────
+
+export async function notifyStreakLost(userId: string, lostStreak: number): Promise<void> {
+  await createNotification({
+    userId,
+    title: '💔 Streak Lost',
+    message: `Your ${lostStreak}-day streak has ended. Start fresh today — every legend has a comeback!`,
+    type: 'protein_streak_lost',
+    priority: 'high',
+    actions: [{ label: 'Scan Now', actionType: 'scan_qr' }],
+    metadata: { lostStreak },
+  });
+}
+
+// ─── Collection & rewards ────────────────────────────────────────────────────
+
+export async function notifyMysteryReward(userId: string): Promise<void> {
+  await createNotification({
+    userId,
+    title: '🎁 Mystery Reward Ready',
+    message: 'You have an unopened reward. Tap to reveal it.',
+    type: 'mystery_reward',
+    priority: 'high',
+    actions: [{ label: 'View Sticker', actionType: 'view_sticker' }],
+  });
+  renderNotify.mysteryReward(userId).catch(() => {});
+}
+
+// ─── Special occasions ────────────────────────────────────────────────────────
+
+export async function notifyBirthday(userId: string): Promise<void> {
+  await createNotification({
+    userId,
+    title: '🎂 Happy Birthday!',
+    message: 'Celebrate with a healthy start today.',
+    type: 'birthday',
+    priority: 'high',
+    actions: [{ label: 'Scan Now', actionType: 'scan_qr' }],
+  });
+}
+
+export async function notifyAnniversary(userId: string, years: number): Promise<void> {
+  await createNotification({
+    userId,
+    title: '🎉 Anniversary',
+    message: `You've been part of SKM Protein for ${years === 1 ? 'one year' : `${years} years`}. Thanks for staying healthy with us!`,
+    type: 'anniversary',
+    priority: 'normal',
+    actions: [{ label: 'Open Progress', actionType: 'view_progress' }],
+    metadata: { years },
+  });
+}
+
+// ─── Profile progress / weekly summary ───────────────────────────────────────
+
+export async function notifyWeeklySummary(
+  userId: string,
+  eggs: number,
+  protein: number,
+  streak: number,
+): Promise<void> {
+  await createNotification({
+    userId,
+    title: '📈 Weekly Summary',
+    message: `This week: 🥚 Eggs: ${eggs} · 💪 Protein: ${protein}g · 🔥 Streak: ${streak} Days. Fantastic progress!`,
+    type: 'weekly_summary',
+    priority: 'normal',
+    actions: [{ label: 'Open Progress', actionType: 'view_progress' }],
+    metadata: { eggs, protein, streak },
+  });
+}
+
+// ─── System update ────────────────────────────────────────────────────────────
+
+export async function notifySystemUpdate(userId: string, details?: string): Promise<void> {
+  await createNotification({
+    userId,
+    title: '✨ New Features Available',
+    message: details ?? 'Check out the latest improvements in SKM Protein.',
+    type: 'system_update',
+    priority: 'low',
+  });
+}
+
+// ─── Protein goal missed ──────────────────────────────────────────────────────
+
+export async function notifyProteinGoalMissed(userId: string, goal: number): Promise<void> {
+  await createNotification({
+    userId,
+    title: '😔 Goal Missed Today',
+    message: `You didn't reach your ${goal}g goal today. Tomorrow is a new day!`,
+    type: 'protein_goal_missed',
+    priority: 'low',
+    actions: [{ label: 'Scan Now', actionType: 'scan_qr' }],
+    metadata: { goal },
   });
 }
 
