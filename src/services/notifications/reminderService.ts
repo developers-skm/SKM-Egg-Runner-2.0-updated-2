@@ -148,7 +148,8 @@ export async function checkAndSendReminders(
     }
 
     // ── Legacy: almost-there nudge (15:00–17:59) ────────────────────────────
-    if (settings.proteinReminders && h >= 15 && h < 18 && totalProt > 0) {
+    const almostThereFired = !isNewDay && state.almostThereReminderDate === today;
+    if (settings.proteinReminders && !almostThereFired && h >= 15 && h < 18 && totalProt > 0) {
       const remaining = dailyGoal - totalProt;
       if (remaining > 0 && remaining <= 12) {
         await createNotification({
@@ -163,6 +164,7 @@ export async function checkAndSendReminders(
         renderNotify.dailyGoalReminder(userId).catch(() => {});
         await saveReminderState(userId, {
           ...state,
+          almostThereReminderDate: today,
           lastReminderDate: today,
           totalRemindersToday: totalToday + 1,
         });

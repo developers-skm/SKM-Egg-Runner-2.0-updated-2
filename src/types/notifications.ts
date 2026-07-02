@@ -112,10 +112,11 @@ export interface ReminderState {
   lastGameReminder?: string;
   gameRemindersToday: number;
   // tracks which daily reminder slots already fired today
-  morningReminderDate?:   string;
-  afternoonReminderDate?: string;
-  eveningReminderDate?:   string;
-  midnightReminderDate?:  string;
-  totalRemindersToday?:   number;
-  lastReminderDate?:      string;
+  morningReminderDate?:      string;
+  afternoonReminderDate?:    string;
+  eveningReminderDate?:      string;
+  midnightReminderDate?:     string;
+  almostThereReminderDate?:  string;
+  totalRemindersToday?:      number;
+  lastReminderDate?:         string;
 }

@@ -17,8 +17,21 @@ import { createNotification } from './notificationService';
 
 const ENABLE = import.meta.env.VITE_ENABLE_LOGIN_NOTIFICATION !== 'false';
 
-// One send per browser session per uid
+// In-memory guard (cleared on hard refresh / hot reload)
 const _sentThisSession = new Set<string>();
+
+// Session key stored in sessionStorage — survives hot reloads but clears on tab close
+function sessionKey(uid: string) { return `skm_login_notif_${uid}`; }
+
+function alreadySentThisSession(uid: string): boolean {
+  if (_sentThisSession.has(uid)) return true;
+  try { return sessionStorage.getItem(sessionKey(uid)) === '1'; } catch { return false; }
+}
+
+function markSentThisSession(uid: string) {
+  _sentThisSession.add(uid);
+  try { sessionStorage.setItem(sessionKey(uid), '1'); } catch { /* private mode */ }
+}
 
 export async function sendLoginNotification(uid: string, email?: string): Promise<void> {
   if (!ENABLE) {
@@ -26,11 +39,11 @@ export async function sendLoginNotification(uid: string, email?: string): Promis
     return;
   }
 
-  if (_sentThisSession.has(uid)) {
+  if (alreadySentThisSession(uid)) {
     console.info('[Render] Login notification already sent this session, uid:', uid);
     return;
   }
-  _sentThisSession.add(uid);
+  markSentThisSession(uid);
 
   console.info('[Render] ── Login Notification Pipeline ──────────────────────');
   console.info('[Render] uid:', uid, '| email:', email ?? '—');

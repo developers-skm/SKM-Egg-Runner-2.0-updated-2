@@ -62,18 +62,41 @@ export interface CreateNotificationPayload {
 }
 
 export async function createNotification(payload: CreateNotificationPayload): Promise<string> {
+  // Duplicate guard: skip if an identical notification was created within the last 60 seconds
+  const cutoff = Timestamp.fromDate(new Date(Date.now() - 60_000));
+  const dupQ = query(
+    collection(db, NOTIFICATIONS_COL),
+    where('userId', '==', payload.userId),
+    where('type',   '==', payload.type),
+    limit(10)
+  );
+  const existing = await getDocs(dupQ);
+  for (const d of existing.docs) {
+    const data = d.data();
+    if (
+      data.title   === payload.title &&
+      data.message === payload.message &&
+      data.createdAt instanceof Timestamp &&
+      data.createdAt.toMillis() >= cutoff.toMillis()
+    ) {
+      console.log('[Notifications] Duplicate Prevented —', payload.type, payload.title);
+      return d.id;
+    }
+  }
+
+  console.log('[Notifications] Notification Created —', payload.type, payload.title);
   const ref = await addDoc(collection(db, NOTIFICATIONS_COL), {
-    userId: payload.userId,
-    title: payload.title,
-    message: payload.message,
-    type: payload.type,
-    priority: payload.priority ?? 'normal',
-    read: false,
+    userId:    payload.userId,
+    title:     payload.title,
+    message:   payload.message,
+    type:      payload.type,
+    priority:  payload.priority ?? 'normal',
+    read:      false,
     createdAt: serverTimestamp(),
     expiresAt: payload.expiresAt ? Timestamp.fromDate(payload.expiresAt) : null,
     actionUrl: payload.actionUrl ?? null,
-    actions: payload.actions ?? null,
-    metadata: payload.metadata ?? null,
+    actions:   payload.actions ?? null,
+    metadata:  payload.metadata ?? null,
     targetAll: payload.targetAll ?? false,
   });
   return ref.id;
@@ -100,58 +123,37 @@ export async function fetchNotifications(
 }
 
 // ─── Real-time listener ─────────────────────────────────────────────────────
-// Two parallel listeners merged client-side.
-// IMPORTANT: We use only single-field queries (no composite index needed).
-// Sorting is done client-side after merge so Firestore never needs a
-// composite (userId + createdAt) index — the notification drawer works
-// immediately without deploying any Firestore indexes.
+// Single listener on the user's own notifications only.
+// Sorting is done client-side; no Firestore composite index required.
+// The snapshot always REPLACES local state — never merged with stale data.
 
 export function subscribeToNotifications(
   userId: string,
   onUpdate: (notifications: AppNotification[]) => void
 ): () => void {
-  let userDocs:      AppNotification[] = [];
-  let broadcastDocs: AppNotification[] = [];
+  console.log('[Notifications] Listener Started — uid:', userId);
 
-  function emit() {
-    const seen = new Set<string>();
-    const merged: AppNotification[] = [];
-    for (const n of [...userDocs, ...broadcastDocs]) {
-      if (!seen.has(n.id)) { seen.add(n.id); merged.push(n); }
-    }
-    // Sort newest-first client-side — no Firestore composite index required
-    merged.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-    onUpdate(merged.slice(0, PAGE_SIZE));
-  }
-
-  // Single-field where only — no orderBy — avoids composite index requirement
-  const qUser = query(
+  const q = query(
     collection(db, NOTIFICATIONS_COL),
     where('userId', '==', userId),
     limit(PAGE_SIZE)
   );
 
-  const qBroadcast = query(
-    collection(db, NOTIFICATIONS_COL),
-    where('targetAll', '==', true),
-    limit(50)
-  );
-
-  const unsubUser = onSnapshot(qUser, snap => {
-    userDocs = snap.docs.map(d => firestoreDocToNotification(d.id, d.data()));
-    emit();
+  const unsub = onSnapshot(q, snap => {
+    const docs = snap.docs.map(d => firestoreDocToNotification(d.id, d.data()));
+    // Sort newest-first client-side
+    docs.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    const result = docs.slice(0, PAGE_SIZE);
+    console.log('[Notifications] Snapshot Count:', result.length);
+    onUpdate(result);
   }, (err) => {
     console.error('[Notifications] User query failed:', err.code, err.message);
   });
 
-  const unsubBroadcast = onSnapshot(qBroadcast, snap => {
-    broadcastDocs = snap.docs.map(d => firestoreDocToNotification(d.id, d.data()));
-    emit();
-  }, (err) => {
-    console.error('[Notifications] Broadcast query failed:', err.code, err.message);
-  });
-
-  return () => { unsubUser(); unsubBroadcast(); };
+  return () => {
+    console.log('[Notifications] Listener Stopped — uid:', userId);
+    unsub();
+  };
 }
 
 // ─── Mark as read ───────────────────────────────────────────────────────────
@@ -182,6 +184,7 @@ export async function markAllAsRead(userId: string): Promise<void> {
 // ─── Delete ─────────────────────────────────────────────────────────────────
 
 export async function deleteNotification(notificationId: string): Promise<void> {
+  console.log('[Notifications] Notification Deleted — id:', notificationId);
   await deleteDoc(doc(db, NOTIFICATIONS_COL, notificationId));
 }
 

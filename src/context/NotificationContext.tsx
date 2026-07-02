@@ -204,13 +204,20 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   }, []);
 
   // ── Hourly reminder checks ───────────────────────────────────────────────────
+  // Intentionally excluded `settings` from deps: reminder checks should only
+  // restart when the user changes, not every time settings state updates.
+  // The latest settings are read via a ref so the interval always uses current values.
+  const settingsRef = React.useRef(settings);
+  useEffect(() => { settingsRef.current = settings; }, [settings]);
+
   useEffect(() => {
     if (!uid) return;
-    const run = () => checkAndSendReminders(uid, settings).catch(() => {});
+    const run = () => checkAndSendReminders(uid, settingsRef.current).catch(() => {});
     run();
     const timer = setInterval(run, 60 * 60 * 1000);
     return () => clearInterval(timer);
-  }, [uid, settings]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid]);
 
   // ── Actions ──────────────────────────────────────────────────────────────────
 

@@ -4,6 +4,7 @@
  */
 
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { ThemeType, PowerUpType } from './types';
 import { soundManager } from './audio';
 import { getActiveLiveConfig, addDebugLog } from './liveConfig';
@@ -722,6 +723,10 @@ export class SKMRunnerEngine {
   private geoCache: { [key: string]: THREE.BufferGeometry } = {};
   private matCache: { [key: string]: THREE.Material } = {};
 
+  // GLB model cache — loaded once, cloned on every spawn
+  private glbCache: Map<string, THREE.Group> = new Map();
+  private glbPending: Map<string, Promise<THREE.Group | null>> = new Map();
+
   private currentSkinId: string = 'skin_classic';
 
   // Stats FPS Tracker
@@ -812,6 +817,8 @@ export class SKMRunnerEngine {
     this.buildPlayer();
     this.buildParticles();
     this.buildAtmosphere();
+    // Preload tree GLB so first spawn is instant (non-blocking)
+    this.preloadTreeGLB();
 
     // Default Theme start showing the industrial factory theme on main menu
     this.applyThemeSettings('SKM_FACTORY');
@@ -5136,6 +5143,53 @@ export class SKMRunnerEngine {
     }
   }
 
+  // ── GLB Asset Loader ────────────────────────────────────────────────────────
+  // Loads a GLB file once and caches the root scene as a Group.
+  // Subsequent calls return a clone() of the cached scene immediately.
+  private loadGLB(url: string): Promise<THREE.Group | null> {
+    // Already cached — return resolved clone
+    if (this.glbCache.has(url)) {
+      return Promise.resolve(this.glbCache.get(url)!.clone());
+    }
+    // Load in progress — chain onto the existing promise
+    if (this.glbPending.has(url)) {
+      return this.glbPending.get(url)!.then(g => g ? g.clone() : null);
+    }
+    const loader = new GLTFLoader();
+    const p: Promise<THREE.Group | null> = new Promise(resolve => {
+      loader.load(
+        url,
+        gltf => {
+          const root = gltf.scene as THREE.Group;
+          // Enable shadows on every mesh inside the model
+          root.traverse(child => {
+            if ((child as THREE.Mesh).isMesh) {
+              child.castShadow    = true;
+              child.receiveShadow = true;
+            }
+          });
+          this.glbCache.set(url, root);
+          this.glbPending.delete(url);
+          console.log('[GLB] Loaded:', url);
+          resolve(root.clone());
+        },
+        undefined,
+        err => {
+          console.error('[GLB] Failed to load:', url, err);
+          this.glbPending.delete(url);
+          resolve(null);
+        }
+      );
+    });
+    this.glbPending.set(url, p);
+    return p;
+  }
+
+  // Preload the tree GLB at startup so first spawn is instant
+  private preloadTreeGLB(): void {
+    this.loadGLB('/models/Big Tree.glb').catch(() => {});
+  }
+
   private createObstacle(lane: number, zPos: number, specialType?: string): any {
     let type = specialType || 'FENCE';
     const rand = Math.random();
@@ -6424,29 +6478,56 @@ export class SKMRunnerEngine {
         potGroup.add(bulb);
         mesh.add(potGroup);
       } else if (type === 'FALLEN_TREE') {
-        const trunkGroup = new THREE.Group();
-        const woodMat = new THREE.MeshStandardMaterial({ color: '#513217', roughness: 0.95 });
-        const ringMat = new THREE.MeshStandardMaterial({ color: '#eab308', roughness: 0.7 });
-        const leafMat = new THREE.MeshStandardMaterial({ color: '#15803d', roughness: 0.65 });
-        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 1.95, 10), woodMat);
-        trunk.rotation.z = Math.PI / 2;
-        trunk.position.y = 0.32;
-        trunk.castShadow = true;
-        trunk.receiveShadow = true;
-        trunkGroup.add(trunk);
-        for (let side = -1; side <= 1; side += 2) {
-          const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.29, 0.29, 0.02, 10), ringMat);
-          cap.rotation.z = Math.PI / 2;
-          cap.position.set(side * 0.985, 0.32, 0);
-          trunkGroup.add(cap);
+        // ── GLB tree model ─────────────────────────────────────────────────────
+        const GLB_URL = '/models/Big Tree.glb';
+        const FALLEN_SCALE = 1.3;
+        if (this.glbCache.has(GLB_URL)) {
+          // Already loaded — use clone directly
+          const glbClone = this.glbCache.get(GLB_URL)!.clone();
+          glbClone.scale.setScalar(FALLEN_SCALE);
+          // Slight random Y rotation for natural placement
+          glbClone.rotation.y = (Math.random() - 0.5) * 0.6;
+          glbClone.traverse(c => {
+            if ((c as THREE.Mesh).isMesh) { c.castShadow = true; c.receiveShadow = true; }
+          });
+          mesh.add(glbClone);
+        } else {
+          // Fallback: procedural trunk while GLB loads, then swap in
+          const fallbackGroup = new THREE.Group();
+          const woodMat = new THREE.MeshStandardMaterial({ color: '#513217', roughness: 0.95 });
+          const ringMat = new THREE.MeshStandardMaterial({ color: '#eab308', roughness: 0.7 });
+          const leafMat = new THREE.MeshStandardMaterial({ color: '#15803d', roughness: 0.65 });
+          const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 1.95, 10), woodMat);
+          trunk.rotation.z = Math.PI / 2;
+          trunk.position.y = 0.32;
+          trunk.castShadow = true;
+          trunk.receiveShadow = true;
+          fallbackGroup.add(trunk);
+          for (let side = -1; side <= 1; side += 2) {
+            const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.29, 0.29, 0.02, 10), ringMat);
+            cap.rotation.z = Math.PI / 2;
+            cap.position.set(side * 0.985, 0.32, 0);
+            fallbackGroup.add(cap);
+          }
+          const greens = new THREE.Mesh(new THREE.SphereGeometry(0.28, 6, 6), leafMat);
+          greens.position.set(0.2, 0.58, -0.22);
+          fallbackGroup.add(greens);
+          const greens2 = greens.clone();
+          greens2.position.set(-0.4, 0.48, 0.25);
+          fallbackGroup.add(greens2);
+          mesh.add(fallbackGroup);
+          // Async swap: replace fallback with GLB once loaded
+          this.loadGLB(GLB_URL).then(glbClone => {
+            if (!glbClone) return;
+            glbClone.scale.setScalar(FALLEN_SCALE);
+            glbClone.rotation.y = (Math.random() - 0.5) * 0.6;
+            glbClone.traverse(c => {
+              if ((c as THREE.Mesh).isMesh) { c.castShadow = true; c.receiveShadow = true; }
+            });
+            mesh.remove(fallbackGroup);
+            mesh.add(glbClone);
+          }).catch(() => {});
         }
-        const greens = new THREE.Mesh(new THREE.SphereGeometry(0.28, 6, 6), leafMat);
-        greens.position.set(0.2, 0.58, -0.22);
-        trunkGroup.add(greens);
-        const greens2 = greens.clone();
-        greens2.position.set(-0.4, 0.48, 0.25);
-        trunkGroup.add(greens2);
-        mesh.add(trunkGroup);
       } else if (type === 'BUSH') {
         const bushGroup = new THREE.Group();
         const leafMat = new THREE.MeshStandardMaterial({ color: '#166534', roughness: 0.85 });
@@ -6485,19 +6566,43 @@ export class SKMRunnerEngine {
         }
         mesh.add(bridgeGroup);
       } else if (type === 'TREE_ROOT') {
-        const rootGroup = new THREE.Group();
-        const woodMat = new THREE.MeshStandardMaterial({ color: '#451a03', roughness: 0.98 });
-        const root1 = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, 1.1, 6), woodMat);
-        root1.rotation.set(Math.PI / 2.3, 0.1, -0.42);
-        root1.position.set(-0.2, 0.12, 0);
-        root1.castShadow = true;
-        rootGroup.add(root1);
-        const root2 = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 0.95, 6), woodMat);
-        root2.rotation.set(Math.PI / 1.9, -0.22, 0.52);
-        root2.position.set(0.32, 0.1, 0.1);
-        root2.castShadow = true;
-        rootGroup.add(root2);
-        mesh.add(rootGroup);
+        // ── GLB tree model (smaller scale for root obstacle) ────────────────────
+        const GLB_URL = '/models/Big Tree.glb';
+        const ROOT_SCALE = 0.8;
+        if (this.glbCache.has(GLB_URL)) {
+          const glbClone = this.glbCache.get(GLB_URL)!.clone();
+          glbClone.scale.setScalar(ROOT_SCALE);
+          glbClone.rotation.y = (Math.random() - 0.5) * 1.2;
+          glbClone.traverse(c => {
+            if ((c as THREE.Mesh).isMesh) { c.castShadow = true; c.receiveShadow = true; }
+          });
+          mesh.add(glbClone);
+        } else {
+          // Fallback: procedural roots while GLB loads
+          const fallbackGroup = new THREE.Group();
+          const woodMat = new THREE.MeshStandardMaterial({ color: '#451a03', roughness: 0.98 });
+          const root1 = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, 1.1, 6), woodMat);
+          root1.rotation.set(Math.PI / 2.3, 0.1, -0.42);
+          root1.position.set(-0.2, 0.12, 0);
+          root1.castShadow = true;
+          fallbackGroup.add(root1);
+          const root2 = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 0.95, 6), woodMat);
+          root2.rotation.set(Math.PI / 1.9, -0.22, 0.52);
+          root2.position.set(0.32, 0.1, 0.1);
+          root2.castShadow = true;
+          fallbackGroup.add(root2);
+          mesh.add(fallbackGroup);
+          this.loadGLB(GLB_URL).then(glbClone => {
+            if (!glbClone) return;
+            glbClone.scale.setScalar(ROOT_SCALE);
+            glbClone.rotation.y = (Math.random() - 0.5) * 1.2;
+            glbClone.traverse(c => {
+              if ((c as THREE.Mesh).isMesh) { c.castShadow = true; c.receiveShadow = true; }
+            });
+            mesh.remove(fallbackGroup);
+            mesh.add(glbClone);
+          }).catch(() => {});
+        }
       } else if (type === 'BROKEN_PLANK') {
         const bpGroup = new THREE.Group();
         const woodMat = new THREE.MeshStandardMaterial({ color: '#c2410c', roughness: 0.95 });
