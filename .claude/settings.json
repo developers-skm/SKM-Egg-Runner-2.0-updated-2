@@ -2,7 +2,29 @@
   "permissions": {
     "allow": [
       "Bash(ls -la \"d:\\\\PROJECTS\\\\SKM-Egg-Runner-2.0-updated-2\\\\\" | head -20)",
-      "Read(//d/PROJECTS/**)"
+      "Read(//d/PROJECTS/**)",
+      "Bash(du -sh public/models/*)",
+      "Bash(du -sh dist)",
+      "Bash(xargs -I{} du -h \"{}\")",
+      "Bash(xargs wc -l)",
+      "Bash(awk -F: '{s+=$2} END{print s}')",
+      "Bash(xargs -I {} basename {})",
+      "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")",
+      "Bash(ls scripts/)",
+      "Bash(ls api/)",
+      "Bash(cat vercel.json)",
+      "Bash(rm -f src/services/protein/retentionService.ts)",
+      "Bash(rm -f src/services/player/consumptionService.ts)",
+      "Bash(rm -f src/components/qr-management/QRActions.tsx)",
+      "Bash(rm -f src/components/qr-management/GoldenQRControl.tsx)",
+      "Bash(rm -f src/components/notifications/AdminNotificationManager.tsx)",
+      "Bash(git stash *)",
+      "Skill(run)",
+      "Skill(run:*)",
+      "Bash(chromium-cli --help)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3000/)",
+      "Bash(tasklist //FI \"IMAGENAME eq node.exe\")",
+      "Bash(node -e ' *)"
     ]
   }
 }

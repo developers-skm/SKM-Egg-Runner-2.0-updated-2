@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ShieldAlert } from 'lucide-react';
 import { useAuth } from './auth/AuthProvider';
 import ProfileModal from './auth/ProfileModal';
@@ -16,7 +16,8 @@ import {
   Achievement,
   PowerUpType,
   LeaderboardEntry,
-  ThemeType
+  ThemeType,
+  HudSnapshot
 } from './types';
 
 // Frontend UI (screens, hud, modals)
@@ -35,6 +36,7 @@ import {
 import { syncConfigWithServer, addDebugLog, getActiveLiveConfig } from './liveConfig';
 import { saveRunStats } from './services/game/gameStatsService';
 import { consumeOnePlay } from './services/qr/qrService';
+import { isDeveloperModeEnabled } from './services/dev/devModeService';
 
 // Storage keys are scoped per Firebase UID so each account has isolated data.
 // getUid() is resolved inside App() where useAuth() is available.
@@ -209,10 +211,62 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
   const [lastLuckyEventName, setLastLuckyEventName] = useState<string | null>(null);
   const [lastLuckyEventEggs, setLastLuckyEventEggs] = useState<number>(0);
 
-  // Power Up Display array
+  // Power Up Display array — last-known-good snapshot, refreshed only at
+  // pause/gameover (per-frame updates go through hudFastRef/subscribeHud below
+  // to avoid re-rendering the whole App tree at 60fps).
   const [activePowerUps, setActivePowerUps] = useState<{ type: PowerUpType; timeLeft: number; duration: number }[]>([]);
+  // fps only updates ~1/sec from the engine (see onFpsUpdated below), so it's
+  // cheap to keep as regular state — SettingsModal reads it directly and it
+  // was never part of the 60fps render-storm.
   const [fps, setFps] = useState(60);
   const [debugHitboxes, setDebugHitboxes] = useState(false);
+
+  // --- Fast HUD bridge: engine writes here every frame, HUDFastStats (inside
+  // GameHUD) subscribes directly, so App.tsx itself never re-renders for it. ---
+  const runStatsRef = useRef<ActiveGameStats>({
+    score: 0, feeds: 0, gems: 0, distance: 0, speed: 16.0, multiplier: 1.0, eggs: 0
+  });
+  const hudFastRef = useRef<HudSnapshot>({
+    score: 0, feeds: 0, gems: 0, distance: 0,
+    currentStage: 'EGG', grainsCollected: 0,
+    isNearCornerTurn: false, cornerTurnDirection: 'T_JUNCTION',
+    isNearGate: false, isHatching: false, fps: 60,
+    activePowerUps: []
+  });
+  const hudSubscriberRef = useRef<((snap: HudSnapshot) => void) | null>(null);
+  const powerUpDecayTickRef = useRef<number>(0);
+
+  const pushHudSnapshot = () => {
+    hudFastRef.current.score = runStatsRef.current.score;
+    hudFastRef.current.feeds = runStatsRef.current.feeds;
+    hudFastRef.current.gems = runStatsRef.current.gems;
+    hudFastRef.current.distance = runStatsRef.current.distance;
+
+    // Decay active power-ups here (driven by the same per-frame engine
+    // callbacks) instead of a separate 100ms setInterval, so there's only
+    // one update cadence during PLAYING.
+    if (hudFastRef.current.activePowerUps.length > 0) {
+      const now = performance.now();
+      const lastTick = powerUpDecayTickRef.current || now;
+      const deltaSec = Math.min(0.25, (now - lastTick) / 1000);
+      hudFastRef.current.activePowerUps = hudFastRef.current.activePowerUps
+        .map((p) => ({ ...p, timeLeft: p.timeLeft - deltaSec }))
+        .filter((p) => p.timeLeft > 0);
+      powerUpDecayTickRef.current = now;
+    } else {
+      powerUpDecayTickRef.current = performance.now();
+    }
+
+    hudSubscriberRef.current?.({ ...hudFastRef.current, activePowerUps: hudFastRef.current.activePowerUps });
+  };
+
+  const subscribeHud = useCallback((cb: (snap: HudSnapshot) => void) => {
+    hudSubscriberRef.current = cb;
+    cb({ ...hudFastRef.current });
+    return () => {
+      if (hudSubscriberRef.current === cb) hudSubscriberRef.current = null;
+    };
+  }, []);
 
   const handleToggleDebugHitboxes = () => {
     if (engineRef.current) {
@@ -222,6 +276,13 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
       setDebugHitboxes((prev) => !prev);
     }
   };
+
+  // Stable identity so React.memo on GameHUD actually holds across renders —
+  // these don't close over any changing state (engineRef is a ref).
+  const onSwipeLeft = useCallback(() => engineRef.current?.swipeLeft(), []);
+  const onSwipeRight = useCallback(() => engineRef.current?.swipeRight(), []);
+  const onJump = useCallback(() => engineRef.current?.pressJump(), []);
+  const onSlide = useCallback(() => engineRef.current?.pressSlide(), []);
 
   // Collect text floating notifications
   const [collectNotifications, setCollectNotifications] = useState<{ id: string; text: string; type: 'feed' | 'gem' | 'powerup' }[]>([]);
@@ -263,13 +324,11 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
   const [brownEggsCollected, setBrownEggsCollected] = useState(0);
   const [isStage2, setIsStage2] = useState(false);
 
-  // Evolution and Corner Warnings State (synced from engine)
-  const [currentStage, setCurrentStage] = useState<'EGG' | 'CHICK' | 'ADULT'>('EGG');
-  const [grainsCollected, setGrainsCollected] = useState(0);
-  const [isNearCornerTurn, setIsNearCornerTurn] = useState(false);
-  const [cornerTurnDirection, setCornerTurnDirection] = useState<'LEFT' | 'RIGHT' | 'T_JUNCTION'>('T_JUNCTION');
-  const [isNearGate, setIsNearGate] = useState(false);
-  const [isHatching, setIsHatching] = useState(false);
+  // NOTE: currentStage/grainsCollected/isNearCornerTurn/cornerTurnDirection/
+  // isNearGate/isHatching/fps used to live here as useState, updated every RAF
+  // frame from the engine. They now flow through hudFastRef/subscribeHud above
+  // (see engineCallbacks.onDistanceUpdated/onFpsUpdated) so per-frame updates
+  // no longer re-render App.tsx's whole tree.
 
   const [liveConfig, setLiveConfig] = useState(getActiveLiveConfig());
 
@@ -380,32 +439,31 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
     // Create Callbacks
     const engineCallbacks = {
       onScore: (score: number) => {
-        setRunStats((prev) => ({ ...prev, score }));
+        runStatsRef.current.score = score;
+        pushHudSnapshot();
       },
       onFeedCollected: (amount: number, isGolden: boolean) => {
-        setRunStats((prev) => {
-          const nextFeeds = prev.feeds + amount;
-          
-          // Advance active mission progress: Accumulate feeds in run
-          updateMissionProgress('m1', amount);
-          if (isGolden) {
-            updateMissionProgress('m3', 1);
-          }
+        runStatsRef.current.feeds += amount;
 
-          // Advance cumulative achievements: Feeds
-          updateAchievementProgress('a1', amount);
+        // Advance active mission progress: Accumulate feeds in run
+        updateMissionProgress('m1', amount);
+        if (isGolden) {
+          updateMissionProgress('m3', 1);
+        }
 
-          return { ...prev, feeds: nextFeeds };
-        });
+        // Advance cumulative achievements: Feeds
+        updateAchievementProgress('a1', amount);
+
+        pushHudSnapshot();
       },
       onGemCollected: () => {
-        setRunStats((prev) => ({ ...prev, gems: prev.gems + 1 }));
+        runStatsRef.current.gems += 1;
+        pushHudSnapshot();
       },
       onPowerUpActivated: (type: PowerUpType, duration: number) => {
-        setActivePowerUps((prev) => {
-          const filtered = prev.filter((p) => p.type !== type);
-          return [...filtered, { type, timeLeft: duration, duration }];
-        });
+        const filtered = hudFastRef.current.activePowerUps.filter((p) => p.type !== type);
+        hudFastRef.current.activePowerUps = [...filtered, { type, timeLeft: duration, duration }];
+        pushHudSnapshot();
       },
       onDistanceUpdated: (
         distance: number,
@@ -416,26 +474,29 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
         nearGate?: boolean,
         isCurrentlyHatching?: boolean
       ) => {
-        setCurrentStage(stage);
-        setGrainsCollected(grains);
-        setIsNearCornerTurn(nearCorner);
-        setCornerTurnDirection(cornerDir);
-        setIsNearGate(!!nearGate);
-        setIsHatching(!!isCurrentlyHatching);
+        const prevDistance = runStatsRef.current.distance;
 
-        setRunStats((prev) => {
-          // Update distance-based mission parameters
-          updateMissionProgress('m2', distance, 'highwater');
-          updateAchievementProgress('a2', distance - prev.distance);
+        hudFastRef.current.currentStage = stage;
+        hudFastRef.current.grainsCollected = grains;
+        hudFastRef.current.isNearCornerTurn = nearCorner;
+        hudFastRef.current.cornerTurnDirection = cornerDir;
+        hudFastRef.current.isNearGate = !!nearGate;
+        hudFastRef.current.isHatching = !!isCurrentlyHatching;
+        runStatsRef.current.distance = distance;
 
-          return { ...prev, distance };
-        });
+        // Update distance-based mission parameters
+        updateMissionProgress('m2', distance, 'highwater');
+        updateAchievementProgress('a2', distance - prevDistance);
+
+        pushHudSnapshot();
       },
       onCrash: () => {
         handleRunGameOver();
       },
       onFpsUpdated: (fpsVal: number) => {
+        hudFastRef.current.fps = fpsVal;
         setFps(fpsVal);
+        pushHudSnapshot();
       },
       onTimeUpdated: (hour: number, weatherStyle: string) => {
         setTimeOfDay(hour);
@@ -492,20 +553,9 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
     engineRef.current.setSkin(curSkin.id, curSkin.color, curSkin.accentColor);
   }, [stats.activeSkinId]);
 
-  // Handle active power-up decaying animations
-  useEffect(() => {
-    if (gameState !== 'PLAYING') return;
-
-    const timer = setInterval(() => {
-      setActivePowerUps((prev) => {
-        return prev
-          .map((p) => ({ ...p, timeLeft: p.timeLeft - 0.1 }))
-          .filter((p) => p.timeLeft > 0);
-      });
-    }, 100);
-
-    return () => clearInterval(timer);
-  }, [gameState]);
+  // Power-up decay used to run on its own 100ms setInterval here. It's now
+  // computed inside pushHudSnapshot (driven by the same per-frame engine
+  // callbacks as score/distance), so there's a single update cadence.
 
   // accumulate: adds amount to current progress (feed counts, golden bags)
   // highwater: only advances if amount exceeds current (distance-based)
@@ -573,7 +623,7 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
 
     console.log('[GAME] Game loop started.');
     setGameState('PLAYING');
-    setRunStats({
+    const freshRunStats: ActiveGameStats = {
       score: 0,
       feeds: 0,
       gems: 0,
@@ -581,8 +631,18 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
       speed: 16.0,
       multiplier: skinsList.find(s => s.id === stats.activeSkinId)?.multiplierBonus || 1.0,
       eggs: 0
-    });
+    };
+    setRunStats(freshRunStats);
     setActivePowerUps([]);
+    runStatsRef.current = { ...freshRunStats };
+    hudFastRef.current = {
+      score: 0, feeds: 0, gems: 0, distance: 0,
+      currentStage: 'EGG', grainsCollected: 0,
+      isNearCornerTurn: false, cornerTurnDirection: 'T_JUNCTION',
+      isNearGate: false, isHatching: false, fps: hudFastRef.current.fps,
+      activePowerUps: []
+    };
+    hudSubscriberRef.current?.({ ...hudFastRef.current });
 
     // Capture engine ref synchronously — engine lives for full App lifetime
     // (empty dep array on the init effect) so this is always valid post-mount.
@@ -607,6 +667,10 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
     if (engineRef.current) {
       engineRef.current.pause();
     }
+    // Flush the ref-driven fast stats into React state so PauseMenu (which
+    // reads runStats/activePowerUps as normal props) sees the latest values.
+    setRunStats({ ...runStatsRef.current });
+    setActivePowerUps([...hudFastRef.current.activePowerUps]);
     setGameState('PAUSED');
   };
 
@@ -692,8 +756,13 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
     } else {
       updateSession(savedSession);
     }
+
+    // Flush the ref-driven fast stats into React state so GameOverScreen
+    // (and any other slow-path consumer) sees the final values.
+    setRunStats({ ...runStatsRef.current });
+    setActivePowerUps([...hudFastRef.current.activePowerUps]);
     setGameState('GAMEOVER');
-    
+
     // Core RANDOM EGG REWARD SYSTEM values determination
     // 1. Random Egg Drops
     let dropRarity: 'COMMON' | 'RARE' | 'VERY RARE' | 'NONE' = 'COMMON';
@@ -730,8 +799,8 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
 
     // 3. Distance Milestones drop
     let distanceBonusEggs = 0;
-    if (runStats.distance >= 500) {
-      const milestones = Math.floor(runStats.distance / 500);
+    if (runStatsRef.current.distance >= 500) {
+      const milestones = Math.floor(runStatsRef.current.distance / 500);
       for (let i = 0; i < milestones; i++) {
         if (Math.random() < 0.45) {
           distanceBonusEggs += Math.floor(Math.random() * 15) + 5; // +5 to 20
@@ -740,7 +809,7 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
     }
 
     // 4. Feeds converter: Add 1 egg per 12 feeds
-    const feedsEggs = Math.floor(runStats.feeds / 12);
+    const feedsEggs = Math.floor(runStatsRef.current.feeds / 12);
 
     const totalEggsRewarded = dropEggs + eventEggs + distanceBonusEggs + feedsEggs;
 
@@ -752,14 +821,14 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
 
     // Credit accumulated run balances immediately to their wallet
     setStats((prev) => {
-      const totalFeeds = prev.totalFeeds + runStats.feeds;
-      const totalGems = prev.totalGems + runStats.gems;
+      const totalFeeds = prev.totalFeeds + runStatsRef.current.feeds;
+      const totalGems = prev.totalGems + runStatsRef.current.gems;
       const totalEggs = (prev.totalEggs || 0) + totalEggsRewarded;
-      const isNewHigh = runStats.score > prev.highscore;
-      const highscore = isNewHigh ? runStats.score : prev.highscore;
+      const isNewHigh = runStatsRef.current.score > prev.highscore;
+      const highscore = isNewHigh ? runStatsRef.current.score : prev.highscore;
 
       // Yield Level XP (each point/meter yields XP)
-      const xpEarned = Math.round(runStats.score / 10 + runStats.distance / 2);
+      const xpEarned = Math.round(runStatsRef.current.score / 10 + runStatsRef.current.distance / 2);
       let xp = prev.xp + xpEarned;
       let level = prev.level;
       let xpThreshold = level * 1000;
@@ -786,9 +855,9 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
       // Persist run stats to Firestore so Protein Tracker can read live game data
       if (uid && uid !== 'guest') {
         saveRunStats(uid, {
-          distance:      Math.round(runStats.distance),
-          score:         runStats.score,
-          feedsEarned:   runStats.feeds,
+          distance:      Math.round(runStatsRef.current.distance),
+          score:         runStatsRef.current.score,
+          feedsEarned:   runStatsRef.current.feeds,
           xpEarned,
           eggsRewarded:  totalEggsRewarded,
           skinsUnlocked: updated.unlockedSkins.length,
@@ -990,6 +1059,15 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
             isStartingRef.current = true;
             console.log('[GAME] Button clicked.');
 
+            // Developer Mode: local-only testing bypass, skips QR entirely.
+            // Consumes no QR, writes no Firestore records/play counts.
+            if (isDeveloperModeEnabled()) {
+              console.log('[GAME] Developer Mode — skipping QR verification.');
+              updateSession({ remainingAttempts: 999, unlimited: true });
+              handleStartGame();
+              return;
+            }
+
             try {
               const qrCode         = sessionStorage.getItem('skm_qr_code');
               const isGolden       = sessionStorage.getItem('skm_golden_qr') === 'true';
@@ -1060,26 +1138,15 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
       {gameState === 'PLAYING' && (
         <>
           <GameHUD
-            score={runStats.score}
-            feedsCollected={runStats.feeds}
-            gemsCollected={runStats.gems}
-            distance={runStats.distance}
             speed={runStats.speed}
-            activePowerUps={activePowerUps}
             onPause={handlePause}
-            onSwipeLeft={() => engineRef.current?.swipeLeft()}
-            onSwipeRight={() => engineRef.current?.swipeRight()}
-            onJump={() => engineRef.current?.pressJump()}
-            onSlide={() => engineRef.current?.pressSlide()}
-            fps={fps}
+            onSwipeLeft={onSwipeLeft}
+            onSwipeRight={onSwipeRight}
+            onJump={onJump}
+            onSlide={onSlide}
             debugHitboxes={debugHitboxes}
             onToggleDebugHitboxes={handleToggleDebugHitboxes}
-            currentStage={currentStage}
-            grainsCollected={grainsCollected}
-            isNearCornerTurn={isNearCornerTurn}
-            cornerTurnDirection={cornerTurnDirection}
-            isNearGate={isNearGate}
-            isHatching={isHatching}
+            subscribe={subscribeHud}
             brownEggsLaid={brownEggsLaid}
             brownEggsCollected={brownEggsCollected}
             isStage2={isStage2}

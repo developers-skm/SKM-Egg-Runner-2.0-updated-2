@@ -4962,10 +4962,10 @@ export class SKMRunnerEngine {
     let feedMultiplier = 1.0;
 
     if (difficultyMode === 'HARD') {
-      virtualDist = Math.max(600.0, absDist); // Jump straight to Very Hard / Extreme
+      virtualDist = Math.max(1000.0, absDist); // Jump straight to Hardest / Extreme
       feedMultiplier = 0.6;
     } else if (difficultyMode === 'EXTREME') {
-      virtualDist = Math.max(1200.0, absDist); // Jump straight to Constant Extreme / Stage 2
+      virtualDist = Math.max(2000.0, absDist); // Jump straight to Constant Extreme / Stage 2
       feedMultiplier = 0.35;
     }
 
@@ -5011,18 +5011,39 @@ export class SKMRunnerEngine {
 
     // --- STAGE 1 DIFFICULTY TRACKS (REMOVE EASY MODE COMPLETELY IN NORMAL PROGRESSION) ---
 
-    // HARD LAYOUT (0m - 400m)
-    if (virtualDist <= 400.0) {
+    // HARD LAYOUT (0m - 500m, ~0-45s at base speed) — gentle onboarding window
+    if (virtualDist <= 500.0) {
+      // Single obstacle only, wide gaps, no moving-vehicle/double-gate patterns yet
+      if (Math.random() < 0.55) {
+        const layoutRand = Math.random();
+        if (layoutRand < 0.5) {
+          spawnPatternA(0);
+        } else {
+          spawnPatternB(0);
+        }
+      }
+
+      // Plenty of collectibles
+      for (let l = -1; l <= 1; l++) {
+        if (Math.random() < 0.35 * feedMultiplier) {
+          spawnLaneCollectibles(l, currentZ);
+        }
+      }
+      return;
+    }
+
+    // HARD+ LAYOUT (500m - 1000m, ~45-90s) — slightly denser, occasional double patterns
+    if (virtualDist <= 1000.0) {
       // Density multiplier of 1.5 average (either 1 or 2 obstacle groupings)
       const density = Math.random() < 0.50 ? 1 : 2;
       for (let i = 0; i < density; i++) {
         const offsetZ = i === 0 ? -4.0 : 8.0;
         const layoutRand = Math.random();
-        if (layoutRand < 0.25) {
+        if (layoutRand < 0.35) {
           spawnPatternA(offsetZ);
-        } else if (layoutRand < 0.50) {
+        } else if (layoutRand < 0.70) {
           spawnPatternB(offsetZ);
-        } else if (layoutRand < 0.75) {
+        } else if (layoutRand < 0.90) {
           spawnPatternC(offsetZ);
         } else {
           spawnPatternD(offsetZ);
@@ -5038,8 +5059,8 @@ export class SKMRunnerEngine {
       return;
     }
 
-    // VERY HARD LAYOUT (400m - 900m)
-    if (virtualDist <= 900.0) {
+    // HARDEST LAYOUT (1000m - 2000m, ~90-180s) — faster timing, narrower lanes required
+    if (virtualDist <= 2000.0) {
       // Spawns exactly 2 obstacle groupings per segment
       const offsets = [-8.0, 8.0];
       offsets.forEach((offsetZ, idx) => {
@@ -5072,8 +5093,8 @@ export class SKMRunnerEngine {
       return;
     }
 
-    // EXTREME LAYOUT (900m - 1600m)
-    if (virtualDist <= 1600.0) {
+    // EXTREME LAYOUT (2000m+, ~180s+) — maximum challenge, only skilled players sustain this
+    if (virtualDist <= 2700.0) {
       // Spawns 2 to 3 obstacle groupings
       const density = Math.random() < 0.35 ? 2 : 3;
       for (let i = 0; i < density; i++) {
@@ -5099,7 +5120,7 @@ export class SKMRunnerEngine {
       return;
     }
 
-    // NIGHTMARE LAYOUT (1600m+)
+    // NIGHTMARE LAYOUT (2700m+)
     // Absolutely relentless. Spawns 3 groupings. Smallest safe gaps. Almost all dynamic/moving.
     const NightmareDensity = 3;
     for (let i = 0; i < NightmareDensity; i++) {
@@ -5168,10 +5189,26 @@ export class SKMRunnerEngine {
               child.receiveShadow = true;
             }
           });
-          this.glbCache.set(url, root);
+
+          // Some exported GLBs (e.g. from FBX) carry an off-center pivot and/or
+          // a baked node transform that places the geometry far from the local
+          // origin, making it render outside the visible play area. Wrap the
+          // loaded scene in a normalizing group: recenter horizontally, drop
+          // the bottom to y=0, and rescale so its largest dimension is ~1 unit
+          // (callers then apply their own desired scale on top of this).
+          const box = new THREE.Box3().setFromObject(root);
+          const size = box.getSize(new THREE.Vector3());
+          const center = box.getCenter(new THREE.Vector3());
+          const maxDim = Math.max(size.x, size.y, size.z) || 1;
+          const normalized = new THREE.Group();
+          root.position.set(-center.x, -box.min.y, -center.z);
+          normalized.add(root);
+          normalized.scale.setScalar(1 / maxDim);
+
+          this.glbCache.set(url, normalized);
           this.glbPending.delete(url);
           console.log('[GLB] Loaded:', url);
-          resolve(root.clone());
+          resolve(normalized.clone());
         },
         undefined,
         err => {
@@ -5188,6 +5225,7 @@ export class SKMRunnerEngine {
   // Preload the tree GLB at startup so first spawn is instant
   private preloadTreeGLB(): void {
     this.loadGLB('/models/Big Tree.glb').catch(() => {});
+    this.loadGLB('/models/Forklift.glb').catch(() => {});
   }
 
   private createObstacle(lane: number, zPos: number, specialType?: string): any {
@@ -5458,49 +5496,73 @@ export class SKMRunnerEngine {
 
         mesh.add(truckGroup);
       } else if (type === 'FORKLIFT') {
-        const forkliftGroup = new THREE.Group();
-        const yellowMat = new THREE.MeshStandardMaterial({ color: '#f59e0b', roughness: 0.2 });
-        const blackMat = new THREE.MeshStandardMaterial({ color: '#1e293b', roughness: 0.9 });
-        const silverMat = new THREE.MeshStandardMaterial({ color: '#94a3b8', metalness: 0.9, roughness: 0.1 });
+        // ── GLB forklift model ────────────────────────────────────────────────
+        const FORKLIFT_GLB_URL = '/models/Forklift.glb';
+        const FORKLIFT_SCALE = 2.0; // maxDim-normalized model scaled to match other vehicle obstacles
+        if (this.glbCache.has(FORKLIFT_GLB_URL)) {
+          // Already loaded — use clone directly
+          const glbClone = this.glbCache.get(FORKLIFT_GLB_URL)!.clone();
+          glbClone.scale.setScalar(FORKLIFT_SCALE);
+          glbClone.traverse(c => {
+            if ((c as THREE.Mesh).isMesh) { c.castShadow = true; c.receiveShadow = true; }
+          });
+          mesh.add(glbClone);
+        } else {
+          // Fallback: procedural yellow forklift while GLB loads, then swap in
+          const forkliftGroup = new THREE.Group();
+          const yellowMat = new THREE.MeshStandardMaterial({ color: '#f59e0b', roughness: 0.2 });
+          const blackMat = new THREE.MeshStandardMaterial({ color: '#1e293b', roughness: 0.9 });
+          const silverMat = new THREE.MeshStandardMaterial({ color: '#94a3b8', metalness: 0.9, roughness: 0.1 });
 
-        // Forklift main body
-        const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.1, 1.5), yellowMat);
-        cabin.position.y = 0.65;
-        cabin.castShadow = true;
-        forkliftGroup.add(cabin);
+          // Forklift main body
+          const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.1, 1.5), yellowMat);
+          cabin.position.y = 0.65;
+          cabin.castShadow = true;
+          forkliftGroup.add(cabin);
 
-        // Mast frame
-        const mast = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.6, 0.1), blackMat);
-        mast.position.set(0, 0.8, 0.76);
-        forkliftGroup.add(mast);
+          // Mast frame
+          const mast = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.6, 0.1), blackMat);
+          mast.position.set(0, 0.8, 0.76);
+          forkliftGroup.add(mast);
 
-        // Silver forks
-        for (let side = -1; side <= 1; side += 2) {
-          const prong = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.04, 0.85), silverMat);
-          prong.position.set(side * 0.32, 0.1, 1.15);
-          prong.castShadow = true;
-          forkliftGroup.add(prong);
+          // Silver forks
+          for (let side = -1; side <= 1; side += 2) {
+            const prong = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.04, 0.85), silverMat);
+            prong.position.set(side * 0.32, 0.1, 1.15);
+            prong.castShadow = true;
+            forkliftGroup.add(prong);
+          }
+
+          // Lift load: A cardboard box or crate!
+          const crate = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.72, 0.72), new THREE.MeshStandardMaterial({ color: '#d97706', roughness: 0.8 }));
+          crate.position.set(0, 0.48, 1.1);
+          crate.castShadow = true;
+          forkliftGroup.add(crate);
+
+          // Tires
+          for (let xSide = -1; xSide <= 1; xSide += 2) {
+            const tireF = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.22, 8), blackMat);
+            tireF.rotation.z = Math.PI / 2;
+            tireF.position.set(xSide * 0.58, 0.25, 0.5);
+            forkliftGroup.add(tireF);
+
+            const tireB = tireF.clone();
+            tireB.position.z = -0.5;
+            forkliftGroup.add(tireB);
+          }
+
+          mesh.add(forkliftGroup);
+          // Async swap: replace fallback with GLB once loaded
+          this.loadGLB(FORKLIFT_GLB_URL).then(glbClone => {
+            if (!glbClone) return;
+            glbClone.scale.setScalar(FORKLIFT_SCALE);
+            glbClone.traverse(c => {
+              if ((c as THREE.Mesh).isMesh) { c.castShadow = true; c.receiveShadow = true; }
+            });
+            mesh.remove(forkliftGroup);
+            mesh.add(glbClone);
+          }).catch(() => {});
         }
-
-        // Lift load: A cardboard box or crate!
-        const crate = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.72, 0.72), new THREE.MeshStandardMaterial({ color: '#d97706', roughness: 0.8 }));
-        crate.position.set(0, 0.48, 1.1);
-        crate.castShadow = true;
-        forkliftGroup.add(crate);
-
-        // Tires
-        for (let xSide = -1; xSide <= 1; xSide += 2) {
-          const tireF = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.22, 8), blackMat);
-          tireF.rotation.z = Math.PI / 2;
-          tireF.position.set(xSide * 0.58, 0.25, 0.5);
-          forkliftGroup.add(tireF);
-
-          const tireB = tireF.clone();
-          tireB.position.z = -0.5;
-          forkliftGroup.add(tireB);
-        }
-
-        mesh.add(forkliftGroup);
       } else if (type === 'EGG_CAGE') {
         const cageGroup = new THREE.Group();
         const steelMat = new THREE.MeshStandardMaterial({ color: '#475569', metalness: 0.8, roughness: 0.2 });
@@ -6137,44 +6199,6 @@ export class SKMRunnerEngine {
           barrierGroup.add(block);
         }
         mesh.add(barrierGroup);
-      } else if (type === 'FORKLIFT') {
-        const forkliftGroup = new THREE.Group();
-        const goldMat = new THREE.MeshStandardMaterial({ color: '#eab308', roughness: 0.5 });
-        const metalMat = new THREE.MeshStandardMaterial({ color: '#1e293b', roughness: 0.3, metalness: 0.4 });
-        const wheelMat = new THREE.MeshStandardMaterial({ color: '#0f172a', roughness: 0.9 });
-
-        const forkBody = new THREE.Mesh(this.geoCache['box'], goldMat);
-        forkBody.scale.set(1.15, 0.75, 1.6);
-        forkBody.position.y = 0.52;
-        forkBody.castShadow = true;
-        forkliftGroup.add(forkBody);
-
-        const cage = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.8, 0.85), metalMat);
-        cage.position.set(0, 1.25, -0.15);
-        cage.castShadow = true;
-        forkliftGroup.add(cage);
-
-        const forkL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.05, 0.85), metalMat);
-        forkL.position.set(-0.32, 0.15, 1.15);
-        forkliftGroup.add(forkL);
-
-        const forkR = forkL.clone();
-        forkR.position.x = 0.32;
-        forkliftGroup.add(forkR);
-
-        for (let s = -1; s <= 1; s += 2) {
-          const tire = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.25, 8), wheelMat);
-          tire.rotation.z = Math.PI / 2;
-          tire.position.set(s * 0.62, 0.32, 0.4);
-          tire.castShadow = true;
-          forkliftGroup.add(tire);
-
-          const backTire = tire.clone();
-          backTire.position.z = -0.4;
-          forkliftGroup.add(backTire);
-        }
-
-        mesh.add(forkliftGroup);
       } else if (type === 'CARGO_PALLET') {
         const palletGroup = new THREE.Group();
         const woodMat = new THREE.MeshStandardMaterial({ color: '#d97706', roughness: 0.95 });
@@ -6480,7 +6504,7 @@ export class SKMRunnerEngine {
       } else if (type === 'FALLEN_TREE') {
         // ── GLB tree model ─────────────────────────────────────────────────────
         const GLB_URL = '/models/Big Tree.glb';
-        const FALLEN_SCALE = 1.3;
+        const FALLEN_SCALE = 3.1; // maxDim-normalized model; matches prior raw-model visual size
         if (this.glbCache.has(GLB_URL)) {
           // Already loaded — use clone directly
           const glbClone = this.glbCache.get(GLB_URL)!.clone();
@@ -6568,7 +6592,7 @@ export class SKMRunnerEngine {
       } else if (type === 'TREE_ROOT') {
         // ── GLB tree model (smaller scale for root obstacle) ────────────────────
         const GLB_URL = '/models/Big Tree.glb';
-        const ROOT_SCALE = 0.8;
+        const ROOT_SCALE = 1.9; // maxDim-normalized model; matches prior raw-model visual size
         if (this.glbCache.has(GLB_URL)) {
           const glbClone = this.glbCache.get(GLB_URL)!.clone();
           glbClone.scale.setScalar(ROOT_SCALE);
@@ -7215,12 +7239,12 @@ export class SKMRunnerEngine {
         this.speed = 22.0;
         this.maxSpeed = 48.0;
       } else {
-        this.speed = 15.2;
-        this.maxSpeed = 38.0;
+        this.speed = 11.5;
+        this.maxSpeed = 34.0;
       }
       this.nextCornerDistance = 240;
       this.lastCornerDistance = 0;
-      
+
       // Reset evolution growth triggers
       this.currentStage = 'EGG';
       this.grainsCollected = 0;
@@ -7290,12 +7314,12 @@ export class SKMRunnerEngine {
       this.speed = 22.0;
       this.maxSpeed = 48.0;
     } else {
-      this.speed = 15.2;
-      this.maxSpeed = 38.0;
+      this.speed = 11.5;
+      this.maxSpeed = 34.0;
     }
     this.nextCornerDistance = 240;
     this.lastCornerDistance = 0;
-    
+
     // Reset growth and evolution states for a fresh Stage 1 White Egg start
     this.currentStage = 'EGG';
     this.grainsCollected = 0;
@@ -8445,7 +8469,7 @@ export class SKMRunnerEngine {
 
     // Continuous acceleration ramp based on dynamic progression system
     const diffMode = localStorage.getItem('skm_dev_difficulty') || 'NORMAL';
-    let startSpeedVal = 15.2; // default
+    let startSpeedVal = 11.5; // default
     if (diffMode === 'EASY') startSpeedVal = 12.0;
     else if (diffMode === 'HARD') startSpeedVal = 18.0;
     else if (diffMode === 'EXTREME') startSpeedVal = 22.0;
@@ -9278,8 +9302,8 @@ export class SKMRunnerEngine {
       this.speed = 22.0;
       this.maxSpeed = 48.0;
     } else {
-      this.speed = 15.2;
-      this.maxSpeed = 38.0;
+      this.speed = 11.5;
+      this.maxSpeed = 34.0;
     }
 
     // Place character in starting menu position

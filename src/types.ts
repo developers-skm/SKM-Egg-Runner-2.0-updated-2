@@ -45,6 +45,23 @@ export interface ActiveGameStats {
   multiplier: number;
 }
 
+// Per-frame HUD values pushed directly from the engine, bypassing App.tsx's
+// own render cycle so the 60fps game loop doesn't re-render the whole tree.
+export interface HudSnapshot {
+  score: number;
+  feeds: number;
+  gems: number;
+  distance: number;
+  currentStage: 'EGG' | 'CHICK' | 'ADULT';
+  grainsCollected: number;
+  isNearCornerTurn: boolean;
+  cornerTurnDirection: 'LEFT' | 'RIGHT' | 'T_JUNCTION';
+  isNearGate: boolean;
+  isHatching: boolean;
+  fps: number;
+  activePowerUps: { type: PowerUpType; timeLeft: number; duration: number }[];
+}
+
 export interface Mission {
   id: string;
   text: string;

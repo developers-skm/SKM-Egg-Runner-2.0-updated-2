@@ -40,6 +40,7 @@ import {
   DebugLogEntry
 } from '../../liveConfig';
 import { runDevQuery, runDailySummary, checkDevPermissions, DevAnswer, DevCard, QUICK_COMMANDS } from '../../services/dev/devAssistantService';
+import { isDeveloperModeEnabled, setDeveloperModeEnabled } from '../../services/dev/devModeService';
 import {
   parseNotifyCommand,
   executeBroadcast,
@@ -144,6 +145,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [targetFps, setTargetFps] = useState<string>(() => {
     return localStorage.getItem('skm_target_fps') || 'unlimited';
   });
+
+  // Developer Mode: bypasses QR verification for instant local testing.
+  // See src/services/dev/devModeService.ts — never touches QR/Firestore state.
+  const [developerModeOn, setDeveloperModeOn] = useState<boolean>(() => isDeveloperModeEnabled());
+
+  const handleToggleDeveloperMode = () => {
+    soundManager.playClick();
+    const next = !developerModeOn;
+    setDeveloperModeOn(next);
+    setDeveloperModeEnabled(next);
+  };
 
   // Live debug stats timer
   const [liveMetrics, setLiveMetrics] = useState({
@@ -1754,7 +1766,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               {/* TAB 3: SPAN STATE, EVOLUTION PROGRESS TESTS, MISSIONS DIAGNOSTICS */}
               {activeTab === 'TESTING' && (
                 <div className="space-y-4">
-                  
+
+                  {/* DEVELOPER MODE — bypasses QR verification for instant testing */}
+                  <div className="space-y-2">
+                    <span className="text-[10px] font-black text-white font-mono uppercase tracking-wider block border-b border-slate-850 pb-1 mt-1">
+                      Developer Mode
+                    </span>
+                    <button
+                      onClick={handleToggleDeveloperMode}
+                      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border cursor-pointer transition ${
+                        developerModeOn
+                          ? 'bg-amber-950/40 border-amber-600/60'
+                          : 'bg-slate-950/25 border-slate-850 hover:border-slate-800'
+                      }`}
+                    >
+                      <span className="flex flex-col items-start text-left">
+                        <span className={`text-xs font-black font-mono uppercase tracking-wider ${developerModeOn ? 'text-amber-300' : 'text-slate-300'}`}>
+                          🛠 Skip QR Verification
+                        </span>
+                        <span className="text-[8.5px] text-slate-500 font-mono mt-0.5">
+                          RUN NOW starts instantly — no QR consumed, no play count changed
+                        </span>
+                      </span>
+                      <span
+                        className={`relative flex-shrink-0 w-10 h-5 rounded-full transition-colors ${developerModeOn ? 'bg-amber-500' : 'bg-slate-700'}`}
+                      >
+                        <span
+                          className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${developerModeOn ? 'translate-x-5' : ''}`}
+                        />
+                      </span>
+                    </button>
+                  </div>
+
                   {/* DIFF SELECTION BUTTONS */}
                   <div className="space-y-2">
                     <span className="text-[10px] font-black text-white font-mono uppercase tracking-wider block border-b border-slate-850 pb-1 mt-1">

@@ -4,6 +4,7 @@ import { Html5Qrcode } from 'html5-qrcode';
 import { validateQR } from '../services/qr/qrService';
 import { SettingsModal } from '../frontend/modals/SettingsModal';
 import NotificationBell from '../components/notifications/NotificationBell';
+import { isDeveloperModeEnabled, subscribeDeveloperMode } from '../services/dev/devModeService';
 
 interface ModuleSelectScreenProps {
   onSelectGame:    () => void;
@@ -532,9 +533,14 @@ export default function ModuleSelectScreen({ onSelectGame, onSelectTracker, onSe
   const [showQRModal,  setShowQRModal]  = useState(false);
   const [showGate,     setShowGate]     = useState(false);
   const [showDevPanel, setShowDevPanel] = useState(false);
+  // Developer Mode: bypasses the QR scanner below for instant local testing.
+  // See src/services/dev/devModeService.ts — no QR/Firestore state touched.
+  const [developerModeOn, setDeveloperModeOn] = useState(() => isDeveloperModeEnabled());
 
   const tapCountRef = useRef(0);
   const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => subscribeDeveloperMode(setDeveloperModeOn), []);
 
   const handleSecretTap = () => {
     tapCountRef.current += 1;
@@ -560,6 +566,12 @@ export default function ModuleSelectScreen({ onSelectGame, onSelectTracker, onSe
 
   const handleSelectGame = () => {
     localStorage.setItem(LAST_MODULE_KEY, 'game');
+    if (developerModeOn) {
+      // Skip the QR scanner entirely — no QR consumed, no session created.
+      setVisible(false);
+      setTimeout(() => onSelectGame(), 300);
+      return;
+    }
     setShowQRModal(true);
   };
 
@@ -591,6 +603,21 @@ export default function ModuleSelectScreen({ onSelectGame, onSelectTracker, onSe
           position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0,
           backgroundImage: 'radial-gradient(circle at 20% 20%, rgba(215,25,32,0.12) 0%, transparent 50%), radial-gradient(circle at 80% 80%, rgba(215,25,32,0.08) 0%, transparent 50%)',
         }} />
+
+        {/* ── Developer Mode badge — small, unobtrusive, corner only ── */}
+        {developerModeOn && (
+          <div style={{
+            position: 'fixed', top: 10, right: 10, zIndex: 50,
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '4px 8px', borderRadius: 999,
+            background: 'rgba(15,15,15,0.85)', border: '1px solid rgba(245,158,11,0.5)',
+            backdropFilter: 'blur(4px)', pointerEvents: 'none',
+          }}>
+            <span style={{ fontSize: 9, fontWeight: 900, color: '#F59E0B', fontFamily: 'monospace', letterSpacing: 0.5, whiteSpace: 'nowrap' }}>
+              🛠 TEST MODE · NO QR REQUIRED
+            </span>
+          </div>
+        )}
 
         {/* ── Header ── */}
         <div style={{
