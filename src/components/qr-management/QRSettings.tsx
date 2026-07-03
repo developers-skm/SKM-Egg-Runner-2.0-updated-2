@@ -12,7 +12,7 @@ import { useAuth } from '../../auth/AuthProvider';
 import {
   collection, getDocs, writeBatch, doc, getDoc, addDoc, serverTimestamp,
 } from 'firebase/firestore';
-import { db } from '../../services/firebase/firebase';
+import { db, auth } from '../../services/firebase/firebase';
 
 const RED    = '#D71920';
 const DANGER = '#DC2626';
@@ -300,6 +300,23 @@ function ResetModal({ actor, email, onSuccess, onCancel }: ResetModalProps) {
       console.group('[RESET] Full QR Database Reset initiated');
       console.log('[RESET] Actor:', actor, '| Email:', email);
 
+      // Pre-flight: this operation requires role="developer" on the caller's
+      // users/{uid} doc (Firestore rules gate qrCodes/qrOperationLogs writes
+      // on isDeveloper()). Check first so we can give a clear message instead
+      // of a raw "Missing or insufficient permissions" error mid-delete.
+      const uid = auth.currentUser?.uid;
+      if (!uid) {
+        throw new Error('Not authenticated. Please log in again.');
+      }
+      const userSnap = await getDoc(doc(db, 'users', uid));
+      const role = userSnap.exists() ? userSnap.data().role : undefined;
+      if (role !== 'developer') {
+        throw new Error(
+          'Your account does not have developer access, so Firestore is blocking this reset. ' +
+          'Open the DEV tab in Settings and run "grant dev access", then try again.'
+        );
+      }
+
       // Step 1: write audit log BEFORE deletion so we have a record even if
       // the delete partially fails.
       console.log('[RESET] Writing audit log…');
@@ -371,7 +388,12 @@ function ResetModal({ actor, email, onSuccess, onCancel }: ResetModalProps) {
     } catch (e: any) {
       console.error('[RESET] Reset failed:', e?.message);
       console.groupEnd();
-      setErrorMsg(e?.message ?? 'Reset failed. Please try again.');
+      const isPermissionDenied = e?.code === 'permission-denied'
+        || String(e?.message ?? '').toLowerCase().includes('insufficient permissions');
+      setErrorMsg(isPermissionDenied
+        ? 'Your account does not have developer access, so Firestore is blocking this reset. ' +
+          'Open the DEV tab in Settings and run "grant dev access", then try again.'
+        : (e?.message ?? 'Reset failed. Please try again.'));
       setStep('error');
     }
   };
