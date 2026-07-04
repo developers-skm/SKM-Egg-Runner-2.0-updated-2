@@ -21,7 +21,7 @@ import {
 } from '../services/protein/proteinTrackerService';
 import {
   UserIcon, EditIcon, LogoutIcon, TrashIcon, TargetIcon,
-  FlameIcon, EggIcon, SettingsIcon, ChevronRightIcon, HeartIcon,
+  FlameIcon, EggIcon, SettingsIcon, ChevronRightIcon, HeartIcon, GiftIcon,
 } from './Icons';
 import {
   MILESTONES, getClaimedStickers, getClaimedWithDates,
@@ -31,6 +31,7 @@ import {
 import StickerArt from './StickerArt';
 import StickerDetailModal from './StickerDetailModal';
 import HealthProfileScreen from './HealthProfileScreen';
+import RewardsClubScreen from './RewardsClubScreen';
 import {
   isDevUser,
   devAddTestProtein, devAddStreakDays, devResetTodayEgg,
@@ -60,6 +61,7 @@ interface ExtendedProfile {
 export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToMenu }: ProfileScreenProps) {
   const [view,        setView]        = useState<View>('profile');
   const [showHealthProfile, setShowHealthProfile] = useState(false);
+  const [showRewardsClub, setShowRewardsClub] = useState(false);
   const [healthGoalKey, setHealthGoalKey] = useState(0);
   const [streak,      setStreak]      = useState<StreakInfo>({ currentStreak: 0, bestStreak: 0, lastActiveDate: '' });
   const [settings,    setSettings]    = useState<TrackerSettings | null>(null);
@@ -230,6 +232,14 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
       user={user}
       onBack={() => setShowHealthProfile(false)}
       onProfileSaved={() => setHealthGoalKey(k => k + 1)}
+    />
+  );
+
+  // ── REWARDS CLUB ────────────────────────────────────────────
+  if (showRewardsClub) return (
+    <RewardsClubScreen
+      user={user}
+      onBack={() => setShowRewardsClub(false)}
     />
   );
 
@@ -845,6 +855,29 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
             <div style={{ flex: 1 }}>
               <p style={{ fontSize: 14, fontWeight: 900, color: '#fff', margin: 0 }}>Health Intelligence</p>
               <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', margin: '2px 0 0', fontWeight: 600 }}>Your body. Your nutrition. Your journey.</p>
+            </div>
+            <span style={{ fontSize: 11, fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+              View <ChevronRightIcon size={14} color="#fff" />
+            </span>
+          </button>
+
+          {/* Rewards Club card */}
+          <button
+            onClick={() => setShowRewardsClub(true)}
+            style={{
+              width: '100%', marginTop: 10, textAlign: 'left', border: 'none', cursor: 'pointer',
+              background: 'linear-gradient(135deg,#D97706,#B45309)', borderRadius: 20, padding: '16px 18px',
+              boxShadow: '0 6px 20px rgba(217,119,6,0.3)', display: 'flex', alignItems: 'center', gap: 14,
+              position: 'relative', overflow: 'hidden',
+            }}
+          >
+            <div style={{ position: 'absolute', top: -30, right: -30, width: 110, height: 110, borderRadius: '50%', background: 'rgba(255,255,255,0.07)', pointerEvents: 'none' }} />
+            <div style={{ width: 44, height: 44, borderRadius: 13, background: 'rgba(255,255,255,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <GiftIcon size={22} color="#fff" />
+            </div>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 14, fontWeight: 900, color: '#fff', margin: 0 }}>SKM Rewards Club</p>
+              <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', margin: '2px 0 0', fontWeight: 600 }}>Earn points. Unlock coupons. Save on every purchase.</p>
             </div>
             <span style={{ fontSize: 11, fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
               View <ChevronRightIcon size={14} color="#fff" />

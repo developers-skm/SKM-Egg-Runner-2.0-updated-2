@@ -27,6 +27,7 @@ import {
   notifyDuplicateEgg, notifyStreakMilestone, notifyProteinMilestone,
 } from '../services/notifications/notificationService';
 import { recordStreakDay } from '../services/protein/eggStreakService';
+import { awardScanPoints } from '../services/protein/rewardWalletService';
 import ScanCelebrationOverlay from './ScanCelebrationOverlay';
 
 type Phase = 'idle' | 'opening' | 'scanning' | 'processing' | 'success' | 'duplicate' | 'consumed_other' | 'error';
@@ -266,6 +267,9 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
 
       // Record this day in streak history subcollection for calendar view
       recordStreakDay(user.uid).catch(() => {});
+
+      // SKM Rewards Club — award loyalty points for this scan (additive, non-blocking)
+      awardScanPoints(user.uid, streakInfo.currentStreak).catch(() => {});
 
       // Play chick chirp — only on genuine success, never on error/duplicate
       playChickSuccess();

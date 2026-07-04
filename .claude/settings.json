@@ -26,7 +26,8 @@
       "Bash(tasklist //FI \"IMAGENAME eq node.exe\")",
       "Bash(node -e ' *)",
       "Bash(node -e \"const m = require\\('lucide-react'\\); console.log\\(Object.keys\\(m\\).filter\\(k => /^\\(Heart|Egg|Leaf|Shield|Target|TrendingUp|Award|Activity|Droplet|Droplets|Scale|ChevronRight|ChevronLeft\\)$/.test\\(k\\)\\).join\\('\\\\n'\\)\\)\")",
-      "Bash(node -e \"const m = require\\('lucide-react'\\); console.log\\(Object.keys\\(m\\).filter\\(k => /^\\(Pencil|Flame|Edit|Edit2|Edit3|Sparkles\\)$/.test\\(k\\)\\).join\\('\\\\n'\\)\\)\")"
+      "Bash(node -e \"const m = require\\('lucide-react'\\); console.log\\(Object.keys\\(m\\).filter\\(k => /^\\(Pencil|Flame|Edit|Edit2|Edit3|Sparkles\\)$/.test\\(k\\)\\).join\\('\\\\n'\\)\\)\")",
+      "Bash(git --no-pager diff --stat)"
     ]
   }
 }

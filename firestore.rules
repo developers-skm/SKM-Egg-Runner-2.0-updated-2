@@ -316,5 +316,31 @@ service cloud.firestore {
       allow write: if isOwner(uid);
     }
 
+    // ── SKM REWARDS CLUB (loyalty points, membership, coupons) ──
+    match /rewardWallet/{uid} {
+      allow read:  if isOwner(uid) || isDeveloper();
+      allow write: if isOwner(uid);
+    }
+
+    match /rewardTransactions/{uid}/entries/{entryId} {
+      allow read:   if isOwner(uid) || isDeveloper();
+      allow create: if isOwner(uid) && request.resource.data.userId == uid;
+      allow update: if false; // immutable ledger
+      allow delete: if false;
+    }
+
+    match /rewardCoupons/{uid}/redemptions/{couponId} {
+      allow read:   if isOwner(uid) || isDeveloper();
+      allow create: if isOwner(uid) && request.resource.data.userId == uid;
+      allow update: if isOwner(uid); // allows client-side expiry/used status flips
+      allow delete: if false;
+    }
+
+    // Admin-managed reward catalog — any authenticated user reads, only developers write.
+    match /rewardCatalog/{itemId} {
+      allow read:  if isAuth();
+      allow write: if isDeveloper();
+    }
+
   }
 }

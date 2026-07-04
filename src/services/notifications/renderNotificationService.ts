@@ -290,7 +290,31 @@ function buildText(path: string, body: Record<string, unknown>): { title: string
       return {
         title: String(body['title'] ?? 'SKM Announcement'),
         msg:   String(body['message'] ?? body['body'] ?? ''),
-        url:   '/',
+        url:   '/?tab=rewards',
+      };
+    case 'reward_points_earned':
+      return {
+        title: `🎁 +${body['points'] ?? '?'} Reward Points`,
+        msg:   `You now have ${body['currentPoints'] ?? '?'} points. Keep scanning to unlock more coupons!`,
+        url:   '/?tab=rewards',
+      };
+    case 'reward_redeemable':
+      return {
+        title: '🎁 A Reward Is Ready to Redeem',
+        msg:   String(body['message'] ?? 'You have enough points to redeem a coupon.'),
+        url:   '/?tab=rewards',
+      };
+    case 'membership_tier_up':
+      return {
+        title: `⭐ Congratulations! You've Reached ${body['tier'] ?? ''} Membership`,
+        msg:   'Your loyalty just unlocked a higher SKM Rewards Club tier.',
+        url:   '/?tab=rewards',
+      };
+    case 'coupon_expiring':
+      return {
+        title: '⏳ Coupon Expiring Soon',
+        msg:   `Your ${body['rewardTitle'] ?? 'coupon'} expires in ${body['daysLeft'] ?? '?'} day(s). Use it before it's gone.`,
+        url:   '/?tab=rewards',
       };
     default:
       return {
@@ -442,4 +466,16 @@ export const renderNotify = {
 
   mysteryReward: (uid: string) =>
     post('achievement', { uid, type: 'mystery_reward' }),
+
+  rewardPointsEarned: (uid: string, points: number, currentPoints: number) =>
+    post('rewards', { uid, points, currentPoints, type: 'reward_points_earned' }),
+
+  rewardRedeemable: (uid: string, message?: string) =>
+    post('rewards', { uid, message: message ?? '', type: 'reward_redeemable' }),
+
+  membershipTierUp: (uid: string, tier: string) =>
+    post('rewards', { uid, tier, type: 'membership_tier_up' }),
+
+  couponExpiring: (uid: string, rewardTitle: string, daysLeft: number) =>
+    post('rewards', { uid, rewardTitle, daysLeft, type: 'coupon_expiring' }),
 };

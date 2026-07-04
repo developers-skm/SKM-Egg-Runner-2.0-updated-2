@@ -7,10 +7,11 @@ import ConsumptionScreen from '../protein/ConsumptionScreen';
 import AnalyticsScreen   from '../protein/AnalyticsScreen';
 import ProfileScreen     from '../protein/ProfileScreen';
 import EggStreakScreen   from '../protein/EggStreakScreen';
-import { HomeIcon, CameraIcon, FoodLogIcon, AnalyticsIcon, UserIcon } from '../protein/Icons';
+import RewardsClubScreen from '../protein/RewardsClubScreen';
+import { HomeIcon, CameraIcon, FoodLogIcon, AnalyticsIcon, UserIcon, GiftIcon } from '../protein/Icons';
 import NotificationBell from '../components/notifications/NotificationBell';
 
-type Tab = 'dashboard' | 'scan' | 'log' | 'stats' | 'profile' | 'streaks';
+type Tab = 'dashboard' | 'scan' | 'log' | 'stats' | 'profile' | 'streaks' | 'rewards';
 
 interface ProteinTrackerScreenProps { onBack: () => void; }
 
@@ -27,6 +28,7 @@ const PRIMARY_NAV: { key: Tab; label: string; icon: (a: boolean) => React.ReactN
   { key: 'scan',      label: 'Scan',    icon: (a) => <CameraIcon    size={20} color={a ? '#D71920' : '#bbb'} /> },
   { key: 'streaks',   label: 'Streaks', icon: (a) => <FlameNavIcon  active={a} /> },
   { key: 'stats',     label: 'Stats',   icon: (a) => <AnalyticsIcon size={20} color={a ? '#D71920' : '#bbb'} /> },
+  { key: 'rewards',   label: 'Rewards', icon: (a) => <GiftIcon      size={20} color={a ? '#D71920' : '#bbb'} /> },
   { key: 'profile',   label: 'Profile', icon: (a) => <UserIcon      size={20} color={a ? '#D71920' : '#bbb'} /> },
 ];
 
@@ -126,6 +128,7 @@ export default function ProteinTrackerScreen({ onBack }: ProteinTrackerScreenPro
         {tab === 'log'     && <ConsumptionScreen  user={typedUser} refreshKey={refreshKey} onScanQR={() => setTab('scan')} />}
         {tab === 'stats'   && <AnalyticsScreen    user={typedUser} refreshKey={refreshKey} />}
         {tab === 'streaks' && <EggStreakScreen    user={typedUser} refreshKey={refreshKey} onScanQR={() => setTab('scan')} />}
+        {tab === 'rewards' && <RewardsClubScreen  user={typedUser} onBack={() => setTab('dashboard')} />}
         {tab === 'profile' && (
           <ProfileScreen
             user={typedUser}

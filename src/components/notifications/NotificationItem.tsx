@@ -75,6 +75,13 @@ function typeIcon(type: NotificationType | 'login'): React.ReactNode {
       return <Zap size={s} color="#64748B" />;
     case 'new_week_started':
       return <Calendar size={s} color="#10B981" />;
+    case 'reward_points_earned':
+    case 'reward_redeemable':
+      return <Gift size={s} color="#D71920" />;
+    case 'membership_tier_up':
+      return <Crown size={s} color="#D97706" />;
+    case 'coupon_expiring':
+      return <Sparkles size={s} color="#F59E0B" />;
     default:
       return <Bell size={s} color="#9CA3AF" />;
   }
@@ -132,6 +139,13 @@ function typeAccent(type: NotificationType | 'login'): string {
     case 'morning_reminder':
     case 'afternoon_reminder':
       return '#D71920';
+    case 'reward_points_earned':
+    case 'reward_redeemable':
+      return '#D71920';
+    case 'membership_tier_up':
+      return '#D97706';
+    case 'coupon_expiring':
+      return '#F59E0B';
     default:
       return '#9CA3AF';
   }

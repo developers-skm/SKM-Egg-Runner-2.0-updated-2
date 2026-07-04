@@ -313,6 +313,57 @@ export async function notifyProteinMilestone(userId: string, total: number): Pro
   renderNotify.proteinMilestone(userId, total).catch(() => {});
 }
 
+export async function notifyRewardPointsEarned(userId: string, points: number, currentPoints: number): Promise<void> {
+  await createNotification({
+    userId,
+    title: `🎁 +${points} Reward Points`,
+    message: `You now have ${currentPoints} points. Keep scanning to unlock more coupons!`,
+    type: 'reward_points_earned',
+    priority: 'low',
+    actions: [{ label: 'View Rewards', actionType: 'view_dashboard' }],
+    metadata: { points, currentPoints },
+  });
+  renderNotify.rewardPointsEarned(userId, points, currentPoints).catch(() => {});
+}
+
+export async function notifyRewardRedeemable(userId: string, message: string): Promise<void> {
+  await createNotification({
+    userId,
+    title: '🎁 A Reward Is Ready to Redeem',
+    message,
+    type: 'reward_redeemable',
+    priority: 'normal',
+    actions: [{ label: 'Redeem Now', actionType: 'view_dashboard' }],
+  });
+  renderNotify.rewardRedeemable(userId, message).catch(() => {});
+}
+
+export async function notifyMembershipTierUp(userId: string, tier: string): Promise<void> {
+  await createNotification({
+    userId,
+    title: `⭐ Congratulations! You've Reached ${tier} Membership`,
+    message: 'Your loyalty just unlocked a higher SKM Rewards Club tier.',
+    type: 'membership_tier_up',
+    priority: 'high',
+    actions: [{ label: 'View Rewards', actionType: 'view_dashboard' }],
+    metadata: { tier },
+  });
+  renderNotify.membershipTierUp(userId, tier).catch(() => {});
+}
+
+export async function notifyCouponExpiring(userId: string, rewardTitle: string, daysLeft: number): Promise<void> {
+  await createNotification({
+    userId,
+    title: '⏳ Coupon Expiring Soon',
+    message: `Your ${rewardTitle} expires in ${daysLeft} day(s). Use it before it's gone.`,
+    type: 'coupon_expiring',
+    priority: 'normal',
+    actions: [{ label: 'View Coupons', actionType: 'view_dashboard' }],
+    metadata: { rewardTitle, daysLeft },
+  });
+  renderNotify.couponExpiring(userId, rewardTitle, daysLeft).catch(() => {});
+}
+
 export async function notifyChampionRank(userId: string, rank: number): Promise<void> {
   await createNotification({
     userId,

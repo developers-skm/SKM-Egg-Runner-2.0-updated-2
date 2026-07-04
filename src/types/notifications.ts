@@ -51,6 +51,11 @@ export type NotificationType =
   | 'missed_three_days'
   // Profile progress
   | 'weekly_summary'
+  // Rewards Club
+  | 'reward_points_earned'
+  | 'reward_redeemable'
+  | 'membership_tier_up'
+  | 'coupon_expiring'
   // Admin
   | 'admin_announcement'
   | 'system_update'
