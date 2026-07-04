@@ -369,3 +369,23 @@ export const MailIcon = ({ size = 20, color = 'currentColor', ...p }: IconProps)
     <polyline points="22 6 12 13 2 6"/>
   </svg>
 );
+
+export const HeartIcon = ({ size = 20, color = 'currentColor', ...p }: IconProps) => (
+  <svg {...base(size, color, p)}>
+    <path d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21.2l7.8-7.8 1-1a5.5 5.5 0 000-7.8z"/>
+  </svg>
+);
+
+export const RulerIcon = ({ size = 20, color = 'currentColor', ...p }: IconProps) => (
+  <svg {...base(size, color, p)}>
+    <path d="M3 17l6-6 4 4L21 7"/>
+    <path d="M3 21h18"/>
+  </svg>
+);
+
+export const ScaleIcon = ({ size = 20, color = 'currentColor', ...p }: IconProps) => (
+  <svg {...base(size, color, p)}>
+    <rect x="3" y="3" width="18" height="18" rx="3"/>
+    <circle cx="12" cy="12" r="4"/>
+  </svg>
+);

@@ -310,5 +310,11 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ── SMART HEALTH PROFILE (BMI + personalized protein goal) ──
+    match /health_profiles/{uid} {
+      allow read:  if isOwner(uid) || isDeveloper();
+      allow write: if isOwner(uid);
+    }
+
   }
 }

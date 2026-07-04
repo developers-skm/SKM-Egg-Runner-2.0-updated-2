@@ -7,6 +7,7 @@ import {
   type DailyStats, type StreakInfo, type WeeklyData, type ProteinLogEntry, type TrackerSettings,
   todayKey,
 } from '../services/protein/proteinTrackerService';
+import { getHealthProfile, effectiveDailyGoal } from '../services/protein/healthProfileService';
 import {
   EggIcon, FlameIcon, TargetIcon, TrendUpIcon, CameraIcon,
   FoodLogIcon, AnalyticsIcon, ChevronRightIcon, SunIcon, MoonIcon,
@@ -27,26 +28,29 @@ export default function DashboardScreen({ user, onScanQR, onViewAnalytics, onVie
   const [weekData,   setWeekData]   = useState<WeeklyData[]>([]);
   const [settings,   setSettings]   = useState<TrackerSettings | null>(null);
   const [recent,     setRecent]     = useState<ProteinLogEntry[]>([]);
+  const [personalGoal, setPersonalGoal] = useState<number | null>(null);
   const [loading,    setLoading]    = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ts, si, wd, stg, rc] = await Promise.all([
+      const [ts, si, wd, stg, rc, hp] = await Promise.all([
         getTodayStats(user.uid),
         getStreakInfo(user.uid),
         getWeeklyData(user.uid),
         getTrackerSettings(user.uid),
         getRecentEntries(user.uid, 5),
+        getHealthProfile(user.uid),
       ]);
       setTodayStats(ts); setStreak(si); setWeekData(wd); setSettings(stg); setRecent(rc);
+      setPersonalGoal(hp ? effectiveDailyGoal(hp) : null);
     } catch (e) { console.error('[Dashboard]', e); }
     finally { setLoading(false); }
   }, [user.uid]);
 
   useEffect(() => { load(); }, [load, refreshKey]);
 
-  const goal      = settings?.dailyGoal ?? 60;
+  const goal      = personalGoal ?? settings?.dailyGoal ?? 60;
   const consumed  = todayStats?.totalProtein ?? 0;
   const eggs      = todayStats?.totalEggs    ?? 0;
   const pct       = Math.min(100, Math.round((consumed / goal) * 100));

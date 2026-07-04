@@ -21,7 +21,7 @@ import {
 } from '../services/protein/proteinTrackerService';
 import {
   UserIcon, EditIcon, LogoutIcon, TrashIcon, TargetIcon,
-  FlameIcon, EggIcon, SettingsIcon, ChevronRightIcon,
+  FlameIcon, EggIcon, SettingsIcon, ChevronRightIcon, HeartIcon,
 } from './Icons';
 import {
   MILESTONES, getClaimedStickers, getClaimedWithDates,
@@ -30,6 +30,7 @@ import {
 } from '../services/protein/milestoneRewardService';
 import StickerArt from './StickerArt';
 import StickerDetailModal from './StickerDetailModal';
+import HealthProfileScreen from './HealthProfileScreen';
 import {
   isDevUser,
   devAddTestProtein, devAddStreakDays, devResetTodayEgg,
@@ -58,6 +59,8 @@ interface ExtendedProfile {
 
 export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToMenu }: ProfileScreenProps) {
   const [view,        setView]        = useState<View>('profile');
+  const [showHealthProfile, setShowHealthProfile] = useState(false);
+  const [healthGoalKey, setHealthGoalKey] = useState(0);
   const [streak,      setStreak]      = useState<StreakInfo>({ currentStreak: 0, bestStreak: 0, lastActiveDate: '' });
   const [settings,    setSettings]    = useState<TrackerSettings | null>(null);
   const [userDoc,     setUserDoc]     = useState<Record<string, unknown>>({});
@@ -219,6 +222,15 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
       <div style={{ width: 32, height: 32, borderRadius: '50%', border: '3px solid #FCE8E8', borderTopColor: '#D71920', animation: 'spin 0.8s linear infinite' }} />
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
+  );
+
+  // ── HEALTH PROFILE ─────────────────────────────────────────
+  if (showHealthProfile) return (
+    <HealthProfileScreen
+      user={user}
+      onBack={() => setShowHealthProfile(false)}
+      onProfileSaved={() => setHealthGoalKey(k => k + 1)}
+    />
   );
 
   // ── DELETE CONFIRM ─────────────────────────────────────────
@@ -815,6 +827,29 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
               <style>{`@keyframes dev-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }`}</style>
             </div>
           )}
+
+          {/* Health Profile card */}
+          <button
+            onClick={() => setShowHealthProfile(true)}
+            style={{
+              width: '100%', marginTop: 14, textAlign: 'left', border: 'none', cursor: 'pointer',
+              background: 'linear-gradient(135deg,#D71920,#B31217)', borderRadius: 20, padding: '16px 18px',
+              boxShadow: '0 6px 20px rgba(215,25,32,0.3)', display: 'flex', alignItems: 'center', gap: 14,
+              position: 'relative', overflow: 'hidden',
+            }}
+          >
+            <div style={{ position: 'absolute', top: -30, right: -30, width: 110, height: 110, borderRadius: '50%', background: 'rgba(255,255,255,0.07)', pointerEvents: 'none' }} />
+            <div style={{ width: 44, height: 44, borderRadius: 13, background: 'rgba(255,255,255,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <HeartIcon size={22} color="#fff" />
+            </div>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 14, fontWeight: 900, color: '#fff', margin: 0 }}>Health Intelligence</p>
+              <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', margin: '2px 0 0', fontWeight: 600 }}>Your body. Your nutrition. Your journey.</p>
+            </div>
+            <span style={{ fontSize: 11, fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+              View <ChevronRightIcon size={14} color="#fff" />
+            </span>
+          </button>
 
           {/* Account actions */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
