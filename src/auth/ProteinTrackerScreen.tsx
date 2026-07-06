@@ -128,7 +128,7 @@ export default function ProteinTrackerScreen({ onBack }: ProteinTrackerScreenPro
         {tab === 'log'     && <ConsumptionScreen  user={typedUser} refreshKey={refreshKey} onScanQR={() => setTab('scan')} />}
         {tab === 'stats'   && <AnalyticsScreen    user={typedUser} refreshKey={refreshKey} />}
         {tab === 'streaks' && <EggStreakScreen    user={typedUser} refreshKey={refreshKey} onScanQR={() => setTab('scan')} />}
-        {tab === 'rewards' && <RewardsClubScreen  user={typedUser} onBack={() => setTab('dashboard')} />}
+        {tab === 'rewards' && <RewardsClubScreen  user={typedUser} onBack={() => setTab('dashboard')} onScanQR={() => setTab('scan')} />}
         {tab === 'profile' && (
           <ProfileScreen
             user={typedUser}

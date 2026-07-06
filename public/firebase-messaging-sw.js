@@ -16,7 +16,7 @@ importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-com
 
 // ─── App shell cache ──────────────────────────────────────────────────────────
 
-const CACHE = 'skm-v7';
+const CACHE = 'skm-v8';
 
 const PRECACHE = [
   '/',
@@ -48,6 +48,13 @@ self.addEventListener('fetch', function(event) {
 
   var url = new URL(event.request.url);
 
+  // Never intercept Vite's dev server internals (HMR client, module graph, source files).
+  // Caching these freezes whatever was first loaded and breaks hot-reload / rebuilds.
+  if (url.pathname.startsWith('/@vite') || url.pathname.startsWith('/@react-refresh')
+    || url.pathname.startsWith('/src/') || url.searchParams.has('t')) {
+    return;
+  }
+
   // Navigation: network-first, fall back to cached index.html
   if (event.request.mode === 'navigate') {
     event.respondWith(
@@ -56,7 +63,8 @@ self.addEventListener('fetch', function(event) {
     return;
   }
 
-  // Static assets: cache-first
+  // Static assets: cache-first (safe in production — Vite content-hashes these filenames,
+  // so a new build always gets a new URL and cache-first naturally serves the latest build).
   if (url.pathname.match(/\.(png|jpg|jpeg|svg|gif|webp|ico|woff2?|ttf|css|js)$/)) {
     event.respondWith(
       caches.match(event.request).then(function(cached) {

@@ -1,8 +1,9 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import type { User } from 'firebase/auth';
 import {
   ChevronLeft, Gift, Coins, Crown, Ticket, TrendingUp, ShieldCheck,
   Clock, CheckCircle2, XCircle, Flame, Award, Sparkles, ChevronRight,
+  Egg, Lock, Zap, ArrowRight, QrCode, Target,
 } from 'lucide-react';
 import {
   getRewardWallet, calcTierProgress, type RewardWallet,
@@ -14,9 +15,13 @@ import {
   getRewardCatalog, redeemReward, getUserCoupons, markCouponUsed,
   type RewardCatalogItem, type RewardCoupon, type CouponStatus,
 } from '../services/protein/rewardCouponService';
+import { getTodayStats } from '../services/protein/proteinTrackerService';
+import { MEMBERSHIP_TIERS, type MembershipTier } from '../constants/rewards';
+
 interface RewardsClubScreenProps {
   user: User;
   onBack: () => void;
+  onScanQR?: () => void;
 }
 
 type HubTab = 'overview' | 'rewards' | 'coupons' | 'history';
@@ -29,13 +34,50 @@ const HUB_TABS: { key: HubTab; label: string }[] = [
   { key: 'history',  label: 'History' },
 ];
 
-export default function RewardsClubScreen({ user, onBack }: RewardsClubScreenProps) {
+// ── Egg-range visual identity (icon-based product art — no stock photos in repo) ──
+const RANGE_THEME: Record<string, { color: string; color2: string; label: string }> = {
+  'SKM Best Fresh': { color: '#D71920', color2: '#B31217', label: 'Fresh' },
+  'SKM Best Plus':  { color: '#F59E0B', color2: '#D97706', label: 'Plus' },
+  'SKM Best Brown': { color: '#92400E', color2: '#78350F', label: 'Brown' },
+  'Premium Range':  { color: '#7C3AED', color2: '#5B21B6', label: 'Premium' },
+};
+function rangeTheme(range: string) {
+  return RANGE_THEME[range] ?? { color: '#D71920', color2: '#B31217', label: range };
+}
+
+/** Smoothly counts up to `target` whenever it changes. */
+function useCountUp(target: number, durationMs = 700): number {
+  const [value, setValue] = useState(target);
+  const fromRef = useRef(target);
+  useEffect(() => {
+    const from = fromRef.current;
+    if (from === target) return;
+    const start = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / durationMs);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setValue(Math.round(from + (target - from) * eased));
+      if (t < 1) raf = requestAnimationFrame(tick);
+      else fromRef.current = target;
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, durationMs]);
+  return value;
+}
+
+export default function RewardsClubScreen({ user, onBack, onScanQR }: RewardsClubScreenProps) {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<HubTab>('overview');
   const [wallet, setWallet] = useState<RewardWallet | null>(null);
   const [catalog, setCatalog] = useState<RewardCatalogItem[]>([]);
   const [coupons, setCoupons] = useState<RewardCoupon[]>([]);
   const [transactions, setTransactions] = useState<RewardTransaction[]>([]);
+  const [todayEggs, setTodayEggs] = useState(0);
+  const [todayProtein, setTodayProtein] = useState(0);
+  const [todayGoal, setTodayGoal] = useState(0);
+  const [categoryFilter, setCategoryFilter] = useState<string>('All');
   const [couponFilter, setCouponFilter] = useState<CouponFilterTab>('available');
 
   const [confirmItem, setConfirmItem] = useState<RewardCatalogItem | null>(null);
@@ -46,13 +88,17 @@ export default function RewardsClubScreen({ user, onBack }: RewardsClubScreenPro
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [w, cat, cp, tx] = await Promise.all([
+      const [w, cat, cp, tx, today] = await Promise.all([
         getRewardWallet(user.uid),
         getRewardCatalog(),
         getUserCoupons(user.uid),
         getRecentRewardTransactions(user.uid, 30),
+        getTodayStats(user.uid),
       ]);
       setWallet(w); setCatalog(cat); setCoupons(cp); setTransactions(tx);
+      setTodayEggs(today?.totalEggs ?? 0);
+      setTodayProtein(today?.totalProtein ?? 0);
+      setTodayGoal(today?.goal ?? 0);
     } catch (e) { console.error('[RewardsClub]', e); }
     finally { setLoading(false); }
   }, [user.uid]);
@@ -79,6 +125,31 @@ export default function RewardsClubScreen({ user, onBack }: RewardsClubScreenPro
     await load();
   };
 
+  const todayPointsEarned = useMemo(() => {
+    const today = new Date().toLocaleDateString('sv-SE');
+    return transactions
+      .filter(t => t.points > 0 && t.createdAt?.toDate && t.createdAt.toDate().toLocaleDateString('sv-SE') === today)
+      .reduce((sum, t) => sum + t.points, 0);
+  }, [transactions]);
+
+  const categories = useMemo(() => {
+    const ranges = Array.from(new Set(catalog.map(c => c.range)));
+    return ['All', ...ranges];
+  }, [catalog]);
+
+  const visibleCatalog = useMemo(() => {
+    if (categoryFilter === 'All') return catalog;
+    return catalog.filter(c => c.range === categoryFilter);
+  }, [catalog, categoryFilter]);
+
+  // "Next reward" — cheapest item the user hasn't unlocked yet.
+  const nextReward = useMemo(() => {
+    if (!wallet || catalog.length === 0) return null;
+    const locked = catalog.filter(c => c.pointsCost > wallet.currentPoints).sort((a, b) => a.pointsCost - b.pointsCost);
+    if (locked.length > 0) return locked[0];
+    return [...catalog].sort((a, b) => a.pointsCost - b.pointsCost)[0] ?? null;
+  }, [catalog, wallet]);
+
   if (loading || !wallet) return (
     <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ width: 32, height: 32, borderRadius: '50%', border: '3px solid #FCE8E8', borderTopColor: '#D71920', animation: 'spin 0.8s linear infinite' }} />
@@ -88,6 +159,7 @@ export default function RewardsClubScreen({ user, onBack }: RewardsClubScreenPro
 
   const progress = calcTierProgress(wallet.lifetimePoints);
   const filteredCoupons = coupons.filter(c => c.status === couponFilter);
+  const availableCoupons = coupons.filter(c => c.status === 'available');
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#FAFAFA' }}>
@@ -98,16 +170,27 @@ export default function RewardsClubScreen({ user, onBack }: RewardsClubScreenPro
         padding: '18px 18px 0', flexShrink: 0, position: 'relative', overflow: 'hidden',
       }}>
         <div style={{ position: 'absolute', top: -50, right: -50, width: 180, height: 180, borderRadius: '50%', background: 'rgba(255,255,255,0.05)', pointerEvents: 'none' }} />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-          <button onClick={onBack} style={{
-            width: 34, height: 34, borderRadius: 10, background: 'rgba(255,255,255,0.15)', border: 'none',
-            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <button onClick={onBack} style={{
+              width: 34, height: 34, borderRadius: 10, background: 'rgba(255,255,255,0.15)', border: 'none',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+            }}>
+              <ChevronLeft size={18} color="#fff" />
+            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <img src="/egg mus_Image_v5vrg3v5vrg3v5vr-removebg-preview.png" alt="SKM"
+                style={{ width: 22, height: 22, objectFit: 'contain' }} />
+              <h2 style={{ fontSize: 17, fontWeight: 900, color: '#fff', margin: 0 }}>SKM Protein</h2>
+            </div>
+          </div>
+
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 5, background: 'rgba(255,255,255,0.16)',
+            borderRadius: 18, padding: '6px 12px 6px 9px',
           }}>
-            <ChevronLeft size={18} color="#fff" />
-          </button>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Gift size={20} color="#fff" />
-            <h2 style={{ fontSize: 17, fontWeight: 900, color: '#fff', margin: 0 }}>SKM Rewards Club</h2>
+            <Coins size={13} color="#FFD97A" />
+            <RewardPointPill points={wallet.currentPoints} />
           </div>
         </div>
 
@@ -134,11 +217,28 @@ export default function RewardsClubScreen({ user, onBack }: RewardsClubScreenPro
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px 90px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
         {tab === 'overview' && (
-          <OverviewTab wallet={wallet} progress={progress} coupons={coupons} transactions={transactions} onViewCoupons={() => setTab('coupons')} />
+          <OverviewTab
+            wallet={wallet}
+            progress={progress}
+            nextReward={nextReward}
+            todayEggs={todayEggs}
+            todayProtein={todayProtein}
+            todayGoal={todayGoal}
+            todayPointsEarned={todayPointsEarned}
+            onScanQR={onScanQR}
+            onViewRewards={() => setTab('rewards')}
+          />
         )}
 
         {tab === 'rewards' && (
-          <RewardsTab catalog={catalog} wallet={wallet} onSelect={item => { setRedeemErr(''); setConfirmItem(item); }} />
+          <RewardsTab
+            catalog={visibleCatalog}
+            categories={categories}
+            categoryFilter={categoryFilter}
+            onCategoryChange={setCategoryFilter}
+            wallet={wallet}
+            onSelect={item => { setRedeemErr(''); setConfirmItem(item); }}
+          />
         )}
 
         {tab === 'coupons' && (
@@ -177,175 +277,366 @@ export default function RewardsClubScreen({ user, onBack }: RewardsClubScreenPro
       )}
 
       <style>{`
-        @keyframes hiFadeIn {
-          from { opacity: 0; transform: translateY(6px); }
-          to   { opacity: 1; transform: translateY(0); }
+        @keyframes hiFadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes popIn { from { opacity: 0; transform: scale(0.5); } to { opacity: 1; transform: scale(1); } }
+        @keyframes glowPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(215,25,32,0.35); } 50% { box-shadow: 0 0 0 6px rgba(215,25,32,0); } }
+        @keyframes heroGlow { 0%,100% { box-shadow: 0 12px 32px rgba(215,25,32,0.28); } 50% { box-shadow: 0 12px 40px rgba(215,25,32,0.4); } }
+        .rc-product-card { transition: transform 200ms ease, box-shadow 200ms ease; }
+        .rc-product-card:hover { transform: translateY(-3px) scale(1.015); box-shadow: 0 10px 24px rgba(0,0,0,0.1); }
+        .rc-coupon-card { transition: transform 200ms ease, box-shadow 200ms ease; }
+        .rc-coupon-card:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.08); }
+        .rc-btn-ripple { position: relative; overflow: hidden; }
+        .rc-btn-ripple:active::after {
+          content: ''; position: absolute; inset: 0; background: rgba(255,255,255,0.35);
+          animation: rcRipple 380ms ease-out;
         }
-        @keyframes popIn {
-          from { opacity: 0; transform: scale(0.5); }
-          to   { opacity: 1; transform: scale(1); }
-        }
+        @keyframes rcRipple { from { opacity: 1; } to { opacity: 0; } }
       `}</style>
     </div>
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// Overview
-// ─────────────────────────────────────────────────────────────
-
-function OverviewTab({ wallet, progress, coupons, transactions, onViewCoupons }: {
-  wallet: RewardWallet;
-  progress: ReturnType<typeof calcTierProgress>;
-  coupons: RewardCoupon[];
-  transactions: RewardTransaction[];
-  onViewCoupons: () => void;
-}) {
-  const available = coupons.filter(c => c.status === 'available');
-  const grad = `linear-gradient(135deg, ${progress.tier.color}, ${progress.tier.color2})`;
-
+function RewardPointPill({ points }: { points: number }) {
+  const animated = useCountUp(points);
   return (
-    <>
-      {/* MEMBERSHIP CARD */}
-      <div style={{ background: grad, borderRadius: 22, padding: 18, animation: 'hiFadeIn 400ms ease', position: 'relative', overflow: 'hidden' }}>
-        <div style={{ position: 'absolute', top: -30, right: -30, width: 140, height: 140, borderRadius: '50%', background: 'rgba(255,255,255,0.12)', pointerEvents: 'none' }} />
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Crown size={20} color="#fff" />
-            <span style={{ fontSize: 18, fontWeight: 900, color: '#fff' }}>{progress.tier.tier}</span>
-          </div>
-          <span style={{ fontSize: 10, fontWeight: 800, color: 'rgba(255,255,255,0.75)', textTransform: 'uppercase', letterSpacing: 0.5 }}>Member</span>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 6 }}>
-          <span style={{ fontSize: 30, fontWeight: 900, color: '#fff' }}>{wallet.currentPoints}</span>
-          <span style={{ fontSize: 12, fontWeight: 700, color: 'rgba(255,255,255,0.7)' }}>points available</span>
-        </div>
-
-        {progress.next ? (
-          <>
-            <div style={{ height: 8, background: 'rgba(0,0,0,0.2)', borderRadius: 12, overflow: 'hidden', marginTop: 10 }}>
-              <div style={{ height: '100%', width: `${progress.pctToNext}%`, background: '#fff', borderRadius: 12, transition: 'width 500ms ease' }} />
-            </div>
-            <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.85)', margin: '8px 0 0', fontWeight: 700 }}>
-              {progress.tier.tier} {wallet.lifetimePoints} / {progress.next.minPoints} — {progress.pointsToNext} Points to {progress.next.tier}
-            </p>
-          </>
-        ) : (
-          <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.85)', margin: '8px 0 0', fontWeight: 700 }}>
-            You've reached the highest membership tier — Diamond.
-          </p>
-        )}
-      </div>
-
-      {/* STATS ROW */}
-      <div style={{ display: 'flex', gap: 10 }}>
-        <StatBox label="Lifetime Points" value={String(wallet.lifetimePoints)} icon={<TrendingUp size={13} color="#D71920" />} />
-        <StatBox label="Redeemed" value={String(wallet.totalRedeemed)} icon={<Coins size={13} color="#D97706" />} />
-        <StatBox label="Coupons" value={String(available.length)} icon={<Ticket size={13} color="#16A34A" />} />
-      </div>
-
-      {/* AVAILABLE COUPONS TEASER */}
-      {available.length > 0 && (
-        <button onClick={onViewCoupons} style={{
-          background: '#fff', borderRadius: 20, padding: '14px 16px', boxShadow: '0 2px 10px rgba(0,0,0,0.06)',
-          border: 'none', cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 10,
-          animation: 'hiFadeIn 500ms ease',
-        }}>
-          <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FCE8E8', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            <Ticket size={15} color="#D71920" />
-          </div>
-          <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: '#444' }}>
-            You have {available.length} coupon{available.length === 1 ? '' : 's'} ready to use.
-          </span>
-          <ChevronRight size={16} color="#ccc" />
-        </button>
-      )}
-
-      {/* RECENT REWARDS */}
-      <div style={{ background: '#fff', borderRadius: 20, padding: 18, boxShadow: '0 2px 10px rgba(0,0,0,0.06)', animation: 'hiFadeIn 550ms ease' }}>
-        <p style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A', margin: '0 0 10px' }}>Recent Rewards</p>
-        {transactions.length === 0 ? (
-          <p style={{ fontSize: 12, color: '#999', margin: 0 }}>Scan an SKM egg to start earning points.</p>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {transactions.slice(0, 5).map(t => (
-              <TransactionRow key={t.id} tx={t} />
-            ))}
-          </div>
-        )}
-      </div>
-    </>
+    <span style={{ fontSize: 13, fontWeight: 900, color: '#fff' }}>{animated} <span style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.8)' }}>pts</span></span>
   );
 }
 
 // ─────────────────────────────────────────────────────────────
-// Rewards catalog
+// TAB 1 — Overview (motivate; fits ~one screen)
 // ─────────────────────────────────────────────────────────────
 
-function RewardsTab({ catalog, wallet, onSelect }: {
+function OverviewTab({
+  wallet, progress, nextReward, todayEggs, todayProtein, todayGoal, todayPointsEarned, onScanQR, onViewRewards,
+}: {
+  wallet: RewardWallet;
+  progress: ReturnType<typeof calcTierProgress>;
+  nextReward: RewardCatalogItem | null;
+  todayEggs: number;
+  todayProtein: number;
+  todayGoal: number;
+  todayPointsEarned: number;
+  onScanQR?: () => void;
+  onViewRewards: () => void;
+}) {
+  return (
+    <>
+      {/* 1. HERO REWARD CARD */}
+      <HeroRewardCard wallet={wallet} progress={progress} nextReward={nextReward} onScanQR={onScanQR} />
+
+      {/* 2. TODAY'S PROGRESS */}
+      <div style={{ background: '#fff', borderRadius: 20, padding: 16, boxShadow: '0 2px 10px rgba(0,0,0,0.06)', animation: 'hiFadeIn 450ms ease' }}>
+        <p style={{ fontSize: 11, fontWeight: 800, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 12px' }}>Today's Progress</p>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <MiniStat icon={<Egg size={14} color="#D71920" />} value={String(todayEggs)} label="Eggs Scanned" />
+          <MiniStat icon={<Target size={14} color="#16A34A" />} value={`${todayProtein}${todayGoal ? `/${todayGoal}` : ''}g`} label="Protein" />
+          <MiniStat icon={<Coins size={14} color="#D97706" />} value={`+${todayPointsEarned}`} label="Points Earned" />
+        </div>
+      </div>
+
+      {/* 3. MEMBERSHIP JOURNEY */}
+      <RewardJourney currentTier={wallet.membership} />
+
+      {/* 4. QUICK REWARD PREVIEW — one card only */}
+      {nextReward && (
+        <div>
+          <p style={{ fontSize: 11, fontWeight: 800, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 10px' }}>Quick Reward Preview</p>
+          <button onClick={onViewRewards} className="rc-btn-ripple" style={{
+            width: '100%', textAlign: 'left', border: '1px solid #F5F5F5', cursor: 'pointer',
+            background: '#fff', borderRadius: 18, padding: '14px 16px', boxShadow: '0 2px 10px rgba(0,0,0,0.06)',
+            display: 'flex', alignItems: 'center', gap: 12, animation: 'hiFadeIn 550ms ease',
+          }}>
+            <div style={{
+              width: 46, height: 46, borderRadius: 14, flexShrink: 0,
+              background: `linear-gradient(135deg, ${rangeTheme(nextReward.range).color}, ${rangeTheme(nextReward.range).color2})`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Egg size={22} color="rgba(255,255,255,0.95)" strokeWidth={1.5} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 13, fontWeight: 800, color: '#1A1A1A', margin: 0 }}>{nextReward.productName}</p>
+              <p style={{ fontSize: 11, color: '#999', margin: '2px 0 0', fontWeight: 600 }}>₹{nextReward.discountAmount} OFF · {nextReward.pointsCost} Points</p>
+            </div>
+            <span style={{ fontSize: 11, fontWeight: 800, color: '#D71920', display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
+              View Rewards <ChevronRight size={14} color="#D71920" />
+            </span>
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+function MiniStat({ icon, value, label }: { icon: React.ReactNode; value: string; label: string }) {
+  return (
+    <div style={{ flex: 1, background: '#FAFAFA', borderRadius: 14, padding: '10px 6px', textAlign: 'center' }}>
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 5 }}>{icon}</div>
+      <p style={{ fontSize: 14, fontWeight: 900, color: '#1A1A1A', margin: 0 }}>{value}</p>
+      <p style={{ fontSize: 8, fontWeight: 700, color: '#bbb', textTransform: 'uppercase', letterSpacing: 0.3, margin: '3px 0 0' }}>{label}</p>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Hero reward card
+// ─────────────────────────────────────────────────────────────
+
+function HeroRewardCard({ wallet, progress, nextReward, onScanQR }: {
+  wallet: RewardWallet;
+  progress: ReturnType<typeof calcTierProgress>;
+  nextReward: RewardCatalogItem | null;
+  onScanQR?: () => void;
+}) {
+  const animatedPoints = useCountUp(wallet.currentPoints);
+  const tierEmoji: Record<MembershipTier, string> = { Bronze: '🥉', Silver: '🥈', Gold: '🥇', Platinum: '💠', Diamond: '💎' };
+
+  const pct = nextReward ? Math.min(100, Math.round((wallet.currentPoints / nextReward.pointsCost) * 100)) : 0;
+  const remaining = nextReward ? Math.max(0, nextReward.pointsCost - wallet.currentPoints) : 0;
+  const unlocked = nextReward ? wallet.currentPoints >= nextReward.pointsCost : false;
+
+  return (
+    <div style={{
+      position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 20,
+      background: 'linear-gradient(150deg,#D71920 0%,#B31217 50%,#7C1015 100%)',
+      animation: 'hiFadeIn 400ms ease, heroGlow 3.5s ease-in-out infinite',
+    }}>
+      <div style={{ position: 'absolute', top: -60, right: -40, width: 200, height: 200, borderRadius: '50%', background: 'rgba(255,255,255,0.06)', pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', bottom: -50, left: -30, width: 140, height: 140, borderRadius: '50%', background: 'rgba(255,255,255,0.05)', pointerEvents: 'none' }} />
+      {/* soft reflection streak */}
+      <div style={{ position: 'absolute', top: -50, left: -10, width: '120%', height: 90, borderRadius: '50%', background: 'rgba(255,255,255,0.08)', transform: 'rotate(-6deg)', pointerEvents: 'none' }} />
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, position: 'relative' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <span style={{ fontSize: 17 }}>{tierEmoji[wallet.membership]}</span>
+          <span style={{ fontSize: 13, fontWeight: 800, color: '#fff' }}>{wallet.membership} Member</span>
+        </div>
+        <div style={{
+          width: 34, height: 34, borderRadius: 11, background: 'rgba(255,255,255,0.18)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <ShieldCheck size={15} color="#fff" />
+        </div>
+      </div>
+
+      <p style={{ fontSize: 10, fontWeight: 800, color: 'rgba(255,255,255,0.65)', textTransform: 'uppercase', letterSpacing: 0.8, margin: '0 0 3px', position: 'relative' }}>Reward Balance</p>
+      <p style={{ fontSize: 34, fontWeight: 900, color: '#fff', margin: '0 0 16px', lineHeight: 1, position: 'relative' }}>{animatedPoints} <span style={{ fontSize: 14, fontWeight: 700, color: 'rgba(255,255,255,0.7)' }}>pts</span></p>
+
+      {nextReward && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, position: 'relative' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.85)' }}>
+              Next Reward: <span style={{ color: '#fff', fontWeight: 900 }}>₹{nextReward.discountAmount} OFF</span>
+            </span>
+            <span style={{ fontSize: 11, fontWeight: 800, color: '#FFD97A' }}>
+              {unlocked ? 'Ready!' : `${remaining} pts left`}
+            </span>
+          </div>
+          <div style={{ height: 10, background: 'rgba(0,0,0,0.25)', borderRadius: 12, overflow: 'hidden', position: 'relative' }}>
+            <div style={{
+              height: '100%', width: `${pct}%`, borderRadius: 12, transition: 'width 700ms cubic-bezier(0.34,1.56,0.4,1)',
+              background: 'linear-gradient(90deg,#FFD97A,#FFB020)',
+            }} />
+          </div>
+        </>
+      )}
+
+      <button
+        className="rc-btn-ripple"
+        onClick={onScanQR}
+        disabled={!onScanQR}
+        style={{
+          marginTop: 18, width: '100%', padding: '14px 0', borderRadius: 14, border: 'none',
+          background: '#fff', color: '#D71920', fontWeight: 900, fontSize: 14,
+          cursor: onScanQR ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+          boxShadow: '0 6px 16px rgba(0,0,0,0.15)', position: 'relative',
+        }}
+      >
+        <QrCode size={16} color="#D71920" /> Continue Scanning <ArrowRight size={15} color="#D71920" />
+      </button>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Membership journey — horizontal tier timeline
+// ─────────────────────────────────────────────────────────────
+
+function RewardJourney({ currentTier }: { currentTier: MembershipTier }) {
+  const currentIdx = MEMBERSHIP_TIERS.findIndex(t => t.tier === currentTier);
+
+  return (
+    <div style={{
+      background: '#fff', borderRadius: 20, padding: '16px 12px', boxShadow: '0 2px 10px rgba(0,0,0,0.06)',
+      animation: 'hiFadeIn 500ms ease',
+    }}>
+      <p style={{ fontSize: 11, fontWeight: 800, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 12px 4px' }}>Membership Journey</p>
+      <div style={{ display: 'flex', alignItems: 'flex-start', overflowX: 'auto' }}>
+        {MEMBERSHIP_TIERS.map((t, i) => {
+          const reached = i <= currentIdx;
+          const isCurrent = i === currentIdx;
+          return (
+            <div key={t.tier} style={{ display: 'flex', alignItems: 'center', flex: i === MEMBERSHIP_TIERS.length - 1 ? '0 0 auto' : 1, minWidth: 58 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5 }}>
+                <div style={{
+                  width: isCurrent ? 36 : 28, height: isCurrent ? 36 : 28, borderRadius: '50%',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                  background: reached ? `linear-gradient(135deg, ${t.color}, ${t.color2})` : '#F0F0F0',
+                  animation: isCurrent ? 'glowPulse 2.2s ease-in-out infinite' : undefined,
+                  transition: 'all 250ms ease',
+                }}>
+                  {reached ? <Crown size={isCurrent ? 16 : 12} color="#fff" /> : <Lock size={11} color="#bbb" />}
+                </div>
+                <span style={{ fontSize: 9, fontWeight: isCurrent ? 900 : 700, color: reached ? '#1A1A1A' : '#bbb', whiteSpace: 'nowrap' }}>
+                  {t.tier}
+                </span>
+              </div>
+              {i < MEMBERSHIP_TIERS.length - 1 && (
+                <div style={{ flex: 1, height: 3, borderRadius: 2, margin: '0 3px', marginBottom: 16, background: i < currentIdx ? '#D71920' : '#F0F0F0', transition: 'background 250ms ease' }} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// TAB 2 — Rewards (Amazon-style shopping grid; nothing else)
+// ─────────────────────────────────────────────────────────────
+
+function RewardsTab({ catalog, categories, categoryFilter, onCategoryChange, wallet, onSelect }: {
   catalog: RewardCatalogItem[];
+  categories: string[];
+  categoryFilter: string;
+  onCategoryChange: (c: string) => void;
   wallet: RewardWallet;
   onSelect: (item: RewardCatalogItem) => void;
 }) {
-  const groups = new Map<string, RewardCatalogItem[]>();
-  for (const item of catalog) {
-    if (!groups.has(item.range)) groups.set(item.range, []);
-    groups.get(item.range)!.push(item);
-  }
-
-  if (catalog.length === 0) {
-    return (
-      <div style={{ background: '#fff', borderRadius: 20, padding: 24, textAlign: 'center', boxShadow: '0 2px 10px rgba(0,0,0,0.06)' }}>
-        <Gift size={28} color="#ccc" />
-        <p style={{ fontSize: 12, color: '#999', margin: '10px 0 0' }}>No rewards available right now. Check back soon.</p>
-      </div>
-    );
-  }
-
   return (
     <>
-      {[...groups.entries()].map(([range, items]) => (
-        <div key={range} style={{ background: '#fff', borderRadius: 20, padding: 18, boxShadow: '0 2px 10px rgba(0,0,0,0.06)' }}>
-          <p style={{ fontSize: 11, fontWeight: 800, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 12px' }}>{range}</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {items.map(item => {
-              const affordable = wallet.currentPoints >= item.pointsCost;
-              return (
-                <div key={item.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px',
-                  borderRadius: 14, border: '1px solid #F0F0F0', background: '#FAFAFA',
-                }}>
-                  <div style={{ flex: 1 }}>
-                    <p style={{ fontSize: 13, fontWeight: 800, color: '#1A1A1A', margin: 0 }}>{item.productName}</p>
-                    <p style={{ fontSize: 11, color: '#999', margin: '2px 0 0' }}>
-                      MRP ₹{item.mrp} · ₹{item.discountAmount} OFF · Min. purchase ₹{item.minimumPurchase}
-                    </p>
-                  </div>
-                  <button
-                    disabled={!affordable}
-                    onClick={() => onSelect(item)}
-                    style={{
-                      padding: '9px 14px', borderRadius: 12, border: 'none', flexShrink: 0,
-                      background: affordable ? 'linear-gradient(135deg,#D71920,#B31217)' : '#E8E8E8',
-                      color: affordable ? '#fff' : '#999',
-                      fontWeight: 800, fontSize: 12, cursor: affordable ? 'pointer' : 'not-allowed',
-                    }}
-                  >
-                    {item.pointsCost} pts
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+      {/* Category pills */}
+      {categories.length > 1 && (
+        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2 }}>
+          {categories.map(cat => {
+            const active = categoryFilter === cat;
+            return (
+              <button key={cat} onClick={() => onCategoryChange(cat)} style={{
+                flexShrink: 0, padding: '8px 16px', borderRadius: 20, cursor: 'pointer',
+                border: active ? 'none' : '1px solid #EFEFEF',
+                background: active ? 'linear-gradient(135deg,#D71920,#B31217)' : '#fff',
+                color: active ? '#fff' : '#666',
+                fontWeight: 800, fontSize: 12, whiteSpace: 'nowrap',
+                boxShadow: active ? '0 4px 12px rgba(215,25,32,0.25)' : '0 1px 4px rgba(0,0,0,0.04)',
+                transition: 'all 180ms ease',
+              }}>
+                {cat}
+              </button>
+            );
+          })}
         </div>
-      ))}
+      )}
+
+      {catalog.length === 0 ? (
+        <RewardsEmptyState />
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+          {catalog.map(item => (
+            <ProductCard
+              key={item.id}
+              item={item}
+              affordable={wallet.currentPoints >= item.pointsCost}
+              onSelect={() => onSelect(item)}
+            />
+          ))}
+        </div>
+      )}
     </>
   );
 }
 
+function ProductCard({ item, affordable, onSelect }: {
+  item: RewardCatalogItem;
+  affordable: boolean;
+  onSelect: () => void;
+}) {
+  const theme = rangeTheme(item.range);
+  return (
+    <div className="rc-product-card" style={{
+      background: '#fff', borderRadius: 20, overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.06)',
+      border: '1px solid #F5F5F5', display: 'flex', flexDirection: 'column',
+    }}>
+      {/* Product art */}
+      <div style={{
+        height: 96, background: `linear-gradient(135deg, ${theme.color}, ${theme.color2})`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden',
+      }}>
+        <div style={{ position: 'absolute', top: -20, right: -20, width: 90, height: 90, borderRadius: '50%', background: 'rgba(255,255,255,0.12)' }} />
+        <Egg size={38} color="rgba(255,255,255,0.95)" strokeWidth={1.5} />
+        <span style={{
+          position: 'absolute', top: 8, left: 8, fontSize: 8, fontWeight: 800, color: '#fff',
+          background: 'rgba(0,0,0,0.2)', borderRadius: 8, padding: '3px 7px', textTransform: 'uppercase', letterSpacing: 0.4,
+        }}>
+          {theme.label}
+        </span>
+      </div>
+
+      <div style={{ padding: '12px 12px 14px', display: 'flex', flexDirection: 'column', flex: 1 }}>
+        <p style={{ fontSize: 12, fontWeight: 800, color: '#1A1A1A', margin: 0, lineHeight: 1.3 }}>{item.productName}</p>
+        <p style={{ fontSize: 10, color: '#999', margin: '3px 0 10px', fontWeight: 600 }}>MRP ₹{item.mrp}</p>
+
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 10 }}>
+          <span style={{ fontSize: 16, fontWeight: 900, color: '#D71920' }}>₹{item.discountAmount}</span>
+          <span style={{ fontSize: 10, fontWeight: 700, color: '#999' }}>OFF</span>
+        </div>
+
+        <button
+          className="rc-btn-ripple"
+          disabled={!affordable}
+          onClick={onSelect}
+          style={{
+            marginTop: 'auto', padding: '9px 0', borderRadius: 12, border: affordable ? 'none' : '1.5px solid #E8E8E8',
+            background: affordable ? 'linear-gradient(135deg,#D71920,#B31217)' : '#fff',
+            color: affordable ? '#fff' : '#bbb',
+            fontWeight: 800, fontSize: 11, cursor: affordable ? 'pointer' : 'not-allowed',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+          }}
+        >
+          {affordable ? <Zap size={12} color="#fff" /> : <Lock size={11} color="#bbb" />}
+          {item.pointsCost} pts
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RewardsEmptyState() {
+  return (
+    <div style={{
+      background: '#fff', borderRadius: 22, padding: '32px 24px', textAlign: 'center',
+      boxShadow: '0 2px 10px rgba(0,0,0,0.06)', border: '1px dashed #F0D0D0',
+    }}>
+      <div style={{
+        width: 64, height: 64, borderRadius: '50%', background: 'linear-gradient(135deg,#FEF2F2,#FFF7ED)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px',
+      }}>
+        <Egg size={30} color="#D71920" strokeWidth={1.5} />
+      </div>
+      <p style={{ fontSize: 15, fontWeight: 900, color: '#1A1A1A', margin: '0 0 8px' }}>Start Your Reward Journey</p>
+      <p style={{ fontSize: 12, color: '#888', margin: '0 0 16px', lineHeight: 1.6 }}>
+        Every SKM Egg you scan earns Protein, Reward Points, Sticker Progress, and Passport Progress.
+      </p>
+      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: '#FEF2F2', borderRadius: 14, padding: '10px 16px' }}>
+        <Sparkles size={14} color="#D71920" />
+        <span style={{ fontSize: 12, fontWeight: 800, color: '#D71920' }}>Complete 100 Points to unlock your first reward</span>
+      </div>
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────
-// Coupons
+// TAB 3 — Coupons (wallet; nothing else)
 // ─────────────────────────────────────────────────────────────
 
 const COUPON_FILTER_TABS: { key: CouponFilterTab; label: string }[] = [
@@ -381,7 +672,7 @@ function CouponsTab({ coupons, filter, onFilterChange, onMarkUsed }: {
 
       {coupons.length === 0 ? (
         <div style={{ background: '#fff', borderRadius: 20, padding: 24, textAlign: 'center', boxShadow: '0 2px 10px rgba(0,0,0,0.06)' }}>
-          <Ticket size={28} color="#ccc" />
+          <Ticket size={28} color="#ddd" />
           <p style={{ fontSize: 12, color: '#999', margin: '10px 0 0' }}>No {filter} coupons.</p>
         </div>
       ) : (
@@ -398,7 +689,7 @@ function CouponsTab({ coupons, filter, onFilterChange, onMarkUsed }: {
 function CouponTicket({ coupon, onMarkUsed }: { coupon: RewardCoupon; onMarkUsed: () => void }) {
   const dim = coupon.status !== 'available';
   return (
-    <div style={{
+    <div className="rc-coupon-card" style={{
       background: '#fff', borderRadius: 18, boxShadow: '0 2px 10px rgba(0,0,0,0.06)',
       border: '1px solid #FCE8E8', overflow: 'hidden', opacity: dim ? 0.6 : 1,
     }}>
@@ -453,27 +744,8 @@ function CouponStatusBadge({ status }: { status: CouponStatus }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// History
+// TAB 4 — History (clean vertical timeline; nothing else)
 // ─────────────────────────────────────────────────────────────
-
-function HistoryTab({ transactions }: { transactions: RewardTransaction[] }) {
-  if (transactions.length === 0) {
-    return (
-      <div style={{ background: '#fff', borderRadius: 20, padding: 24, textAlign: 'center', boxShadow: '0 2px 10px rgba(0,0,0,0.06)' }}>
-        <Clock size={28} color="#ccc" />
-        <p style={{ fontSize: 12, color: '#999', margin: '10px 0 0' }}>No point activity yet.</p>
-      </div>
-    );
-  }
-  return (
-    <div style={{ background: '#fff', borderRadius: 20, padding: 18, boxShadow: '0 2px 10px rgba(0,0,0,0.06)' }}>
-      <p style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A', margin: '0 0 10px' }}>Point History</p>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {transactions.map(t => <TransactionRow key={t.id} tx={t} />)}
-      </div>
-    </div>
-  );
-}
 
 const TRANSACTION_ICON: Record<RewardTransaction['type'], React.ReactNode> = {
   scan:              <Gift size={13} color="#D71920" />,
@@ -484,17 +756,79 @@ const TRANSACTION_ICON: Record<RewardTransaction['type'], React.ReactNode> = {
   adjustment:        <TrendingUp size={13} color="#666" />,
 };
 
-function TransactionRow({ tx }: { tx: RewardTransaction }) {
-  const positive = tx.points >= 0;
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', background: '#FAFAFA', borderRadius: 12 }}>
-      <div style={{ width: 26, height: 26, borderRadius: 8, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-        {TRANSACTION_ICON[tx.type] ?? <Gift size={13} color="#D71920" />}
+function historyGroupLabel(date: Date): string {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+  const weekAgo = new Date(today); weekAgo.setDate(weekAgo.getDate() - 7);
+  const d = new Date(date); d.setHours(0, 0, 0, 0);
+
+  if (d.getTime() === today.getTime()) return 'Today';
+  if (d.getTime() === yesterday.getTime()) return 'Yesterday';
+  if (d.getTime() > weekAgo.getTime()) return 'This Week';
+  return 'Earlier';
+}
+
+function HistoryTab({ transactions }: { transactions: RewardTransaction[] }) {
+  if (transactions.length === 0) {
+    return (
+      <div style={{ background: '#fff', borderRadius: 20, padding: 24, textAlign: 'center', boxShadow: '0 2px 10px rgba(0,0,0,0.06)' }}>
+        <Clock size={28} color="#ddd" />
+        <p style={{ fontSize: 12, color: '#999', margin: '10px 0 0' }}>No point activity yet.</p>
       </div>
-      <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: '#444' }}>{tx.description}</span>
-      <span style={{ fontSize: 13, fontWeight: 900, color: positive ? '#16A34A' : '#DC2626' }}>
-        {positive ? '+' : ''}{tx.points}
-      </span>
+    );
+  }
+
+  const groups = new Map<string, RewardTransaction[]>();
+  for (const t of transactions) {
+    const label = t.createdAt?.toDate ? historyGroupLabel(t.createdAt.toDate()) : 'Earlier';
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label)!.push(t);
+  }
+  const order = ['Today', 'Yesterday', 'This Week', 'Earlier'];
+  const sortedGroups = order.filter(g => groups.has(g)).map(g => [g, groups.get(g)!] as const);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {sortedGroups.map(([label, txs]) => (
+        <div key={label}>
+          <p style={{ fontSize: 11, fontWeight: 800, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 8px 4px' }}>{label}</p>
+          <div style={{ background: '#fff', borderRadius: 20, padding: 6, boxShadow: '0 2px 10px rgba(0,0,0,0.06)' }}>
+            <ActivityTimeline transactions={txs} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ActivityTimeline({ transactions }: { transactions: RewardTransaction[] }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      {transactions.map((t, i) => {
+        const positive = t.points >= 0;
+        const isLast = i === transactions.length - 1;
+        return (
+          <div key={t.id} style={{ display: 'flex', gap: 12, padding: '10px 10px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+              <div style={{
+                width: 28, height: 28, borderRadius: 9, background: positive ? '#F0FDF4' : '#FEF2F2',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                {TRANSACTION_ICON[t.type] ?? <Gift size={13} color="#D71920" />}
+              </div>
+              {!isLast && <div style={{ width: 2, flex: 1, background: '#F0F0F0', marginTop: 4 }} />}
+            </div>
+            <div style={{ flex: 1, paddingBottom: isLast ? 0 : 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#333' }}>{t.description}</span>
+                <span style={{ fontSize: 13, fontWeight: 900, color: positive ? '#16A34A' : '#DC2626', flexShrink: 0, marginLeft: 8 }}>
+                  {positive ? '+' : ''}{t.points}
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -546,11 +880,11 @@ function ConfirmRedeemDialog({ item, currentPoints, saving, error, onConfirm, on
         <div style={{ display: 'flex', gap: 10 }}>
           <button onClick={onCancel} style={{
             flex: 1, padding: '14px 0', borderRadius: 14, border: '1.5px solid #E8E8E8',
-            background: '#F5F5F5', color: '#666', fontWeight: 700, fontSize: 14, cursor: 'pointer',
+            background: '#fff', color: '#D71920', fontWeight: 700, fontSize: 14, cursor: 'pointer',
           }}>
             Cancel
           </button>
-          <button disabled={saving} onClick={onConfirm} style={{
+          <button className="rc-btn-ripple" disabled={saving} onClick={onConfirm} style={{
             flex: 1, padding: '14px 0', borderRadius: 14, border: 'none',
             background: 'linear-gradient(135deg,#D71920,#B31217)', color: '#fff',
             fontWeight: 900, fontSize: 14, opacity: saving ? 0.6 : 1, cursor: saving ? 'not-allowed' : 'pointer',
@@ -609,11 +943,11 @@ function RedeemSuccessScreen({ coupon, onViewCoupons, onDone }: {
       <div style={{ display: 'flex', gap: 10, width: '100%', maxWidth: 340 }}>
         <button onClick={onDone} style={{
           flex: 1, padding: '14px 0', borderRadius: 14, border: '1.5px solid #E8E8E8',
-          background: '#F5F5F5', color: '#666', fontWeight: 700, fontSize: 14, cursor: 'pointer',
+          background: '#fff', color: '#D71920', fontWeight: 700, fontSize: 14, cursor: 'pointer',
         }}>
           Done
         </button>
-        <button onClick={onViewCoupons} style={{
+        <button className="rc-btn-ripple" onClick={onViewCoupons} style={{
           flex: 1, padding: '14px 0', borderRadius: 14, border: 'none',
           background: 'linear-gradient(135deg,#D71920,#B31217)', color: '#fff',
           fontWeight: 900, fontSize: 14, cursor: 'pointer',
@@ -621,20 +955,6 @@ function RedeemSuccessScreen({ coupon, onViewCoupons, onDone }: {
           View Coupons
         </button>
       </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-// Small subcomponents
-// ─────────────────────────────────────────────────────────────
-
-function StatBox({ label, value, icon }: { label: string; value: string; icon?: React.ReactNode }) {
-  return (
-    <div style={{ flex: 1, background: '#F8F8F8', borderRadius: 14, padding: '10px 8px', textAlign: 'center' }}>
-      {icon && <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 4 }}>{icon}</div>}
-      <p style={{ fontSize: 14, fontWeight: 900, color: '#1A1A1A', margin: 0 }}>{value}</p>
-      <p style={{ fontSize: 8, fontWeight: 700, color: '#bbb', textTransform: 'uppercase', letterSpacing: 0.3, margin: '3px 0 0' }}>{label}</p>
     </div>
   );
 }
