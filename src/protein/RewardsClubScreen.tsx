@@ -3,10 +3,10 @@ import type { User } from 'firebase/auth';
 import {
   ChevronLeft, Gift, Coins, Crown, Ticket, TrendingUp, ShieldCheck,
   Clock, CheckCircle2, XCircle, Flame, Award, Sparkles, ChevronRight,
-  Egg, Lock, Zap, ArrowRight, QrCode, Target,
+  Egg, Lock, Zap, ArrowRight, QrCode,
 } from 'lucide-react';
 import {
-  getRewardWallet, calcTierProgress, type RewardWallet,
+  getRewardWallet, type RewardWallet,
 } from '../services/protein/rewardWalletService';
 import {
   getRecentRewardTransactions, type RewardTransaction,
@@ -157,7 +157,6 @@ export default function RewardsClubScreen({ user, onBack, onScanQR }: RewardsClu
     </div>
   );
 
-  const progress = calcTierProgress(wallet.lifetimePoints);
   const filteredCoupons = coupons.filter(c => c.status === couponFilter);
   const availableCoupons = coupons.filter(c => c.status === 'available');
 
@@ -214,12 +213,11 @@ export default function RewardsClubScreen({ user, onBack, onScanQR }: RewardsClu
       </div>
 
       {/* ── Tab content ── */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px 90px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px 90px', display: 'flex', flexDirection: 'column', gap: tab === 'overview' ? 0 : 14 }}>
 
         {tab === 'overview' && (
           <OverviewTab
             wallet={wallet}
-            progress={progress}
             nextReward={nextReward}
             todayEggs={todayEggs}
             todayProtein={todayProtein}
@@ -280,7 +278,8 @@ export default function RewardsClubScreen({ user, onBack, onScanQR }: RewardsClu
         @keyframes hiFadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes popIn { from { opacity: 0; transform: scale(0.5); } to { opacity: 1; transform: scale(1); } }
         @keyframes glowPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(215,25,32,0.35); } 50% { box-shadow: 0 0 0 6px rgba(215,25,32,0); } }
-        @keyframes heroGlow { 0%,100% { box-shadow: 0 12px 32px rgba(215,25,32,0.28); } 50% { box-shadow: 0 12px 40px rgba(215,25,32,0.4); } }
+        @keyframes heroDrift { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+        @keyframes cardRise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
         .rc-product-card { transition: transform 200ms ease, box-shadow 200ms ease; }
         .rc-product-card:hover { transform: translateY(-3px) scale(1.015); box-shadow: 0 10px 24px rgba(0,0,0,0.1); }
         .rc-coupon-card { transition: transform 200ms ease, box-shadow 200ms ease; }
@@ -308,10 +307,9 @@ function RewardPointPill({ points }: { points: number }) {
 // ─────────────────────────────────────────────────────────────
 
 function OverviewTab({
-  wallet, progress, nextReward, todayEggs, todayProtein, todayGoal, todayPointsEarned, onScanQR, onViewRewards,
+  wallet, nextReward, todayEggs, todayProtein, todayGoal, todayPointsEarned, onScanQR, onViewRewards,
 }: {
   wallet: RewardWallet;
-  progress: ReturnType<typeof calcTierProgress>;
   nextReward: RewardCatalogItem | null;
   todayEggs: number;
   todayProtein: number;
@@ -321,71 +319,38 @@ function OverviewTab({
   onViewRewards: () => void;
 }) {
   return (
-    <>
-      {/* 1. HERO REWARD CARD */}
-      <HeroRewardCard wallet={wallet} progress={progress} nextReward={nextReward} onScanQR={onScanQR} />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {/* 1. HERO WALLET CARD — membership, balance, today's numbers, progress, CTA, all in one */}
+      <HeroWalletCard
+        wallet={wallet}
+        nextReward={nextReward}
+        todayEggs={todayEggs}
+        todayProtein={todayProtein}
+        todayGoal={todayGoal}
+        todayPointsEarned={todayPointsEarned}
+        onScanQR={onScanQR}
+      />
 
-      {/* 2. TODAY'S PROGRESS */}
-      <div style={{ background: '#fff', borderRadius: 20, padding: 16, boxShadow: '0 2px 10px rgba(0,0,0,0.06)', animation: 'hiFadeIn 450ms ease' }}>
-        <p style={{ fontSize: 11, fontWeight: 800, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 12px' }}>Today's Progress</p>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <MiniStat icon={<Egg size={14} color="#D71920" />} value={String(todayEggs)} label="Eggs Scanned" />
-          <MiniStat icon={<Target size={14} color="#16A34A" />} value={`${todayProtein}${todayGoal ? `/${todayGoal}` : ''}g`} label="Protein" />
-          <MiniStat icon={<Coins size={14} color="#D97706" />} value={`+${todayPointsEarned}`} label="Points Earned" />
-        </div>
-      </div>
+      {/* 2. MEMBERSHIP PROGRESS — bare horizontal strip, no card wrapper */}
+      <TierStrip currentTier={wallet.membership} />
 
-      {/* 3. MEMBERSHIP JOURNEY */}
-      <RewardJourney currentTier={wallet.membership} />
-
-      {/* 4. QUICK REWARD PREVIEW — one card only */}
-      {nextReward && (
-        <div>
-          <p style={{ fontSize: 11, fontWeight: 800, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 10px' }}>Quick Reward Preview</p>
-          <button onClick={onViewRewards} className="rc-btn-ripple" style={{
-            width: '100%', textAlign: 'left', border: '1px solid #F5F5F5', cursor: 'pointer',
-            background: '#fff', borderRadius: 18, padding: '14px 16px', boxShadow: '0 2px 10px rgba(0,0,0,0.06)',
-            display: 'flex', alignItems: 'center', gap: 12, animation: 'hiFadeIn 550ms ease',
-          }}>
-            <div style={{
-              width: 46, height: 46, borderRadius: 14, flexShrink: 0,
-              background: `linear-gradient(135deg, ${rangeTheme(nextReward.range).color}, ${rangeTheme(nextReward.range).color2})`,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <Egg size={22} color="rgba(255,255,255,0.95)" strokeWidth={1.5} />
-            </div>
-            <div style={{ flex: 1 }}>
-              <p style={{ fontSize: 13, fontWeight: 800, color: '#1A1A1A', margin: 0 }}>{nextReward.productName}</p>
-              <p style={{ fontSize: 11, color: '#999', margin: '2px 0 0', fontWeight: 600 }}>₹{nextReward.discountAmount} OFF · {nextReward.pointsCost} Points</p>
-            </div>
-            <span style={{ fontSize: 11, fontWeight: 800, color: '#D71920', display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
-              View Rewards <ChevronRight size={14} color="#D71920" />
-            </span>
-          </button>
-        </div>
-      )}
-    </>
-  );
-}
-
-function MiniStat({ icon, value, label }: { icon: React.ReactNode; value: string; label: string }) {
-  return (
-    <div style={{ flex: 1, background: '#FAFAFA', borderRadius: 14, padding: '10px 6px', textAlign: 'center' }}>
-      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 5 }}>{icon}</div>
-      <p style={{ fontSize: 14, fontWeight: 900, color: '#1A1A1A', margin: 0 }}>{value}</p>
-      <p style={{ fontSize: 8, fontWeight: 700, color: '#bbb', textTransform: 'uppercase', letterSpacing: 0.3, margin: '3px 0 0' }}>{label}</p>
+      {/* 3. NEXT REWARD PREVIEW — single tap-through row */}
+      {nextReward && <NextRewardRow item={nextReward} onViewRewards={onViewRewards} />}
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────
-// Hero reward card
+// Hero wallet card — the entire "current standing" in one place
 // ─────────────────────────────────────────────────────────────
 
-function HeroRewardCard({ wallet, progress, nextReward, onScanQR }: {
+function HeroWalletCard({ wallet, nextReward, todayEggs, todayProtein, todayGoal, todayPointsEarned, onScanQR }: {
   wallet: RewardWallet;
-  progress: ReturnType<typeof calcTierProgress>;
   nextReward: RewardCatalogItem | null;
+  todayEggs: number;
+  todayProtein: number;
+  todayGoal: number;
+  todayPointsEarned: number;
   onScanQR?: () => void;
 }) {
   const animatedPoints = useCountUp(wallet.currentPoints);
@@ -397,108 +362,169 @@ function HeroRewardCard({ wallet, progress, nextReward, onScanQR }: {
 
   return (
     <div style={{
-      position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 20,
-      background: 'linear-gradient(150deg,#D71920 0%,#B31217 50%,#7C1015 100%)',
-      animation: 'hiFadeIn 400ms ease, heroGlow 3.5s ease-in-out infinite',
+      position: 'relative', overflow: 'hidden', borderRadius: 30, padding: '24px 22px 22px',
+      background: 'linear-gradient(135deg,#B8280C 0%,#D71920 38%,#EA5A1F 78%,#F59E0B 130%)',
+      backgroundSize: '180% 180%',
+      animation: 'hiFadeIn 400ms ease, heroDrift 14s ease-in-out infinite',
+      boxShadow: '0 16px 40px rgba(199,42,17,0.32)',
     }}>
-      <div style={{ position: 'absolute', top: -60, right: -40, width: 200, height: 200, borderRadius: '50%', background: 'rgba(255,255,255,0.06)', pointerEvents: 'none' }} />
-      <div style={{ position: 'absolute', bottom: -50, left: -30, width: 140, height: 140, borderRadius: '50%', background: 'rgba(255,255,255,0.05)', pointerEvents: 'none' }} />
-      {/* soft reflection streak */}
-      <div style={{ position: 'absolute', top: -50, left: -10, width: '120%', height: 90, borderRadius: '50%', background: 'rgba(255,255,255,0.08)', transform: 'rotate(-6deg)', pointerEvents: 'none' }} />
+      {/* ambient warmth */}
+      <div style={{ position: 'absolute', top: -70, right: -50, width: 220, height: 220, borderRadius: '50%', background: 'rgba(255,255,255,0.09)', pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', bottom: -60, left: -40, width: 170, height: 170, borderRadius: '50%', background: 'rgba(0,0,0,0.08)', pointerEvents: 'none' }} />
 
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, position: 'relative' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-          <span style={{ fontSize: 17 }}>{tierEmoji[wallet.membership]}</span>
-          <span style={{ fontSize: 13, fontWeight: 800, color: '#fff' }}>{wallet.membership} Member</span>
-        </div>
+      {/* Row 1: tier pill + wallet icon */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
         <div style={{
-          width: 34, height: 34, borderRadius: 11, background: 'rgba(255,255,255,0.18)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          display: 'flex', alignItems: 'center', gap: 6,
+          background: 'rgba(255,255,255,0.18)', borderRadius: 20, padding: '5px 12px 5px 8px',
         }}>
-          <ShieldCheck size={15} color="#fff" />
+          <span style={{ fontSize: 14 }}>{tierEmoji[wallet.membership]}</span>
+          <span style={{ fontSize: 11.5, fontWeight: 800, color: '#fff', letterSpacing: 0.2 }}>{wallet.membership} Member</span>
         </div>
+        <ShieldCheck size={18} color="rgba(255,255,255,0.85)" />
       </div>
 
-      <p style={{ fontSize: 10, fontWeight: 800, color: 'rgba(255,255,255,0.65)', textTransform: 'uppercase', letterSpacing: 0.8, margin: '0 0 3px', position: 'relative' }}>Reward Balance</p>
-      <p style={{ fontSize: 34, fontWeight: 900, color: '#fff', margin: '0 0 16px', lineHeight: 1, position: 'relative' }}>{animatedPoints} <span style={{ fontSize: 14, fontWeight: 700, color: 'rgba(255,255,255,0.7)' }}>pts</span></p>
+      {/* Row 2: the number that matters most */}
+      <div style={{ marginTop: 14, position: 'relative' }}>
+        <p style={{ fontSize: 10.5, fontWeight: 800, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: 1, margin: '0 0 2px' }}>Reward Balance</p>
+        <p style={{ fontSize: 46, fontWeight: 900, color: '#fff', margin: 0, lineHeight: 1, letterSpacing: -1 }}>
+          {animatedPoints}<span style={{ fontSize: 16, fontWeight: 700, color: 'rgba(255,255,255,0.75)', marginLeft: 6 }}>pts</span>
+        </p>
+      </div>
 
+      {/* Row 3: today's 3 numbers — inline, no boxes, just typography + dividers */}
+      <div style={{
+        marginTop: 16, display: 'flex', position: 'relative',
+        background: 'rgba(0,0,0,0.14)', borderRadius: 16, padding: '11px 4px',
+      }}>
+        <TodayFigure value={String(todayEggs)} label="Eggs Today" />
+        <div style={{ width: 1, background: 'rgba(255,255,255,0.18)', margin: '2px 0' }} />
+        <TodayFigure value={`${todayProtein}${todayGoal ? `/${todayGoal}` : ''}g`} label="Protein" />
+        <div style={{ width: 1, background: 'rgba(255,255,255,0.18)', margin: '2px 0' }} />
+        <TodayFigure value={`+${todayPointsEarned}`} label="Points Today" />
+      </div>
+
+      {/* Row 4: progress to next coupon */}
       {nextReward && (
-        <>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, position: 'relative' }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.85)' }}>
-              Next Reward: <span style={{ color: '#fff', fontWeight: 900 }}>₹{nextReward.discountAmount} OFF</span>
+        <div style={{ marginTop: 16, position: 'relative' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 7 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.9)' }}>
+              Next: <span style={{ color: '#fff', fontWeight: 900 }}>₹{nextReward.discountAmount} OFF</span>
             </span>
-            <span style={{ fontSize: 11, fontWeight: 800, color: '#FFD97A' }}>
-              {unlocked ? 'Ready!' : `${remaining} pts left`}
+            <span style={{ fontSize: 11, fontWeight: 800, color: '#FFE9A8' }}>
+              {unlocked ? 'Ready to redeem!' : `${remaining} pts to go`}
             </span>
           </div>
-          <div style={{ height: 10, background: 'rgba(0,0,0,0.25)', borderRadius: 12, overflow: 'hidden', position: 'relative' }}>
+          <div style={{ height: 10, background: 'rgba(0,0,0,0.22)', borderRadius: 12, overflow: 'hidden' }}>
             <div style={{
               height: '100%', width: `${pct}%`, borderRadius: 12, transition: 'width 700ms cubic-bezier(0.34,1.56,0.4,1)',
-              background: 'linear-gradient(90deg,#FFD97A,#FFB020)',
-            }} />
+              background: 'linear-gradient(90deg,#FFE9A8,#FFB020)', position: 'relative', overflow: 'hidden',
+            }}>
+              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '45%', background: 'rgba(255,255,255,0.35)' }} />
+            </div>
           </div>
-        </>
+        </div>
       )}
 
+      {/* Row 5: CTA */}
       <button
         className="rc-btn-ripple"
         onClick={onScanQR}
         disabled={!onScanQR}
         style={{
-          marginTop: 18, width: '100%', padding: '14px 0', borderRadius: 14, border: 'none',
-          background: '#fff', color: '#D71920', fontWeight: 900, fontSize: 14,
+          marginTop: 18, width: '100%', padding: '14px 0', borderRadius: 15, border: 'none',
+          background: '#fff', color: '#C4290D', fontWeight: 900, fontSize: 14, position: 'relative',
           cursor: onScanQR ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-          boxShadow: '0 6px 16px rgba(0,0,0,0.15)', position: 'relative',
+          boxShadow: '0 8px 18px rgba(0,0,0,0.18)',
         }}
       >
-        <QrCode size={16} color="#D71920" /> Continue Scanning <ArrowRight size={15} color="#D71920" />
+        <QrCode size={16} color="#C4290D" /> Continue Scanning <ArrowRight size={15} color="#C4290D" />
       </button>
     </div>
   );
 }
 
+function TodayFigure({ value, label }: { value: string; label: string }) {
+  return (
+    <div style={{ flex: 1, textAlign: 'center' }}>
+      <p style={{ fontSize: 15, fontWeight: 900, color: '#fff', margin: 0, lineHeight: 1.1 }}>{value}</p>
+      <p style={{ fontSize: 8.5, fontWeight: 700, color: 'rgba(255,255,255,0.68)', textTransform: 'uppercase', letterSpacing: 0.4, margin: '3px 0 0' }}>{label}</p>
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────
-// Membership journey — horizontal tier timeline
+// Membership tier strip — bare, no card wrapper
 // ─────────────────────────────────────────────────────────────
 
-function RewardJourney({ currentTier }: { currentTier: MembershipTier }) {
+function TierStrip({ currentTier }: { currentTier: MembershipTier }) {
   const currentIdx = MEMBERSHIP_TIERS.findIndex(t => t.tier === currentTier);
 
   return (
-    <div style={{
-      background: '#fff', borderRadius: 20, padding: '16px 12px', boxShadow: '0 2px 10px rgba(0,0,0,0.06)',
-      animation: 'hiFadeIn 500ms ease',
-    }}>
-      <p style={{ fontSize: 11, fontWeight: 800, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 12px 4px' }}>Membership Journey</p>
-      <div style={{ display: 'flex', alignItems: 'flex-start', overflowX: 'auto' }}>
+    <div style={{ animation: 'hiFadeIn 500ms ease' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 2px 10px' }}>
+        <p style={{ fontSize: 10.5, fontWeight: 800, color: '#999', textTransform: 'uppercase', letterSpacing: 0.8, margin: 0 }}>Membership Progress</p>
+        <span style={{ fontSize: 10, fontWeight: 800, color: '#D71920' }}>{currentTier}</span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'flex-start' }}>
         {MEMBERSHIP_TIERS.map((t, i) => {
           const reached = i <= currentIdx;
           const isCurrent = i === currentIdx;
           return (
-            <div key={t.tier} style={{ display: 'flex', alignItems: 'center', flex: i === MEMBERSHIP_TIERS.length - 1 ? '0 0 auto' : 1, minWidth: 58 }}>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5 }}>
+            <div key={t.tier} style={{ display: 'flex', alignItems: 'center', flex: i === MEMBERSHIP_TIERS.length - 1 ? '0 0 auto' : 1, minWidth: 52 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                 <div style={{
-                  width: isCurrent ? 36 : 28, height: isCurrent ? 36 : 28, borderRadius: '50%',
+                  width: isCurrent ? 36 : 24, height: isCurrent ? 36 : 24, borderRadius: '50%',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                  background: reached ? `linear-gradient(135deg, ${t.color}, ${t.color2})` : '#F0F0F0',
+                  background: reached ? `linear-gradient(135deg, ${t.color}, ${t.color2})` : '#EFEFEF',
+                  boxShadow: isCurrent ? `0 4px 12px ${t.color}55` : 'none',
                   animation: isCurrent ? 'glowPulse 2.2s ease-in-out infinite' : undefined,
                   transition: 'all 250ms ease',
                 }}>
-                  {reached ? <Crown size={isCurrent ? 16 : 12} color="#fff" /> : <Lock size={11} color="#bbb" />}
+                  {reached ? <Crown size={isCurrent ? 16 : 11} color="#fff" /> : <Lock size={10} color="#bbb" />}
                 </div>
-                <span style={{ fontSize: 9, fontWeight: isCurrent ? 900 : 700, color: reached ? '#1A1A1A' : '#bbb', whiteSpace: 'nowrap' }}>
+                <span style={{ fontSize: 8.5, fontWeight: isCurrent ? 900 : 700, color: reached ? '#1A1A1A' : '#bbb', whiteSpace: 'nowrap' }}>
                   {t.tier}
                 </span>
               </div>
               {i < MEMBERSHIP_TIERS.length - 1 && (
-                <div style={{ flex: 1, height: 3, borderRadius: 2, margin: '0 3px', marginBottom: 16, background: i < currentIdx ? '#D71920' : '#F0F0F0', transition: 'background 250ms ease' }} />
+                <div style={{ flex: 1, height: 2.5, borderRadius: 2, margin: '0 2px', marginBottom: 14, background: i < currentIdx ? '#D71920' : '#EFEFEF', transition: 'background 250ms ease' }} />
               )}
             </div>
           );
         })}
       </div>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Next reward preview — single row, no section label card
+// ─────────────────────────────────────────────────────────────
+
+function NextRewardRow({ item, onViewRewards }: { item: RewardCatalogItem; onViewRewards: () => void }) {
+  const theme = rangeTheme(item.range);
+  return (
+    <button onClick={onViewRewards} className="rc-btn-ripple" style={{
+      width: '100%', textAlign: 'left', border: '1px solid #F5F0EA', cursor: 'pointer',
+      background: '#fff', borderRadius: 20, padding: '14px 16px', boxShadow: '0 4px 16px rgba(0,0,0,0.05)',
+      display: 'flex', alignItems: 'center', gap: 12, animation: 'hiFadeIn 550ms ease',
+    }}>
+      <div style={{
+        width: 48, height: 48, borderRadius: 14, flexShrink: 0,
+        background: `linear-gradient(135deg, ${theme.color}, ${theme.color2})`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        boxShadow: `0 4px 12px ${theme.color}40`,
+      }}>
+        <Egg size={22} color="rgba(255,255,255,0.95)" strokeWidth={1.5} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ fontSize: 10, fontWeight: 800, color: '#B45309', textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 2px' }}>Next Reward</p>
+        <p style={{ fontSize: 13, fontWeight: 800, color: '#1A1A1A', margin: 0 }}>{item.productName}</p>
+        <p style={{ fontSize: 11, color: '#999', margin: '2px 0 0', fontWeight: 600 }}>₹{item.discountAmount} OFF · {item.pointsCost} pts</p>
+      </div>
+      <ChevronRight size={16} color="#D71920" style={{ flexShrink: 0 }} />
+    </button>
   );
 }
 
@@ -542,10 +568,11 @@ function RewardsTab({ catalog, categories, categoryFilter, onCategoryChange, wal
         <RewardsEmptyState />
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
-          {catalog.map(item => (
+          {catalog.map((item, i) => (
             <ProductCard
               key={item.id}
               item={item}
+              index={i}
               affordable={wallet.currentPoints >= item.pointsCost}
               onSelect={() => onSelect(item)}
             />
@@ -556,8 +583,9 @@ function RewardsTab({ catalog, categories, categoryFilter, onCategoryChange, wal
   );
 }
 
-function ProductCard({ item, affordable, onSelect }: {
+function ProductCard({ item, index, affordable, onSelect }: {
   item: RewardCatalogItem;
+  index: number;
   affordable: boolean;
   onSelect: () => void;
 }) {
@@ -566,28 +594,34 @@ function ProductCard({ item, affordable, onSelect }: {
     <div className="rc-product-card" style={{
       background: '#fff', borderRadius: 20, overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.06)',
       border: '1px solid #F5F5F5', display: 'flex', flexDirection: 'column',
+      animation: `cardRise 420ms ease both`, animationDelay: `${Math.min(index, 8) * 60}ms`,
     }}>
+      {/* Top accent bar */}
+      <div style={{ height: 3, background: `linear-gradient(90deg, ${theme.color}, ${theme.color2})` }} />
+
       {/* Product art */}
       <div style={{
-        height: 96, background: `linear-gradient(135deg, ${theme.color}, ${theme.color2})`,
+        height: 128, background: `linear-gradient(150deg, ${theme.color} 0%, ${theme.color2} 65%, ${theme.color2} 100%)`,
         display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden',
       }}>
-        <div style={{ position: 'absolute', top: -20, right: -20, width: 90, height: 90, borderRadius: '50%', background: 'rgba(255,255,255,0.12)' }} />
-        <Egg size={38} color="rgba(255,255,255,0.95)" strokeWidth={1.5} />
+        <div style={{ position: 'absolute', top: -24, right: -24, width: 100, height: 100, borderRadius: '50%', background: 'rgba(255,255,255,0.12)' }} />
+        {/* diagonal light sweep */}
+        <div style={{ position: 'absolute', top: -30, left: -20, width: '140%', height: 60, background: 'rgba(255,255,255,0.1)', transform: 'rotate(-10deg)', pointerEvents: 'none' }} />
+        <Egg size={50} color="rgba(255,255,255,0.97)" strokeWidth={1.4} style={{ filter: 'drop-shadow(0 6px 10px rgba(0,0,0,0.25))' }} />
         <span style={{
-          position: 'absolute', top: 8, left: 8, fontSize: 8, fontWeight: 800, color: '#fff',
-          background: 'rgba(0,0,0,0.2)', borderRadius: 8, padding: '3px 7px', textTransform: 'uppercase', letterSpacing: 0.4,
+          position: 'absolute', top: 9, left: 9, fontSize: 9, fontWeight: 800, color: '#fff',
+          background: 'rgba(0,0,0,0.28)', borderRadius: 8, padding: '3px 8px', textTransform: 'uppercase', letterSpacing: 0.4,
         }}>
           {theme.label}
         </span>
       </div>
 
-      <div style={{ padding: '12px 12px 14px', display: 'flex', flexDirection: 'column', flex: 1 }}>
+      <div style={{ padding: '13px 13px 15px', display: 'flex', flexDirection: 'column', flex: 1 }}>
         <p style={{ fontSize: 12, fontWeight: 800, color: '#1A1A1A', margin: 0, lineHeight: 1.3 }}>{item.productName}</p>
-        <p style={{ fontSize: 10, color: '#999', margin: '3px 0 10px', fontWeight: 600 }}>MRP ₹{item.mrp}</p>
+        <p style={{ fontSize: 10, color: '#bbb', margin: '3px 0 10px', fontWeight: 600, textDecoration: 'line-through' }}>MRP ₹{item.mrp}</p>
 
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 10 }}>
-          <span style={{ fontSize: 16, fontWeight: 900, color: '#D71920' }}>₹{item.discountAmount}</span>
+          <span style={{ fontSize: 17, fontWeight: 900, color: '#D71920' }}>₹{item.discountAmount}</span>
           <span style={{ fontSize: 10, fontWeight: 700, color: '#999' }}>OFF</span>
         </div>
 

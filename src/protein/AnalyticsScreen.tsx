@@ -7,6 +7,7 @@ import {
 } from '../services/protein/proteinTrackerService';
 import { getUserSummary, syncSummaryFromDailyStats, type UserSummary } from '../services/protein/userSummaryService';
 import { AnalyticsIcon, TrendUpIcon, TargetIcon, FlameIcon, ZapIcon } from './Icons';
+import { startTimer, endTimer } from '../utils/perfTimer';
 
 type Period = 'week' | 'month';
 
@@ -37,53 +38,53 @@ export default function AnalyticsScreen({ user, refreshKey }: AnalyticsScreenPro
   const loadSummary = useCallback(async () => {
     setSummary(null);
     setChartsReady(false);
-    console.time('[Stats] total-phase1');
+    startTimer('[Stats] total-phase1');
     try {
-      console.time('[Stats] summary-query');
+      startTimer('[Stats] summary-query');
       const sumResult = await getUserSummary(user.uid);
-      console.timeEnd('[Stats] summary-query');
+      endTimer('[Stats] summary-query');
 
-      console.time('[Stats] settings+streak-query');
+      startTimer('[Stats] settings+streak-query');
       const [stg, si] = await Promise.all([
         getTrackerSettings(user.uid),
         getStreakInfo(user.uid),
       ]);
-      console.timeEnd('[Stats] settings+streak-query');
+      endTimer('[Stats] settings+streak-query');
 
       setSummary(sumResult);
       setSettings(stg);
       setStreak(si);
     } catch (e) { console.error('[Analytics:summary]', e); }
-    console.timeEnd('[Stats] total-phase1');
+    endTimer('[Stats] total-phase1');
     console.log('[Stats] >>> Phase 1 complete — stat cards should now be visible');
   }, [user.uid]);
 
   // Phase 2 — load chart data in parallel, then sync summary
   const loadCharts = useCallback(async () => {
-    console.time('[Stats] total-phase2');
+    startTimer('[Stats] total-phase2');
     try {
-      console.time('[Stats] weekly-query');
+      startTimer('[Stats] weekly-query');
       const weekD = await getWeeklyData(user.uid);
-      console.timeEnd('[Stats] weekly-query');
+      endTimer('[Stats] weekly-query');
 
-      console.time('[Stats] monthly-query');
+      startTimer('[Stats] monthly-query');
       const monthD = await getMonthlyData(user.uid);
-      console.timeEnd('[Stats] monthly-query');
+      endTimer('[Stats] monthly-query');
 
       setData(period === 'week' ? weekD : monthD);
 
       // All 30 daily docs fetched in parallel (not serial)
-      console.time('[Stats] daily30-parallel-query');
+      startTimer('[Stats] daily30-parallel-query');
       const dateKeys  = getLast30Days();
       const snapshots = await Promise.all(dateKeys.map(d => getDailyStats(user.uid, d)));
-      console.timeEnd('[Stats] daily30-parallel-query');
+      endTimer('[Stats] daily30-parallel-query');
 
-      console.time('[Stats] summary-sync-write');
+      startTimer('[Stats] summary-sync-write');
       const si = streak;
       await syncSummaryFromDailyStats(user.uid, snapshots, si);
-      console.timeEnd('[Stats] summary-sync-write');
+      endTimer('[Stats] summary-sync-write');
 
-      console.time('[Stats] chart-processing');
+      startTimer('[Stats] chart-processing');
       let tp = 0, te = 0, gm = 0, active = 0;
       for (const stat of snapshots) {
         if (!stat) continue;
@@ -103,12 +104,12 @@ export default function AnalyticsScreen({ user, refreshKey }: AnalyticsScreenPro
         currentStreak:       si.currentStreak,
         bestStreak:          si.bestStreak,
       } : prev);
-      console.timeEnd('[Stats] chart-processing');
+      endTimer('[Stats] chart-processing');
 
       setChartsReady(true);
       console.log('[Stats] >>> Phase 2 complete — charts visible');
     } catch (e) { console.error('[Analytics:charts]', e); }
-    console.timeEnd('[Stats] total-phase2');
+    endTimer('[Stats] total-phase2');
   }, [user.uid, period, streak]);
 
   useEffect(() => { loadSummary(); }, [loadSummary, refreshKey]);

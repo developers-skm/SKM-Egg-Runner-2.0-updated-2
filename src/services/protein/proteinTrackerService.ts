@@ -21,6 +21,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase/firebase';
 import { updateSummaryOnScan, updateSummaryOnManualEntry } from './userSummaryService';
+import { startTimer, endTimer } from '../../utils/perfTimer';
 // Shared utilities — single source of truth
 import {
   todayKey as _todayKey,
@@ -426,32 +427,28 @@ export async function getTodayStats(uid: string): Promise<DailyStats | null> {
 
 export async function getWeeklyData(uid: string): Promise<WeeklyData[]> {
   const days = getLast7Days();
-  console.time('[Stats] getWeeklyData:settings');
+  startTimer('[Stats] getWeeklyData:settings');
   const goal = (await getTrackerSettings(uid)).dailyGoal;
-  console.timeEnd('[Stats] getWeeklyData:settings');
-  console.time('[Stats] getWeeklyData:7-serial-reads');
+  endTimer('[Stats] getWeeklyData:settings');
+  startTimer('[Stats] getWeeklyData:7-serial-reads');
   const result: WeeklyData[] = [];
   for (const dateKey of days) {
-    const t0 = performance.now();
     const stats = await getDailyStats(uid, dateKey);
-    console.log(`[Stats] getWeeklyData: ${dateKey} = ${Math.round(performance.now() - t0)}ms`);
     result.push({ dateKey, dayLabel: dayLabel(dateKey), totalProtein: stats?.totalProtein ?? 0, totalEggs: stats?.totalEggs ?? 0, goalMet: stats?.goalMet ?? false, goal });
   }
-  console.timeEnd('[Stats] getWeeklyData:7-serial-reads');
+  endTimer('[Stats] getWeeklyData:7-serial-reads');
   return result;
 }
 
 export async function getMonthlyData(uid: string): Promise<WeeklyData[]> {
   const days = getLast30Days();
-  console.time('[Stats] getMonthlyData:settings');
+  startTimer('[Stats] getMonthlyData:settings');
   const goal = (await getTrackerSettings(uid)).dailyGoal;
-  console.timeEnd('[Stats] getMonthlyData:settings');
-  console.time('[Stats] getMonthlyData:30-serial-reads');
+  endTimer('[Stats] getMonthlyData:settings');
+  startTimer('[Stats] getMonthlyData:30-serial-reads');
   const result: WeeklyData[] = [];
   for (const dateKey of days) {
-    const t0 = performance.now();
     const stats = await getDailyStats(uid, dateKey);
-    console.log(`[Stats] getMonthlyData: ${dateKey} = ${Math.round(performance.now() - t0)}ms`);
     result.push({
       dateKey,
       dayLabel: new Date(dateKey + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
@@ -459,7 +456,7 @@ export async function getMonthlyData(uid: string): Promise<WeeklyData[]> {
       goalMet: stats?.goalMet ?? false, goal,
     });
   }
-  console.timeEnd('[Stats] getMonthlyData:30-serial-reads');
+  endTimer('[Stats] getMonthlyData:30-serial-reads');
   return result;
 }
 

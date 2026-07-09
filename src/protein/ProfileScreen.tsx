@@ -1,8 +1,11 @@
 import { useEffect, useState, useCallback } from 'react';
 
-// IS_DEV: true when VITE_DEV_TOOLS=true in .env — survives production deploys.
-// Flip to false in .env only for the official public launch.
-const IS_DEV = import.meta.env.VITE_DEV_TOOLS === 'true';
+// IS_DEV: developer tools visibility.
+//   • Always ON during local development (`npm run dev`) via import.meta.env.DEV.
+//   • ON in built/deployed bundles only when VITE_DEV_TOOLS=true is present at build time.
+//   • Set VITE_DEV_TOOLS=false (and build in production mode) for the official public launch.
+// This guarantees Developer Mode can never silently disappear during development.
+const IS_DEV = import.meta.env.VITE_DEV_TOOLS === 'true' || import.meta.env.DEV === true;
 
 const DEV_MODE_KEY = 'skm_dev_mode_enabled';
 function readDevMode(): boolean {
@@ -32,6 +35,7 @@ import StickerArt from './StickerArt';
 import StickerDetailModal from './StickerDetailModal';
 import HealthProfileScreen from './HealthProfileScreen';
 import RewardsClubScreen from './RewardsClubScreen';
+import DevTestCenterScreen from './DevTestCenterScreen';
 import {
   isDevUser,
   devAddTestProtein, devAddStreakDays, devResetTodayEgg,
@@ -62,6 +66,7 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
   const [view,        setView]        = useState<View>('profile');
   const [showHealthProfile, setShowHealthProfile] = useState(false);
   const [showRewardsClub, setShowRewardsClub] = useState(false);
+  const [showTestCenter, setShowTestCenter] = useState(false);
   const [healthGoalKey, setHealthGoalKey] = useState(0);
   const [streak,      setStreak]      = useState<StreakInfo>({ currentStreak: 0, bestStreak: 0, lastActiveDate: '' });
   const [settings,    setSettings]    = useState<TrackerSettings | null>(null);
@@ -240,6 +245,15 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
     <RewardsClubScreen
       user={user}
       onBack={() => setShowRewardsClub(false)}
+    />
+  );
+
+  // ── DEVELOPER TEST CENTER ───────────────────────────────────
+  if (showTestCenter) return (
+    <DevTestCenterScreen
+      user={user}
+      onBack={() => setShowTestCenter(false)}
+      onDataChanged={load}
     />
   );
 
@@ -812,6 +826,9 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
                     <DevBtn disabled={devBusy} label="📢 Send Test Notification" onClick={() => runDevAction('Test Notification', () => devTriggerTestNotification(user.uid))} />
                     <DevBtn disabled={devBusy} label="♻ Refresh Profile Data"   onClick={() => runDevAction('Refresh', async () => { await load(); })} />
                     <DevBtn disabled={devBusy} label="📊 View Debug Information" onClick={() => setDevDebugOpen(d => !d)} />
+
+                    <DevSectionLabel label="Full Test Center" />
+                    <DevBtn disabled={devBusy} label="🧪 Open Full Test Center" onClick={() => setShowTestCenter(true)} />
 
                     {devDebugOpen && (
                       <div style={{
