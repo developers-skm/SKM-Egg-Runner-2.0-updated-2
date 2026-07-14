@@ -2,13 +2,16 @@
  * Single notification row inside the drawer.
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Egg, Flame, Trophy, Swords, Crown, QrCode,
   Bell, Megaphone, Zap, Star, Target, X,
   User, Gift, Sticker, Package, Calendar, Sparkles, HeartCrack,
 } from 'lucide-react';
 import { useNotifications } from '../../context/NotificationContext';
+import { useNavigation } from '../../context/NavigationContext';
+import { resolveNavTarget } from '../../services/notifications/notificationNavigation';
+import NotificationDetailModal from './NotificationDetailModal';
 import type { AppNotification, NotificationType } from '../../types/notifications';
 
 interface Props { notification: AppNotification }
@@ -77,6 +80,7 @@ function typeIcon(type: NotificationType | 'login'): React.ReactNode {
       return <Calendar size={s} color="#10B981" />;
     case 'reward_points_earned':
     case 'reward_redeemable':
+    case 'reward_redeemed':
       return <Gift size={s} color="#D71920" />;
     case 'membership_tier_up':
       return <Crown size={s} color="#D97706" />;
@@ -141,6 +145,7 @@ function typeAccent(type: NotificationType | 'login'): string {
       return '#D71920';
     case 'reward_points_earned':
     case 'reward_redeemable':
+    case 'reward_redeemed':
       return '#D71920';
     case 'membership_tier_up':
       return '#D97706';
@@ -163,14 +168,31 @@ function timeAgo(date: Date): string {
 }
 
 export default function NotificationItem({ notification: n }: Props) {
-  const { markRead, remove } = useNotifications();
+  const { markRead, remove, closeDrawer } = useNotifications();
+  const { navigateTo } = useNavigation();
   const accent = typeAccent(n.type);
+  const [tapped, setTapped] = useState(false);
+  const [showDetail, setShowDetail] = useState(false);
 
   const handleClick = async () => {
+    // Subtle tap animation
+    setTapped(true);
+    setTimeout(() => setTapped(false), 180);
+
     if (!n.read) await markRead(n.id);
+
+    const target = resolveNavTarget(n);
+    if (target) {
+      closeDrawer();
+      navigateTo(target);
+    } else {
+      // Unknown type — never crash, just show the notification's own details.
+      setShowDetail(true);
+    }
   };
 
   return (
+    <>
     <div
       onClick={handleClick}
       style={{
@@ -179,7 +201,8 @@ export default function NotificationItem({ notification: n }: Props) {
         background: n.read ? '#fff' : '#FFF8F8',
         borderBottom: '1px solid #F5F5F5',
         cursor: 'pointer',
-        transition: 'background 150ms ease',
+        transition: 'background 150ms ease, transform 120ms ease',
+        transform: tapped ? 'scale(0.985)' : 'scale(1)',
         position: 'relative',
       }}
       onMouseEnter={e => ((e.currentTarget as HTMLDivElement).style.background = '#FFF0F0')}
@@ -264,5 +287,9 @@ export default function NotificationItem({ notification: n }: Props) {
         <X size={13} />
       </button>
     </div>
+    {showDetail && (
+      <NotificationDetailModal notification={n} onClose={() => setShowDetail(false)} />
+    )}
+    </>
   );
 }

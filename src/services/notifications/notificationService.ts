@@ -43,6 +43,9 @@ function firestoreDocToNotification(id: string, data: Record<string, any>): AppN
     actions: data.actions,
     metadata: data.metadata,
     targetAll: data.targetAll,
+    route: data.route ?? undefined,
+    section: data.section ?? undefined,
+    entityId: data.entityId ?? undefined,
   };
 }
 
@@ -59,6 +62,11 @@ export interface CreateNotificationPayload {
   metadata?: Record<string, string | number | boolean>;
   expiresAt?: Date;
   targetAll?: boolean;
+  // Optional smart-navigation overrides — most callers omit these and let
+  // resolveNavTarget() derive the destination from `type` + `metadata`.
+  route?: string;
+  section?: string;
+  entityId?: string;
 }
 
 export async function createNotification(payload: CreateNotificationPayload): Promise<string> {
@@ -98,6 +106,9 @@ export async function createNotification(payload: CreateNotificationPayload): Pr
     actions:   payload.actions ?? null,
     metadata:  payload.metadata ?? null,
     targetAll: payload.targetAll ?? false,
+    route:     payload.route ?? null,
+    section:   payload.section ?? null,
+    entityId:  payload.entityId ?? null,
   });
   return ref.id;
 }
@@ -338,6 +349,18 @@ export async function notifyRewardRedeemable(userId: string, message: string): P
   renderNotify.rewardRedeemable(userId, message).catch(() => {});
 }
 
+/** Fired right after a successful redemption — distinct from notifyRewardRedeemable (which fires *before*, when a reward becomes affordable). */
+export async function notifyRewardRedeemed(userId: string, rewardTitle: string, couponId: string): Promise<void> {
+  await createNotification({
+    userId,
+    title: '✅ Reward Redeemed',
+    message: `You redeemed ${rewardTitle}. Find your coupon in History.`,
+    type: 'reward_redeemed',
+    priority: 'normal',
+    metadata: { rewardTitle, couponId },
+  });
+}
+
 export async function notifyMembershipTierUp(userId: string, tier: string): Promise<void> {
   await createNotification({
     userId,
@@ -351,7 +374,7 @@ export async function notifyMembershipTierUp(userId: string, tier: string): Prom
   renderNotify.membershipTierUp(userId, tier).catch(() => {});
 }
 
-export async function notifyCouponExpiring(userId: string, rewardTitle: string, daysLeft: number): Promise<void> {
+export async function notifyCouponExpiring(userId: string, rewardTitle: string, daysLeft: number, couponId?: string): Promise<void> {
   await createNotification({
     userId,
     title: '⏳ Coupon Expiring Soon',
@@ -359,7 +382,7 @@ export async function notifyCouponExpiring(userId: string, rewardTitle: string, 
     type: 'coupon_expiring',
     priority: 'normal',
     actions: [{ label: 'View Coupons', actionType: 'view_dashboard' }],
-    metadata: { rewardTitle, daysLeft },
+    metadata: couponId ? { rewardTitle, daysLeft, couponId } : { rewardTitle, daysLeft },
   });
   renderNotify.couponExpiring(userId, rewardTitle, daysLeft).catch(() => {});
 }
@@ -437,6 +460,7 @@ export async function notifyStickerUnlocked(
   userId: string,
   stickerName: string,
   rarity: 'Common' | 'Rare' | 'Epic' | 'Legendary',
+  days?: number,
 ): Promise<void> {
   const emoji =
     rarity === 'Legendary' ? '👑' :
@@ -462,7 +486,7 @@ export async function notifyStickerUnlocked(
     type: 'sticker_unlocked',
     priority: rarity === 'Legendary' ? 'urgent' : rarity === 'Epic' ? 'high' : 'normal',
     actions: [{ label: 'View Sticker', actionType: 'view_sticker' }],
-    metadata: { stickerName, rarity },
+    metadata: days != null ? { stickerName, rarity, days } : { stickerName, rarity },
   });
   renderNotify.stickerUnlocked(userId, stickerName, rarity).catch(() => {});
 }
@@ -501,7 +525,7 @@ export async function notifyStickerCollectionMilestone(
 
 // ─── Weekly batch notifications ──────────────────────────────────────────────
 
-export async function notifyWeekComplete(userId: string): Promise<void> {
+export async function notifyWeekComplete(userId: string, batchNumber?: number): Promise<void> {
   await createNotification({
     userId,
     title: '📦 Week Complete!',
@@ -509,6 +533,7 @@ export async function notifyWeekComplete(userId: string): Promise<void> {
     type: 'week_complete',
     priority: 'high',
     actions: [{ label: 'View Streak', actionType: 'view_streak' }],
+    metadata: batchNumber != null ? { batchNumber } : undefined,
   });
   renderNotify.weekComplete(userId).catch(() => {});
 }

@@ -53,10 +53,12 @@ interface HealthProfileScreenProps {
   user: User;
   onBack: () => void;
   onProfileSaved: () => void; // lets ProfileScreen/Dashboard know to refresh the goal
+  /** Pre-select a hub tab, e.g. when a notification routes here (Health Insight → 'insights', BMI Reminder → 'body'). */
+  initialTab?: HubTab;
 }
 
 type WizardStep = 0 | 1 | 2 | 3 | 4;
-type HubTab = 'overview' | 'body' | 'goals' | 'insights';
+export type HubTab = 'overview' | 'body' | 'goals' | 'insights';
 
 const GENDERS: Gender[] = ['Male', 'Female', 'Other'];
 const HUB_TABS: { key: HubTab; label: string }[] = [
@@ -66,11 +68,11 @@ const HUB_TABS: { key: HubTab; label: string }[] = [
   { key: 'insights', label: 'Insights' },
 ];
 
-export default function HealthProfileScreen({ user, onBack, onProfileSaved }: HealthProfileScreenProps) {
+export default function HealthProfileScreen({ user, onBack, onProfileSaved, initialTab }: HealthProfileScreenProps) {
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<HealthProfile | null>(null);
   const [mode, setMode] = useState<'view' | 'wizard' | 'edit'>('view');
-  const [tab, setTab] = useState<HubTab>('overview');
+  const [tab, setTab] = useState<HubTab>(initialTab ?? 'overview');
 
   // Live tracker data for the health score + protein recommendation context.
   const [consumedToday, setConsumedToday] = useState(0);

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { User } from 'firebase/auth';
 import { useAuth } from './AuthProvider';
+import { useNavigation } from '../context/NavigationContext';
 import DashboardScreen   from '../protein/DashboardScreen';
 import QRScanScreen      from '../protein/QRScanScreen';
 import ConsumptionScreen from '../protein/ConsumptionScreen';
@@ -37,6 +38,7 @@ export default function ProteinTrackerScreen({ onBack }: ProteinTrackerScreenPro
   const [tab,        setTab]        = useState<Tab>('dashboard');
   const [refreshKey, setRefreshKey] = useState(0);
   const [avatarBroken, setAvatarBroken] = useState(false);
+  const { pendingTarget } = useNavigation();
 
   // Preload html5-qrcode in the background so the scanner opens instantly
   useEffect(() => {
@@ -44,6 +46,16 @@ export default function ProteinTrackerScreen({ onBack }: ProteinTrackerScreenPro
   }, []);
 
   useEffect(() => { setAvatarBroken(false); }, [user?.photoURL]);
+
+  // ── Smart notification navigation — jump to the target tab ────────────────
+  // Doesn't call consumeTarget() itself: the destination screen (which knows
+  // whether it finished applying section/entityId) clears it once it's done,
+  // so a slow-loading destination screen doesn't lose the target mid-flight.
+  useEffect(() => {
+    if (pendingTarget?.screen === 'PROTEIN_TRACKER' && pendingTarget.tab !== tab) {
+      setTab(pendingTarget.tab);
+    }
+  }, [pendingTarget, tab]);
 
   const typedUser = user as User;
   if (!typedUser) return null;
@@ -131,19 +143,35 @@ export default function ProteinTrackerScreen({ onBack }: ProteinTrackerScreenPro
             onViewAnalytics={() => setTab('stats')}
             onViewLog={() => setTab('log')}
             onViewStreaks={() => setTab('streaks')}
+            navTarget={pendingTarget?.tab === 'dashboard' ? pendingTarget : null}
           />
         )}
         {tab === 'scan'    && <QRScanScreen      user={typedUser} onScanSuccess={handleScanSuccess} />}
         {tab === 'log'     && <ConsumptionScreen  user={typedUser} refreshKey={refreshKey} onScanQR={() => setTab('scan')} />}
         {tab === 'stats'   && <AnalyticsScreen    user={typedUser} refreshKey={refreshKey} />}
-        {tab === 'streaks' && <EggStreakScreen    user={typedUser} refreshKey={refreshKey} onScanQR={() => setTab('scan')} />}
-        {tab === 'rewards' && <RewardsClubScreen  user={typedUser} onBack={() => setTab('dashboard')} onScanQR={() => setTab('scan')} />}
+        {tab === 'streaks' && (
+          <EggStreakScreen
+            user={typedUser}
+            refreshKey={refreshKey}
+            onScanQR={() => setTab('scan')}
+            navTarget={pendingTarget?.tab === 'streaks' ? pendingTarget : null}
+          />
+        )}
+        {tab === 'rewards' && (
+          <RewardsClubScreen
+            user={typedUser}
+            onBack={() => setTab('dashboard')}
+            onScanQR={() => setTab('scan')}
+            navTarget={pendingTarget?.tab === 'rewards' ? pendingTarget : null}
+          />
+        )}
         {tab === 'profile' && (
           <ProfileScreen
             user={typedUser}
             onLogout={handleLogout}
             onDataDeleted={() => {}}
             onBackToMenu={onBack}
+            navTarget={pendingTarget?.tab === 'profile' ? pendingTarget : null}
           />
         )}
       </div>

@@ -15,6 +15,7 @@ import { db } from '../firebase/firebase';
 import { MEMBERSHIP_TIERS, POINTS_PER_SCAN, POINTS_PER_STREAK_MILESTONE, type MembershipTier, type MembershipTierDef } from '../../constants/rewards';
 import { addRewardTransaction, type RewardTransactionType } from './rewardTransactionService';
 import { notifyRewardPointsEarned, notifyMembershipTierUp } from '../notifications/notificationService';
+import { HapticService } from '../audio/hapticService';
 
 export interface RewardWallet {
   userId:         string;

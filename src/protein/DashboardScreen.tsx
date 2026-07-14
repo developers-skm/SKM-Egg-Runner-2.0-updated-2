@@ -12,6 +12,8 @@ import {
   EggIcon, FlameIcon, TargetIcon, TrendUpIcon, CameraIcon,
   FoodLogIcon, AnalyticsIcon, ChevronRightIcon, SunIcon, MoonIcon,
 } from './Icons';
+import { useNavigation, type NavTarget } from '../context/NavigationContext';
+import HighlightCard from './HighlightCard';
 
 interface DashboardScreenProps {
   user: User;
@@ -20,9 +22,17 @@ interface DashboardScreenProps {
   onViewLog: () => void;
   onViewStreaks: () => void;
   refreshKey: number;
+  /** Set by ProteinTrackerScreen when a tapped notification targets this screen. */
+  navTarget?: NavTarget | null;
 }
 
-export default function DashboardScreen({ user, onScanQR, onViewAnalytics, onViewLog, onViewStreaks, refreshKey }: DashboardScreenProps) {
+export default function DashboardScreen({ user, onScanQR, onViewAnalytics, onViewLog, onViewStreaks, refreshKey, navTarget }: DashboardScreenProps) {
+  const { consumeTarget } = useNavigation();
+  const highlightToday = navTarget?.entityId === 'today-protein-card';
+
+  useEffect(() => {
+    if (highlightToday) consumeTarget();
+  }, [highlightToday, consumeTarget]);
   const [todayStats, setTodayStats] = useState<DailyStats | null>(null);
   const [streak,     setStreak]     = useState<StreakInfo>({ currentStreak: 0, bestStreak: 0, lastActiveDate: '' });
   const [weekData,   setWeekData]   = useState<WeeklyData[]>([]);
@@ -86,7 +96,7 @@ export default function DashboardScreen({ user, onScanQR, onViewAnalytics, onVie
         <h1 style={{ fontSize: 22, fontWeight: 900, color: '#fff', margin: '0 0 14px', letterSpacing: '-0.3px' }}>{name}</h1>
 
         {/* Today at a glance */}
-        <div style={{ background: 'rgba(255,255,255,0.12)', borderRadius: 14, padding: '12px 14px', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <HighlightCard active={highlightToday} glowColor="#FFFFFF" style={{ background: 'rgba(255,255,255,0.12)', padding: '12px 14px', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ flex: 1 }}>
             <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.65)', margin: '0 0 2px', fontWeight: 600 }}>Today's Protein</p>
             <p style={{ fontSize: 26, fontWeight: 900, color: '#fff', margin: 0, lineHeight: 1 }}>{consumed}g</p>
@@ -103,7 +113,7 @@ export default function DashboardScreen({ user, onScanQR, onViewAnalytics, onVie
               <p style={{ fontSize: 12, fontWeight: 900, color: '#86efac', margin: 0 }}>Met!</p>
             </div>
           )}
-        </div>
+        </HighlightCard>
       </div>
 
       <div style={{ padding: '0 14px' }}>

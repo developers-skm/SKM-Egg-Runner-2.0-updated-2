@@ -14,6 +14,7 @@ import { db } from './services/firebase/firebase.ts';
 import { startRealtimeConfigSync } from './liveConfig.ts';
 import { soundManager } from './audio.ts';
 import { NotificationProvider } from './context/NotificationContext.tsx';
+import { NavigationProvider, useNavigation } from './context/NavigationContext.tsx';
 import NotificationDrawer from './components/notifications/NotificationDrawer.tsx';
 import './index.css';
 
@@ -53,8 +54,19 @@ function AppRoot() {
   const { user } = useAuth();
   const [profileStatus, setProfileStatus] = useState<ProfileStatus>('CHECKING');
   const [screen,        setScreen]        = useState<AppScreen>('MODULE_SELECT');
+  const { pendingTarget } = useNavigation();
   // Track the last UID we checked so re-renders don't re-fire the Firestore read
   const checkedUidRef = useRef<string | null>(null);
+
+  // ── Smart notification navigation — switch to the destination screen ──────
+  // ProteinTrackerScreen (once mounted) reads `pendingTarget` itself to pick
+  // its tab and calls consumeTarget() once applied; this effect only needs
+  // to get the user onto the right top-level screen first.
+  useEffect(() => {
+    if (pendingTarget?.screen === 'PROTEIN_TRACKER' && screen !== 'PROTEIN_TRACKER') {
+      setScreen('PROTEIN_TRACKER');
+    }
+  }, [pendingTarget, screen]);
 
   useEffect(() => {
     // user === undefined  → Firebase hasn't resolved yet (initial load)
@@ -230,9 +242,11 @@ function OnlineGate() {
   return (
     <AuthProvider>
       <NotificationProvider>
-        <AppRoot />
-        {/* Notification drawer — history panel, opened manually by user */}
-        <NotificationDrawer />
+        <NavigationProvider>
+          <AppRoot />
+          {/* Notification drawer — history panel, opened manually by user */}
+          <NotificationDrawer />
+        </NavigationProvider>
       </NotificationProvider>
     </AuthProvider>
   );

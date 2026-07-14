@@ -33,10 +33,12 @@ import {
 } from '../services/protein/milestoneRewardService';
 import StickerArt from './StickerArt';
 import StickerDetailModal from './StickerDetailModal';
-import HealthProfileScreen from './HealthProfileScreen';
+import HealthProfileScreen, { type HubTab as HealthHubTab } from './HealthProfileScreen';
 import RewardsClubScreen from './RewardsClubScreen';
 import DevTestCenterScreen from './DevTestCenterScreen';
 import { isDevUser } from '../services/protein/devTestCenterService';
+import { useNavigation, type NavTarget } from '../context/NavigationContext';
+import HighlightCard from './HighlightCard';
 
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
@@ -49,6 +51,8 @@ interface ProfileScreenProps {
   onLogout: () => Promise<void>;
   onDataDeleted: () => void;
   onBackToMenu: () => void;
+  /** Set by ProteinTrackerScreen when a tapped notification targets this screen. */
+  navTarget?: NavTarget | null;
 }
 
 interface ExtendedProfile {
@@ -61,9 +65,11 @@ interface ExtendedProfile {
   phone: string;
 }
 
-export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToMenu }: ProfileScreenProps) {
+export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToMenu, navTarget }: ProfileScreenProps) {
+  const { consumeTarget } = useNavigation();
   const [view,        setView]        = useState<View>('profile');
   const [showHealthProfile, setShowHealthProfile] = useState(false);
+  const [healthInitialTab, setHealthInitialTab] = useState<HealthHubTab>('overview');
   const [showRewardsClub, setShowRewardsClub] = useState(false);
   const [showTestCenter, setShowTestCenter] = useState(false);
   const [healthGoalKey, setHealthGoalKey] = useState(0);
@@ -112,6 +118,32 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setAvatarBroken(false); }, [user.photoURL]);
+
+  // ── Smart notification navigation ──────────────────────────────────────
+  // Waits for `loading` to finish so `claimed`/MILESTONES data is ready
+  // before trying to auto-open a specific sticker's modal.
+  useEffect(() => {
+    if (!navTarget || loading) return;
+
+    if (navTarget.section === 'health') {
+      const healthTab = navTarget.metadata?.healthTab;
+      setHealthInitialTab(healthTab === 'body' || healthTab === 'insights' || healthTab === 'goals' ? healthTab : 'overview');
+      setShowHealthProfile(true);
+      consumeTarget();
+      return;
+    }
+
+    if (navTarget.section === 'stickers') {
+      setShowHealthProfile(false);
+      setShowRewardsClub(false);
+      if (navTarget.entityId) {
+        const days = Number(navTarget.entityId);
+        const milestone = MILESTONES.find(m => m.days === days);
+        if (milestone) setActiveSticker(milestone);
+      }
+      consumeTarget();
+    }
+  }, [navTarget, loading, consumeTarget]);
 
   const playerName = user.displayName ?? 'Champion';
   const joinedDate = user.metadata.creationTime
@@ -221,6 +253,7 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
       user={user}
       onBack={() => setShowHealthProfile(false)}
       onProfileSaved={() => setHealthGoalKey(k => k + 1)}
+      initialTab={healthInitialTab}
     />
   );
 

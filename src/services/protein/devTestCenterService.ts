@@ -274,7 +274,7 @@ export async function devCompleteCurrentWeek(uid: string): Promise<void> {
   const wallet = await addPoints(uid, DEV_BATCH_BONUS_POINTS, 'adjustment', `Dev test — week ${week} complete bonus`);
   notifyRewardPointsEarned(uid, DEV_BATCH_BONUS_POINTS, wallet.currentPoints).catch(() => {});
   if (wallet.membership !== before.membership) notifyMembershipTierUp(uid, wallet.membership).catch(() => {});
-  notifyWeekComplete(uid).catch(() => {});
+  notifyWeekComplete(uid, week).catch(() => {});
 }
 
 export async function devUnlockNextWeek(uid: string): Promise<void> {
@@ -315,7 +315,7 @@ export async function devUnlockNextSticker(uid: string): Promise<void> {
   const next = MILESTONES.find(m => !claimed.includes(m.days));
   if (!next) return;
   await claimStickerWithPoints(uid, claimed, next.days);
-  notifyStickerUnlocked(uid, next.stickerName ?? `${next.days}-day sticker`, next.rarity).catch(() => {});
+  notifyStickerUnlocked(uid, next.stickerName ?? `${next.days}-day sticker`, next.rarity, next.days).catch(() => {});
 }
 
 export async function devUnlockRarity(uid: string, rarity: Rarity): Promise<void> {
@@ -507,12 +507,13 @@ export async function devResetEggs(uid: string): Promise<void> {
 // BMI  (uses saveHealthProfile — real health service, unmodified)
 // ─────────────────────────────────────────────────────────────────
 
-type BmiTarget = 'healthy' | 'underweight' | 'overweight' | 'obese';
+type BmiTarget = 'healthy' | 'underweight' | 'overweight' | 'obese' | 'athlete';
 
 /** Picks a weight (at a fixed 170cm height) that lands in the requested BMI band. */
 function weightForBmiBand(band: BmiTarget, heightCm = 170): number {
   const targetBmi = band === 'underweight' ? 17
     : band === 'healthy' ? 22
+    : band === 'athlete' ? 24.5 // higher lean mass, still in the healthy BMI band
     : band === 'overweight' ? 27.5
     : 33; // obese
   const m = heightCm / 100;
@@ -527,7 +528,7 @@ export async function devGenerateBmi(uid: string, band: BmiTarget): Promise<numb
     gender: 'Male',
     heightCm,
     weightKg,
-    activityLevel: 'Moderately Active' as ActivityLevel,
+    activityLevel: (band === 'athlete' ? 'Athlete' : 'Moderately Active') as ActivityLevel,
   });
   return calcBmi(heightCm, weightKg);
 }
@@ -748,7 +749,7 @@ export async function devPreviewRewardUnlock(uid: string): Promise<void> {
 export async function devPreviewStickerUnlock(uid: string): Promise<void> {
   const claimed = await getClaimedDays(uid);
   const mostRecent = [...MILESTONES].reverse().find(m => claimed.includes(m.days)) ?? MILESTONES[0];
-  await notifyStickerUnlocked(uid, mostRecent.stickerName ?? `${mostRecent.days}-day sticker`, mostRecent.rarity);
+  await notifyStickerUnlocked(uid, mostRecent.stickerName ?? `${mostRecent.days}-day sticker`, mostRecent.rarity, mostRecent.days);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -847,6 +848,13 @@ export async function devRestoreCoupon(uid: string, couponId: string): Promise<v
   const snap = await getDoc(ref);
   if (!snap.exists()) return;
   await updateDoc(ref, { status: 'available' as CouponStatus, expiryDate: dateKeyOffset(DEFAULT_COUPON_VALID_DAYS) });
+}
+
+/** Convenience one-tap version: restores the most recently used/expired coupon, if any. */
+export async function devRestoreMostRecentCoupon(uid: string): Promise<void> {
+  const coupons = await getUserCoupons(uid);
+  const target = coupons.find(c => c.status !== 'available');
+  if (target) await devRestoreCoupon(uid, target.id);
 }
 
 export async function devResetRedeemStore(uid: string): Promise<void> {

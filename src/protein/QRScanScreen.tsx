@@ -22,6 +22,7 @@ import {
 } from '../services/protein/proteinTrackerService';
 import { CameraIcon, EggIcon, CheckCircleIcon, AlertIcon } from './Icons';
 import { playChickSuccess, resumeAudioContext } from '../services/audio/chickSound';
+import { HapticService } from '../services/audio/hapticService';
 import {
   notifyProteinAdded, notifyProteinGoalComplete,
   notifyDuplicateEgg, notifyStreakMilestone, notifyProteinMilestone,
@@ -122,6 +123,7 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
   const openCamera = useCallback(async () => {
     console.log('[PROTEIN SCANNER OPEN]');
     resumeAudioContext(); // unlock AudioContext on this user gesture
+    HapticService.selection(); // major button press — opening the scanner
     setPhase('opening');
     setErrorMessage('');
     processingRef.current = false;
@@ -273,6 +275,7 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
 
       // Play chick chirp — only on genuine success, never on error/duplicate
       playChickSuccess();
+      HapticService.light();
 
       const [ts, stg] = await Promise.all([
         getTodayStats(user.uid),
@@ -297,24 +300,30 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
       });
       setPhase('success');
 
+      // Daily Streak Increased — a distinct haptic from the base scan-success tap.
+      if (streakIsNew) HapticService.medium();
+
       // Write Firestore notification docs — Cloud Function / FCM sends
       // real Android push notification to the device. No in-app popup shown.
       notifyProteinAdded(user.uid, PROTEIN_PER_EGG, todayProtein).catch(() => {});
 
       if (todayProtein >= todayGoal) {
         notifyProteinGoalComplete(user.uid, todayGoal).catch(() => {});
+        HapticService.success(); // Daily Goal Completed
       }
 
       // Streak milestones → push notification via FCM
       const streak = streakInfo.currentStreak;
       if ([3, 7, 14, 30, 60, 100].includes(streak)) {
         notifyStreakMilestone(user.uid, streak).catch(() => {});
+        HapticService.success(); // Weekly/streak milestone — success pattern
       }
 
       // Cumulative protein milestones → push notification via FCM
       const lifetimeMs = [100, 500, 1000, 5000];
       if (lifetimeMs.some(m => todayProtein >= m && todayProtein - PROTEIN_PER_EGG < m)) {
         notifyProteinMilestone(user.uid, todayProtein).catch(() => {});
+        HapticService.light(); // Protein Goal Completed (cumulative milestone)
       }
 
     } catch (err: unknown) {

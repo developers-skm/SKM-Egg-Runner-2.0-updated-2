@@ -10,6 +10,7 @@
 import { useState, useEffect } from 'react';
 import type { MilestoneDef } from '../services/protein/milestoneRewardService';
 import { claimMilestone } from '../services/protein/milestoneRewardService';
+import { HapticService } from '../services/audio/hapticService';
 import StickerArt from './StickerArt';
 
 interface MilestoneRewardModalProps {
@@ -38,6 +39,7 @@ export default function MilestoneRewardModal({ uid, milestone, onClaimed, onClos
   const handleClaim = async () => {
     if (claiming || phase === 'revealed' || phase === 'flying') return;
     setClaiming(true);
+    HapticService.selection(); // major button press — Claim
 
     setPhase('shaking');
     await delay(520);
@@ -47,6 +49,7 @@ export default function MilestoneRewardModal({ uid, milestone, onClaimed, onClos
 
     setPhase('revealed');
     spawnSparks();
+    HapticService.success(); // Sticker Unlocked
 
     try {
       await claimMilestone(uid, milestone.days);

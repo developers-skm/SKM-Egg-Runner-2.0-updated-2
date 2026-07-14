@@ -22,14 +22,19 @@ import {
 import { todayKey, dateKeyFor } from '../utils/dateHelpers';
 import MilestoneRewardModal from './MilestoneRewardModal';
 import StickerArt from './StickerArt';
+import { useNavigation, type NavTarget } from '../context/NavigationContext';
+import HighlightCard from './HighlightCard';
 
 interface EggStreakScreenProps {
   user: User;
   refreshKey: number;
   onScanQR: () => void;
+  /** Set by ProteinTrackerScreen when a tapped notification targets this screen. */
+  navTarget?: NavTarget | null;
 }
 
-export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStreakScreenProps) {
+export default function EggStreakScreen({ user, refreshKey, onScanQR, navTarget }: EggStreakScreenProps) {
+  const { consumeTarget } = useNavigation();
   const [data,            setData]            = useState<EggStreakData | null>(null);
   const [history,         setHistory]         = useState<StreakDayRecord[]>([]);
   const [claimed,         setClaimed]         = useState<Set<number>>(new Set());
@@ -53,6 +58,15 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
   }, [user.uid]);
 
   useEffect(() => { load(); }, [load, refreshKey]);
+
+  // ── Smart notification navigation ──────────────────────────────────────
+  const highlightBatchNumber = navTarget?.section === 'weekly-batches' && navTarget.entityId ? Number(navTarget.entityId) : null;
+  const highlightMilestoneDays = navTarget?.section === 'milestone-road' && navTarget.entityId ? Number(navTarget.entityId) : null;
+  useEffect(() => {
+    if (navTarget && (navTarget.section === 'weekly-batches' || navTarget.section === 'milestone-road')) {
+      consumeTarget();
+    }
+  }, [navTarget, consumeTarget]);
 
   if (loading) return <StreakSkeleton />;
   if (!data)   return null;
@@ -275,9 +289,8 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
 
                 {/* ── CURRENT batch card ── */}
                 {batch.isCurrent && (
-                  <div style={{
+                  <HighlightCard active={highlightBatchNumber === batch.batchNumber} glowColor="#F59E0B" style={{
                     marginBottom: 12, padding: '16px',
-                    borderRadius: 18,
                     background: 'linear-gradient(135deg, #FFF7ED, #FFFBF0)',
                     border: '2px solid #F59E0B',
                     boxShadow: '0 4px 20px rgba(245,158,11,0.18)',
@@ -379,7 +392,7 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
                     <p style={{ fontSize: 11, fontWeight: 700, color: '#92400E', margin: 0 }}>
                       🎯 {7 - daysCompleted} day{7 - daysCompleted !== 1 ? 's' : ''} remaining in this batch
                     </p>
-                  </div>
+                  </HighlightCard>
                 )}
 
                 {/* ── LOCKED batch card ── */}
@@ -412,9 +425,8 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
 
                 {/* ── COMPLETED batch card ── */}
                 {batch.isComplete && (
-                  <div style={{
+                  <HighlightCard active={highlightBatchNumber === batch.batchNumber} glowColor="#22C55E" style={{
                     marginBottom: 10, padding: '14px',
-                    borderRadius: 16,
                     background: '#F0FDF4',
                     border: '1.5px solid #86EFAC',
                   }}>
@@ -454,7 +466,7 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
                         }} />
                       ))}
                     </div>
-                  </div>
+                  </HighlightCard>
                 )}
 
               </div>
@@ -489,9 +501,9 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
             const daysLeft  = Math.max(0, m.days - currentStreak);
 
             return (
-              <div key={m.days} style={{
+              <HighlightCard key={m.days} active={highlightMilestoneDays === m.days} glowColor={m.color} style={{
                 display: 'flex', alignItems: 'center', gap: 12,
-                marginBottom: 10, padding: '10px 12px', borderRadius: 14,
+                marginBottom: 10, padding: '10px 12px',
                 background: isClaimed ? '#F0FDF4' : claimable ? '#FFFBEB' : '#FAFAFA',
                 border: claimable ? '1.5px solid #F59E0B' : isClaimed ? '1.5px solid #86EFAC' : '1.5px solid transparent',
                 opacity: reached ? 1 : 0.55,
@@ -557,7 +569,7 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
                     {daysLeft}d left
                   </div>
                 )}
-              </div>
+              </HighlightCard>
             );
           })}
         </div>

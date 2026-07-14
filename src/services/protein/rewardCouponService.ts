@@ -17,6 +17,7 @@ import {
 import { db } from '../firebase/firebase';
 import { DEFAULT_COUPON_VALID_DAYS } from '../../constants/rewards';
 import { spendPoints } from './rewardWalletService';
+import { notifyRewardRedeemed } from '../notifications/notificationService';
 
 export interface RewardCatalogItem {
   id:              string;
@@ -97,6 +98,8 @@ export async function redeemReward(uid: string, item: RewardCatalogItem): Promis
     status: 'available' as CouponStatus,
     createdAt: serverTimestamp(),
   });
+
+  notifyRewardRedeemed(uid, item.productName, ref.id).catch(() => {});
 
   return {
     id: ref.id,

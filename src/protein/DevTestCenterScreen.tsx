@@ -4,24 +4,29 @@ import {
   ChevronLeft, Wrench, Database, Bell, Egg, Coins, Flame, Calendar,
   Award, BookOpen, Ticket, Gift, Crown, Ruler,
   RefreshCw, Search, ChevronDown, X, CheckCircle2, XCircle,
-  AlertTriangle, User as UserIcon, BarChart3, Trash2,
+  AlertTriangle, User as UserIcon, BarChart3, Trash2, Heart, Sparkles,
 } from 'lucide-react';
 import {
   getDevEnvSnapshot, type DevEnvSnapshot,
   getDevDebugSnapshot, type DevDebugSnapshot,
   devAddProtein, devResetProtein, devSetCustomProtein,
-  devAddPoints, devResetPoints,
+  devAddPoints, devRemovePoints, devResetPoints, devGenerateRewardTransaction,
   devAddStreak, devResetStreak, devSetCustomStreak,
   devCompleteCurrentWeek, devResetWeekly,
   devUnlockNextSticker, devUnlockRarity, devUnlockAllStickers, devResetStickers,
+  devPreviewStickerUnlock, devPreviewMembershipUpgrade, devPreviewRewardUnlock,
   devUnlockNextPassport, devCompleteAllPassports, devResetPassport,
   devNotify, devClearNotifications, devGenerateSampleNotifications,
+  devMarkAllNotificationsRead, devNotifyWeeklyReminder, devNotifyDailyReminder,
   devGenerateCoupon, devExpireCoupons, devResetCoupons,
   devResetRewards,
-  devRedeemCatalogItemNear, devRedeemFeaturedProduct,
+  devRedeemCatalogItemNear, devRedeemFeaturedProduct, devRestoreMostRecentCoupon, devResetRedeemStore,
   devSetMembership,
   devResetEggs, devSetTodayEggs, devSimulateLifetimeEggs, devGenerate365DayHistory,
   devGenerateBmi, devResetBmi, devSetCustomBmi,
+  devCompleteDailyGoal, devFailDailyGoal, devPerfectWeek, devPerfectMonth, devResetHealthProgress,
+  devFillLast7Days, devFillLast30Days, devRandomHistory, devPerfectHistory, devBrokenStreakHistory, devResetHistory,
+  devSetRandomAvatar, devSetRandomUsername, devResetProfile,
   devSyncUser, devReloadUser, devClearCache, devRefreshCatalog,
   devFactoryReset,
 } from '../services/protein/devTestCenterService';
@@ -62,6 +67,7 @@ export default function DevTestCenterScreen({ user, onBack, onDataChanged }: Dev
   const [customStreak, setCustomStreak] = useState('');
   const [customProtein, setCustomProtein] = useState('');
   const [customBmi, setCustomBmi] = useState('');
+  const [customPoints, setCustomPoints] = useState('');
 
   const refresh = useCallback(async () => {
     try {
@@ -218,59 +224,84 @@ export default function DevTestCenterScreen({ user, onBack, onDataChanged }: Dev
         </DevSection>
 
         {/* ── Reward Testing ── */}
-        <DevSection title="Reward Testing" icon={<Coins size={14} color={DEV.accent} />} open={openSections.has('Reward Testing')} onToggle={() => toggleSection('Reward Testing')} visible={matches('reward points wallet membership coupons store')}>
+        <DevSection title="Reward Testing" icon={<Coins size={14} color={DEV.accent} />} open={openSections.has('Reward Testing')} onToggle={() => toggleSection('Reward Testing')} visible={matches('reward points wallet membership coupons store add remove generate transaction preview unlock animation')}>
           {[10, 25, 50, 100, 250, 500, 1000].map(p => (
             <DevBtn key={p} disabled={busy} label={`+${p} Points`} onClick={() => runAction(`+${p} Points`, () => devAddPoints(user.uid, p))} />
           ))}
-          <DevBtn disabled={busy} danger label="Reset Points" onClick={() => requestConfirm('Reset Points', true, () => devResetPoints(user.uid))} />
+          <CustomValueRow
+            placeholder="Remove reward points"
+            value={customPoints}
+            onChange={setCustomPoints}
+            disabled={busy}
+            submitLabel="Remove"
+            onSubmit={() => {
+              const n = parseInt(customPoints, 10);
+              if (!Number.isFinite(n) || n <= 0) return;
+              runAction(`Remove ${n} Points`, () => devRemovePoints(user.uid, n));
+              setCustomPoints('');
+            }}
+          />
+          <DevBtn disabled={busy} label="Generate Reward Transaction" onClick={() => runAction('Generate Reward Transaction', () => devGenerateRewardTransaction(user.uid))} />
+          <DevBtn disabled={busy} label="Preview Reward Unlock Animation" onClick={() => runAction('Preview Reward Unlock Animation', () => devPreviewRewardUnlock(user.uid))} />
+          <DevBtn disabled={busy} danger label="Reset Reward Wallet" onClick={() => requestConfirm('Reset Reward Wallet', true, () => devResetPoints(user.uid))} />
         </DevSection>
 
         {/* ── Sticker Testing ── */}
-        <DevSection title="Sticker Testing" icon={<Award size={14} color={DEV.accent} />} open={openSections.has('Sticker Testing')} onToggle={() => toggleSection('Sticker Testing')} visible={matches('sticker testing collection profile notifications reward progress')}>
-          <DevBtn disabled={busy} label="Unlock Next" onClick={() => runAction('Unlock Next Sticker', () => devUnlockNextSticker(user.uid))} />
+        <DevSection title="Sticker Testing" icon={<Award size={14} color={DEV.accent} />} open={openSections.has('Sticker Testing')} onToggle={() => toggleSection('Sticker Testing')} visible={matches('sticker testing collection profile notifications reward progress preview unlock animation modal share flow')}>
+          <DevBtn disabled={busy} label="Unlock Next Sticker" onClick={() => runAction('Unlock Next Sticker', () => devUnlockNextSticker(user.uid))} />
           {(['Common', 'Rare', 'Epic', 'Legendary'] as Rarity[]).map(r => (
             <DevBtn key={r} disabled={busy} label={`Unlock ${r}`} onClick={() => runAction(`Unlock All ${r}`, () => devUnlockRarity(user.uid, r))} />
           ))}
-          <DevBtn disabled={busy} label="Unlock All" onClick={() => runAction('Unlock All Stickers', () => devUnlockAllStickers(user.uid))} />
-          <DevBtn disabled={busy} danger label="Reset Stickers" onClick={() => requestConfirm('Reset Stickers', true, () => devResetStickers(user.uid))} />
+          <DevBtn disabled={busy} label="Unlock All Stickers" onClick={() => runAction('Unlock All Stickers', () => devUnlockAllStickers(user.uid))} />
+          <DevBtn disabled={busy} label="Preview Sticker Unlock Animation" onClick={() => runAction('Preview Sticker Unlock Animation', () => devPreviewStickerUnlock(user.uid))} />
+          <p style={{ fontSize: 10, color: DEV.textFaint, margin: '2px 0 4px', lineHeight: 1.5 }}>
+            Preview Modal / Share Flow: open Profile → Sticker Collection → tap any unlocked sticker to view the real detail modal and its Share action.
+          </p>
+          <DevBtn disabled={busy} danger label="Reset Sticker Collection" onClick={() => requestConfirm('Reset Sticker Collection', true, () => devResetStickers(user.uid))} />
         </DevSection>
 
         {/* ── Membership Testing ── */}
-        <DevSection title="Membership Testing" icon={<Crown size={14} color={DEV.accent} />} open={openSections.has('Membership Testing')} onToggle={() => toggleSection('Membership Testing')} visible={matches('membership testing bronze silver gold platinum diamond')}>
+        <DevSection title="Membership Testing" icon={<Crown size={14} color={DEV.accent} />} open={openSections.has('Membership Testing')} onToggle={() => toggleSection('Membership Testing')} visible={matches('membership testing bronze silver gold platinum diamond auto recalculate preview upgrade animation')}>
           {MEMBERSHIP_TIERS.map(t => (
-            <DevBtn key={t.tier} disabled={busy} label={t.tier} onClick={() => runAction(`Switch to ${t.tier}`, () => devSetMembership(user.uid, t.tier as MembershipTier))} />
+            <DevBtn key={t.tier} disabled={busy} label={`Set ${t.tier}`} onClick={() => runAction(`Switch to ${t.tier}`, () => devSetMembership(user.uid, t.tier as MembershipTier))} />
           ))}
-          <DevBtn disabled={busy} label="Auto Recalculate" onClick={() => runAction('Recalculate Membership', () => devSyncUser(user.uid))} />
+          <DevBtn disabled={busy} label="Auto Recalculate Membership" onClick={() => runAction('Recalculate Membership', () => devSyncUser(user.uid))} />
+          <DevBtn disabled={busy} label="Preview Membership Upgrade Animation" onClick={() => runAction('Preview Membership Upgrade Animation', () => devPreviewMembershipUpgrade(user.uid))} />
         </DevSection>
 
         {/* ── Coupon Testing ── */}
-        <DevSection title="Coupon Testing" icon={<Ticket size={14} color={DEV.accent} />} open={openSections.has('Coupon Testing')} onToggle={() => toggleSection('Coupon Testing')} visible={matches('coupon testing generate expire')}>
+        <DevSection title="Coupon Testing" icon={<Ticket size={14} color={DEV.accent} />} open={openSections.has('Coupon Testing')} onToggle={() => toggleSection('Coupon Testing')} visible={matches('coupon testing generate expire redeem reset')}>
           {[10, 20, 50].map(v => (
-            <DevBtn key={v} disabled={busy} label={`Generate ₹${v}`} onClick={() => runAction(`Generate ₹${v} Coupon`, () => devGenerateCoupon(user.uid, v))} />
+            <DevBtn key={v} disabled={busy} label={`Generate ₹${v} Coupon`} onClick={() => runAction(`Generate ₹${v} Coupon`, () => devGenerateCoupon(user.uid, v))} />
           ))}
-          <DevBtn disabled={busy} label="Generate All" onClick={() => runAction('Generate All Coupons', async () => { await devGenerateCoupon(user.uid, 10); await devGenerateCoupon(user.uid, 20); await devGenerateCoupon(user.uid, 50); })} />
-          <DevBtn disabled={busy} danger label="Expire All" onClick={() => requestConfirm('Expire All Coupons', false, () => devExpireCoupons(user.uid))} />
+          <DevBtn disabled={busy} label="Generate All Coupons" onClick={() => runAction('Generate All Coupons', async () => { await devGenerateCoupon(user.uid, 10); await devGenerateCoupon(user.uid, 20); await devGenerateCoupon(user.uid, 50); })} />
+          <DevBtn disabled={busy} danger label="Expire All Coupons" onClick={() => requestConfirm('Expire All Coupons', false, () => devExpireCoupons(user.uid))} />
+          <DevBtn disabled={busy} label="Redeem Coupon" onClick={() => runAction('Redeem Coupon', async () => { await devRedeemCatalogItemNear(user.uid, 10); })} />
           <DevBtn disabled={busy} danger label="Reset Coupons" onClick={() => requestConfirm('Reset Coupons', true, () => devResetCoupons(user.uid))} />
         </DevSection>
 
         {/* ── Notifications ── */}
-        <DevSection title="Notifications" icon={<Bell size={14} color={DEV.accent} />} open={openSections.has('Notifications')} onToggle={() => toggleSection('Notifications')} visible={matches('notifications test scan reward sticker membership coupon reminder')}>
-          <DevBtn disabled={busy} label="Test Scan Notification" onClick={() => runAction('Test Scan Notification', () => devNotify.welcome(user.uid))} />
-          <DevBtn disabled={busy} label="Test Reward Notification" onClick={() => runAction('Test Reward Notification', () => devNotify.reward(user.uid))} />
-          <DevBtn disabled={busy} label="Test Sticker Unlock" onClick={() => runAction('Test Sticker Unlock', () => devNotify.sticker(user.uid))} />
-          <DevBtn disabled={busy} label="Test Membership Upgrade" onClick={() => runAction('Test Membership Upgrade', () => devNotify.test(user.uid))} />
-          <DevBtn disabled={busy} label="Test Coupon" onClick={() => runAction('Test Coupon Notification', () => devNotify.coupon(user.uid))} />
-          <DevBtn disabled={busy} label="Test Reminder" onClick={() => runAction('Test Reminder Notification', () => devNotify.reminder(user.uid))} />
+        <DevSection title="Notifications" icon={<Bell size={14} color={DEV.accent} />} open={openSections.has('Notifications')} onToggle={() => toggleSection('Notifications')} visible={matches('notifications create scan reward sticker membership coupon reminder weekly daily clear mark read')}>
+          <DevBtn disabled={busy} label="Create Scan Notification" onClick={() => runAction('Create Scan Notification', () => devNotify.welcome(user.uid))} />
+          <DevBtn disabled={busy} label="Create Reward Notification" onClick={() => runAction('Create Reward Notification', () => devNotify.reward(user.uid))} />
+          <DevBtn disabled={busy} label="Create Sticker Notification" onClick={() => runAction('Create Sticker Notification', () => devNotify.sticker(user.uid))} />
+          <DevBtn disabled={busy} label="Create Membership Notification" onClick={() => runAction('Create Membership Notification', () => devNotify.test(user.uid))} />
+          <DevBtn disabled={busy} label="Create Coupon Notification" onClick={() => runAction('Create Coupon Notification', () => devNotify.coupon(user.uid))} />
+          <DevBtn disabled={busy} label="Create Reminder Notification" onClick={() => runAction('Create Reminder Notification', () => devNotify.reminder(user.uid))} />
+          <DevBtn disabled={busy} label="Create Weekly Reminder" onClick={() => runAction('Create Weekly Reminder', () => devNotifyWeeklyReminder(user.uid))} />
+          <DevBtn disabled={busy} label="Create Daily Reminder" onClick={() => runAction('Create Daily Reminder', () => devNotifyDailyReminder(user.uid))} />
           <DevBtn disabled={busy} label="Generate Sample Set" onClick={() => runAction('Generate Sample Notifications', () => devGenerateSampleNotifications(user.uid))} />
+          <DevBtn disabled={busy} label="Mark All Read" onClick={() => runAction('Mark All Notifications Read', () => devMarkAllNotificationsRead(user.uid))} />
           <DevBtn disabled={busy} danger label="Clear Notifications" onClick={() => requestConfirm('Clear All Notifications', true, () => devClearNotifications(user.uid))} />
         </DevSection>
 
         {/* ── BMI ── */}
-        <DevSection title="BMI" icon={<Ruler size={14} color={DEV.accent} />} open={openSections.has('BMI')} onToggle={() => toggleSection('BMI')} visible={matches('bmi health intelligence recommendations insights')}>
+        <DevSection title="BMI" icon={<Ruler size={14} color={DEV.accent} />} open={openSections.has('BMI')} onToggle={() => toggleSection('BMI')} visible={matches('bmi health intelligence recommendations insights athlete')}>
           <DevBtn disabled={busy} label="Healthy" onClick={() => runAction('Generate Healthy BMI', async () => { await devGenerateBmi(user.uid, 'healthy'); })} />
           <DevBtn disabled={busy} label="Underweight" onClick={() => runAction('Generate Underweight BMI', async () => { await devGenerateBmi(user.uid, 'underweight'); })} />
           <DevBtn disabled={busy} label="Overweight" onClick={() => runAction('Generate Overweight BMI', async () => { await devGenerateBmi(user.uid, 'overweight'); })} />
           <DevBtn disabled={busy} label="Obese" onClick={() => runAction('Generate Obese BMI', async () => { await devGenerateBmi(user.uid, 'obese'); })} />
+          <DevBtn disabled={busy} label="Athlete" onClick={() => runAction('Generate Athlete BMI', async () => { await devGenerateBmi(user.uid, 'athlete'); })} />
           <CustomValueRow
             placeholder="Set custom BMI"
             value={customBmi}
@@ -286,48 +317,77 @@ export default function DevTestCenterScreen({ user, onBack, onDataChanged }: Dev
           <DevBtn disabled={busy} danger label="Reset BMI" onClick={() => requestConfirm('Reset BMI', true, () => devResetBmi(user.uid))} />
         </DevSection>
 
+        {/* ── Health Testing ── */}
+        <DevSection title="Health Testing" icon={<Heart size={14} color={DEV.accent} />} open={openSections.has('Health Testing')} onToggle={() => toggleSection('Health Testing')} visible={matches('health testing daily goal complete fail perfect week month reset progress')}>
+          <DevBtn disabled={busy} label="Complete Daily Goal" onClick={() => runAction('Complete Daily Goal', () => devCompleteDailyGoal(user.uid))} />
+          <DevBtn disabled={busy} label="Fail Daily Goal" onClick={() => runAction('Fail Daily Goal', () => devFailDailyGoal(user.uid))} />
+          <DevBtn disabled={busy} label="Perfect Week" onClick={() => runAction('Perfect Week', () => devPerfectWeek(user.uid))} />
+          <DevBtn disabled={busy} label="Perfect Month" onClick={() => runAction('Perfect Month', () => devPerfectMonth(user.uid))} />
+          <DevBtn disabled={busy} danger label="Reset Health Progress" onClick={() => requestConfirm('Reset Health Progress', true, () => devResetHealthProgress(user.uid))} />
+        </DevSection>
+
         {/* ── Weekly Batch ── */}
-        <DevSection title="Weekly Batch" icon={<Calendar size={14} color={DEV.accent} />} open={openSections.has('Weekly Batch')} onToggle={() => toggleSection('Weekly Batch')} visible={matches('weekly batch complete week month')}>
-          <DevBtn disabled={busy} label="Complete Week" onClick={() => runAction('Complete Current Week', () => devCompleteCurrentWeek(user.uid))} />
-          <DevBtn disabled={busy} label="Complete Month" onClick={() => runAction('Complete Month', async () => { for (let i = 0; i < 4; i++) await devCompleteCurrentWeek(user.uid); })} />
-          <DevBtn disabled={busy} danger label="Reset Weekly Progress" onClick={() => requestConfirm('Reset Weekly Progress', true, () => devResetWeekly(user.uid))} />
+        <DevSection title="Weekly Batch" icon={<Calendar size={14} color={DEV.accent} />} open={openSections.has('Weekly Batch')} onToggle={() => toggleSection('Weekly Batch')} visible={matches('weekly batch complete week month all preview completion animation')}>
+          <DevBtn disabled={busy} label="Complete Current Week" onClick={() => runAction('Complete Current Week', () => devCompleteCurrentWeek(user.uid))} />
+          <DevBtn disabled={busy} label="Complete Current Month" onClick={() => runAction('Complete Current Month', async () => { for (let i = 0; i < 4; i++) await devCompleteCurrentWeek(user.uid); })} />
+          <DevBtn disabled={busy} label="Complete All Weekly Batches" onClick={() => runAction('Complete All Weekly Batches', async () => { for (let i = 0; i < 12; i++) await devCompleteCurrentWeek(user.uid); })} />
+          <DevBtn disabled={busy} label="Preview Weekly Completion Animation" onClick={() => runAction('Preview Weekly Completion Animation', () => devCompleteCurrentWeek(user.uid))} />
+          <DevBtn disabled={busy} danger label="Reset Weekly Batches" onClick={() => requestConfirm('Reset Weekly Batches', true, () => devResetWeekly(user.uid))} />
+        </DevSection>
+
+        {/* ── 30-Day History Testing ── */}
+        <DevSection title="30-Day History Testing" icon={<Sparkles size={14} color={DEV.accent} />} open={openSections.has('30-Day History Testing')} onToggle={() => toggleSection('30-Day History Testing')} visible={matches('30-day history testing fill last random perfect broken streak reset')}>
+          <DevBtn disabled={busy} label="Fill Last 7 Days" onClick={() => runAction('Fill Last 7 Days', () => devFillLast7Days(user.uid))} />
+          <DevBtn disabled={busy} label="Fill Last 30 Days" onClick={() => runAction('Fill Last 30 Days', () => devFillLast30Days(user.uid))} />
+          <DevBtn disabled={busy} label="Random History" onClick={() => runAction('Random History', () => devRandomHistory(user.uid))} />
+          <DevBtn disabled={busy} label="Perfect History" onClick={() => runAction('Perfect History', () => devPerfectHistory(user.uid))} />
+          <DevBtn disabled={busy} label="Broken Streak" onClick={() => runAction('Broken Streak', () => devBrokenStreakHistory(user.uid))} />
+          <DevBtn disabled={busy} danger label="Reset History" onClick={() => requestConfirm('Reset History', true, () => devResetHistory(user.uid))} />
+        </DevSection>
+
+        {/* ── Redeem Store Testing ── */}
+        <DevSection title="Redeem Store Testing" icon={<Gift size={14} color={DEV.accent} />} open={openSections.has('Redeem Store Testing')} onToggle={() => toggleSection('Redeem Store Testing')} visible={matches('redeem store testing unlock products generate discount redeem restore reset')}>
+          <DevBtn disabled={busy} label="Unlock Products" onClick={() => runAction('Unlock Products', async () => { await devRefreshCatalog(); })} />
+          <DevBtn disabled={busy} label="Generate Discount" onClick={() => runAction('Generate Discount', () => devGenerateCoupon(user.uid, 15))} />
+          <DevBtn disabled={busy} label="Redeem Product" onClick={() => runAction('Redeem Product', async () => { await devRedeemFeaturedProduct(user.uid); })} />
+          <DevBtn disabled={busy} label="Restore Product" onClick={() => runAction('Restore Most Recent Coupon', () => devRestoreMostRecentCoupon(user.uid))} />
+          <DevBtn disabled={busy} danger label="Reset Redeem Store" onClick={() => requestConfirm('Reset Redeem Store', true, () => devResetRedeemStore(user.uid))} />
         </DevSection>
 
         {/* ── Passport ── */}
-        <DevSection title="Passport" icon={<BookOpen size={14} color={DEV.accent} />} open={openSections.has('Passport')} onToggle={() => toggleSection('Passport')} visible={matches('passport stamp')}>
-          <DevBtn disabled={busy} label="Unlock Next Stamp" onClick={() => runAction('Unlock Next Passport Stamp', () => devUnlockNextPassport(user.uid))} />
+        <DevSection title="Passport Testing" icon={<BookOpen size={14} color={DEV.accent} />} open={openSections.has('Passport Testing')} onToggle={() => toggleSection('Passport Testing')} visible={matches('passport testing unlock stamp complete reset')}>
+          <DevBtn disabled={busy} label="Unlock Stamp" onClick={() => runAction('Unlock Next Passport Stamp', () => devUnlockNextPassport(user.uid))} />
           <DevBtn disabled={busy} label="Complete Passport" onClick={() => runAction('Complete Passport', () => devCompleteAllPassports(user.uid))} />
           <DevBtn disabled={busy} danger label="Reset Passport" onClick={() => requestConfirm('Reset Passport', true, () => devResetPassport(user.uid))} />
         </DevSection>
 
-        {/* ── Redeem Store ── */}
-        <DevSection title="Redeem Store" icon={<Gift size={14} color={DEV.accent} />} open={openSections.has('Redeem Store')} onToggle={() => toggleSection('Redeem Store')} visible={matches('redeem store featured product refund')}>
-          <DevBtn disabled={busy} label="Redeem ₹10 Coupon" onClick={() => runAction('Redeem ₹10 Coupon', async () => { await devRedeemCatalogItemNear(user.uid, 10); })} />
-          <DevBtn disabled={busy} label="Redeem ₹20 Coupon" onClick={() => runAction('Redeem ₹20 Coupon', async () => { await devRedeemCatalogItemNear(user.uid, 20); })} />
-          <DevBtn disabled={busy} label="Redeem Featured Product" onClick={() => runAction('Redeem Featured Product', async () => { await devRedeemFeaturedProduct(user.uid); })} />
-          <p style={{ fontSize: 10, color: DEV.textFaint, margin: '2px 0 0', lineHeight: 1.5 }}>
-            Refund a specific coupon from the Coupons tab of the app (dev-only credit-back, no production refund flow exists).
-          </p>
+        {/* ── Profile Testing ── */}
+        <DevSection title="Profile Testing" icon={<UserIcon size={14} color={DEV.accent} />} open={openSections.has('Profile Testing')} onToggle={() => toggleSection('Profile Testing')} visible={matches('profile testing change avatar random username reset')}>
+          <DevBtn disabled={busy} label="Change Avatar" onClick={() => runAction('Change Avatar', () => devSetRandomAvatar(user.uid))} />
+          <DevBtn disabled={busy} label="Random Avatar" onClick={() => runAction('Random Avatar', () => devSetRandomAvatar(user.uid))} />
+          <DevBtn disabled={busy} label="Random Username" onClick={() => runAction('Random Username', () => devSetRandomUsername(user.uid))} />
+          <DevBtn disabled={busy} danger label="Reset Profile" onClick={() => requestConfirm('Reset Profile', true, () => devResetProfile(user.uid))} />
         </DevSection>
 
         {/* ── Statistics ── */}
         <DevSection title="Statistics" icon={<BarChart3 size={14} color={DEV.accent} />} open={openSections.has('Statistics')} onToggle={() => toggleSection('Statistics')} visible={matches('statistics eggs history activity timeline')}>
           <DevBtn disabled={busy} label="100 Eggs Today" onClick={() => runAction('Set 100 Eggs Today', () => devSetTodayEggs(user.uid, 100))} />
-          <DevBtn disabled={busy} label="1000 Eggs (Lifetime)" onClick={() => runAction('Simulate 1000 Lifetime Eggs', () => devSimulateLifetimeEggs(user.uid, 1000))} />
+          <DevBtn disabled={busy} label="1000 Eggs" onClick={() => runAction('Simulate 1000 Lifetime Eggs', () => devSimulateLifetimeEggs(user.uid, 1000))} />
           <DevBtn disabled={busy} label="365 Day History" onClick={() => runAction('Generate 365-Day History', () => devGenerate365DayHistory(user.uid))} />
           <DevBtn disabled={busy} label="Generate Activity Timeline" onClick={() => runAction('Generate Activity Timeline', () => devGenerateSampleNotifications(user.uid))} />
         </DevSection>
 
         {/* ── Data Reset ── */}
-        <DevSection title="Data Reset" icon={<Trash2 size={14} color={DEV.accent} />} open={openSections.has('Data Reset')} onToggle={() => toggleSection('Data Reset')} visible={matches('data reset factory')}>
+        <DevSection title="Data Reset" icon={<Trash2 size={14} color={DEV.accent} />} open={openSections.has('Data Reset')} onToggle={() => toggleSection('Data Reset')} visible={matches('data reset factory dashboard')}>
           <DevBtn disabled={busy} danger label="Reset Rewards" onClick={() => requestConfirm('Reset Rewards', true, () => devResetRewards(user.uid))} />
           <DevBtn disabled={busy} danger label="Reset Streak" onClick={() => requestConfirm('Reset Streak', true, () => devResetStreak(user.uid))} />
           <DevBtn disabled={busy} danger label="Reset Protein" onClick={() => requestConfirm('Reset Protein', true, () => devResetProtein(user.uid))} />
-          <DevBtn disabled={busy} danger label="Reset Membership" onClick={() => requestConfirm('Reset Membership (→ Bronze)', true, () => devSetMembership(user.uid, 'Bronze'))} />
-          <DevBtn disabled={busy} danger label="Reset Stickers" onClick={() => requestConfirm('Reset Stickers', true, () => devResetStickers(user.uid))} />
           <DevBtn disabled={busy} danger label="Reset Coupons" onClick={() => requestConfirm('Reset Coupons', true, () => devResetCoupons(user.uid))} />
+          <DevBtn disabled={busy} danger label="Reset Stickers" onClick={() => requestConfirm('Reset Stickers', true, () => devResetStickers(user.uid))} />
+          <DevBtn disabled={busy} danger label="Reset Membership" onClick={() => requestConfirm('Reset Membership (→ Bronze)', true, () => devSetMembership(user.uid, 'Bronze'))} />
           <DevBtn disabled={busy} danger label="Reset Notifications" onClick={() => requestConfirm('Reset Notifications', true, () => devClearNotifications(user.uid))} />
-          <DevBtn disabled={busy} danger label="Reset Statistics" onClick={() => requestConfirm('Reset Statistics', true, () => devResetEggs(user.uid))} />
+          <DevBtn disabled={busy} danger label="Reset Weekly Batches" onClick={() => requestConfirm('Reset Weekly Batches', true, () => devResetWeekly(user.uid))} />
+          <DevBtn disabled={busy} danger label="Reset Dashboard" onClick={() => requestConfirm('Reset Dashboard (Eggs, Protein, Streak)', true, async () => { await devResetEggs(user.uid); await devResetProtein(user.uid); await devResetStreak(user.uid); })} />
           <DevBtn disabled={busy} danger label="Factory Reset (Everything)" onClick={() => requestConfirm('Factory Reset — wipes ALL dev test data for this account', true, () => devFactoryReset(user.uid))} />
         </DevSection>
 
@@ -453,24 +513,32 @@ function DebugPanel({ env, debug, uid, email, onRefresh }: {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             <DebugTile label="User ID" value={uid.slice(0, 12) + '…'} mono />
             <DebugTile label="Email" value={email ?? '—'} />
+            <DebugTile label="Developer Mode" value="ON" highlight />
             <DebugTile label="Membership" value={debug?.membership ?? '—'} highlight />
             <DebugTile label="Reward Points" value={String(debug?.rewardPoints ?? 0)} highlight />
             <DebugTile label="Lifetime Points" value={String(debug?.lifetimePoints ?? 0)} />
-            <DebugTile label="Protein Today" value={`${debug?.proteinToday ?? 0}g`} />
             <DebugTile label="Current Streak" value={`${debug?.currentStreak ?? 0}d`} />
             <DebugTile label="Best Streak" value={`${debug?.bestStreak ?? 0}d`} />
+            <DebugTile label="Protein Today" value={`${debug?.proteinToday ?? 0}g`} />
+            <DebugTile label="Eggs Today" value={String(debug?.eggsToday ?? 0)} />
             <DebugTile label="Weekly Progress" value={`${debug?.weeklyBatchProgress ?? 0}/7 (Wk ${debug?.weeklyBatchNumber ?? 1})`} />
+            <DebugTile label="30-Day History" value={`${debug?.historyDaysRecorded ?? 0}/30 days`} />
             <DebugTile label="Sticker Count" value={`${debug?.stickerCount ?? 0}/${debug?.stickerTotal ?? 8}`} />
-            <DebugTile label="Coupon Count" value={`${debug?.availableCouponCount ?? 0} avail / ${debug?.couponCount ?? 0} total`} />
+            <DebugTile label="Coupons" value={`${debug?.availableCouponCount ?? 0} avail / ${debug?.couponCount ?? 0} total`} />
             <DebugTile label="Notification Count" value={String(debug?.notificationCount ?? 0)} />
             <DebugTile label="BMI" value={debug?.bmi != null ? debug.bmi.toFixed(1) : '—'} />
             <DebugTile label="Health Score" value={debug?.healthScore != null ? String(debug.healthScore) : '—'} />
-            <DebugTile label="Last Sync" value={debug?.lastSyncTime ?? '—'} />
+            <DebugTile
+              label="Reward Wallet Status"
+              value={debug?.rewardWalletStatus === 'ok' ? 'OK' : 'Missing'}
+              status={debug?.rewardWalletStatus === 'ok' ? 'connected' : 'error'}
+            />
             <DebugTile
               label="Firestore Status"
               value={debug?.firestoreStatus === 'connected' ? 'Connected' : 'Error'}
               status={debug?.firestoreStatus}
             />
+            <DebugTile label="Last Sync Time" value={debug?.lastSyncTime ?? '—'} />
           </div>
           <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${DEV.border}`, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
             <DebugTile label="Build" value={env?.environment ?? '—'} />
@@ -543,8 +611,8 @@ function DevBtn({ label, onClick, disabled, danger }: { label: string; onClick: 
   );
 }
 
-function CustomValueRow({ placeholder, value, onChange, onSubmit, disabled }: {
-  placeholder: string; value: string; onChange: (v: string) => void; onSubmit: () => void; disabled?: boolean;
+function CustomValueRow({ placeholder, value, onChange, onSubmit, disabled, submitLabel = 'Set' }: {
+  placeholder: string; value: string; onChange: (v: string) => void; onSubmit: () => void; disabled?: boolean; submitLabel?: string;
 }) {
   return (
     <div style={{ display: 'flex', gap: 6 }}>
@@ -569,7 +637,7 @@ function CustomValueRow({ placeholder, value, onChange, onSubmit, disabled }: {
           fontWeight: 800, fontSize: 12, cursor: disabled || value.trim() === '' ? 'not-allowed' : 'pointer',
         }}
       >
-        Set
+        {submitLabel}
       </button>
     </div>
   );

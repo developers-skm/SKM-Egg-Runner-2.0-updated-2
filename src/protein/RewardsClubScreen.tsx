@@ -19,11 +19,15 @@ import {
 } from '../services/protein/rewardCouponService';
 import { getTodayStats } from '../services/protein/proteinTrackerService';
 import { MEMBERSHIP_TIERS, POINTS_PER_SCAN, type MembershipTier } from '../constants/rewards';
+import { useNavigation, type NavTarget } from '../context/NavigationContext';
+import HighlightCard from './HighlightCard';
 
 interface RewardsClubScreenProps {
   user: User;
   onBack: () => void;
   onScanQR?: () => void;
+  /** Set by ProteinTrackerScreen when a tapped notification targets this screen. */
+  navTarget?: NavTarget | null;
 }
 
 type HubTab = 'overview' | 'rewards' | 'coupons' | 'history';
@@ -107,7 +111,8 @@ function formatCountdown(ms: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-export default function RewardsClubScreen({ user, onBack, onScanQR }: RewardsClubScreenProps) {
+export default function RewardsClubScreen({ user, onBack, onScanQR, navTarget }: RewardsClubScreenProps) {
+  const { consumeTarget } = useNavigation();
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<HubTab>('overview');
   const [wallet, setWallet] = useState<RewardWallet | null>(null);
@@ -145,6 +150,30 @@ export default function RewardsClubScreen({ user, onBack, onScanQR }: RewardsClu
   }, [user.uid]);
 
   useEffect(() => { load(); }, [load]);
+
+  // ── Smart notification navigation ──────────────────────────────────────
+  useEffect(() => {
+    if (!navTarget) return;
+    if (navTarget.section === 'overview') setTab('overview');
+    else if (navTarget.section === 'coupons') {
+      setTab('coupons');
+      const statusFilter = navTarget.metadata?.statusFilter;
+      if (statusFilter === 'available' || statusFilter === 'used' || statusFilter === 'expired') {
+        setCouponFilter(statusFilter);
+      }
+    } else if (navTarget.section === 'history') {
+      setTab('history');
+    }
+  }, [navTarget]);
+
+  const highlightMembershipCard = navTarget?.entityId === 'membership-card';
+  const highlightRewardBalance  = navTarget?.entityId === 'reward-balance';
+  const highlightCouponId       = navTarget?.section === 'coupons' ? navTarget.entityId : undefined;
+  const highlightMostRecentRedeem = navTarget?.section === 'history';
+
+  useEffect(() => {
+    if (highlightMembershipCard || highlightRewardBalance || highlightCouponId || highlightMostRecentRedeem) consumeTarget();
+  }, [highlightMembershipCard, highlightRewardBalance, highlightCouponId, highlightMostRecentRedeem, consumeTarget]);
 
   const handleRedeem = async () => {
     if (!confirmItem || !wallet) return;
@@ -300,6 +329,7 @@ export default function RewardsClubScreen({ user, onBack, onScanQR }: RewardsClu
               onViewRewards={() => setTab('rewards')}
               onSelectReward={item => { setRedeemErr(''); setConfirmItem(item); }}
               onViewTiers={() => setTiersOpen(true)}
+              highlightHero={highlightMembershipCard || highlightRewardBalance}
             />
           )
         )}
@@ -321,11 +351,12 @@ export default function RewardsClubScreen({ user, onBack, onScanQR }: RewardsClu
             filter={couponFilter}
             onFilterChange={setCouponFilter}
             onMarkUsed={handleMarkUsed}
+            highlightCouponId={highlightCouponId}
           />
         )}
 
         {tab === 'history' && (
-          <HistoryTab transactions={transactions} />
+          <HistoryTab transactions={transactions} highlightMostRecentRedeem={navTarget?.section === 'history'} />
         )}
       </div>
 
@@ -397,7 +428,7 @@ function RewardPointPill({ points }: { points: number }) {
 function OverviewTab({
   wallet, nextReward, previewReward, featuredReward, carouselProducts, scanDaysPerWeek,
   todayEggs, todayProtein, todayGoal, todayPointsEarned,
-  onScanQR, onViewRewards, onSelectReward, onViewTiers,
+  onScanQR, onViewRewards, onSelectReward, onViewTiers, highlightHero,
 }: {
   wallet: RewardWallet;
   nextReward: RewardCatalogItem | null;
@@ -413,11 +444,12 @@ function OverviewTab({
   onViewRewards: () => void;
   onSelectReward: (item: RewardCatalogItem) => void;
   onViewTiers: () => void;
+  highlightHero?: boolean;
 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* 1. HERO CARD — tier, balance, next reward, progress, eggs remaining, CTA */}
-      <HeroCard wallet={wallet} nextReward={nextReward} onScanQR={onScanQR} />
+      <HeroCard wallet={wallet} nextReward={nextReward} onScanQR={onScanQR} highlight={highlightHero} />
 
       {/* 2. TODAY'S PROGRESS — premium stat chips, Lucide icons, no emojis */}
       <TodayChips todayEggs={todayEggs} todayProtein={todayProtein} todayGoal={todayGoal} todayPointsEarned={todayPointsEarned} />
@@ -454,10 +486,11 @@ function OverviewTab({
 // estimated eggs remaining + CTA. ~30% shorter, denser typography.
 // ─────────────────────────────────────────────────────────────
 
-function HeroCard({ wallet, nextReward, onScanQR }: {
+function HeroCard({ wallet, nextReward, onScanQR, highlight }: {
   wallet: RewardWallet;
   nextReward: RewardCatalogItem | null;
   onScanQR?: () => void;
+  highlight?: boolean;
 }) {
   const animatedPoints = useCountUp(wallet.currentPoints);
   const pct = nextReward ? Math.min(100, Math.round((wallet.currentPoints / nextReward.pointsCost) * 100)) : 0;
@@ -466,8 +499,8 @@ function HeroCard({ wallet, nextReward, onScanQR }: {
   const eggsRemaining = Math.ceil(remaining / POINTS_PER_SCAN);
 
   return (
-    <div style={{
-      position: 'relative', overflow: 'hidden', borderRadius: 22, padding: '14px 16px 13px',
+    <HighlightCard active={!!highlight} glowColor="#FFE9A8" style={{
+      position: 'relative', overflow: 'hidden', padding: '14px 16px 13px',
       background: `linear-gradient(135deg, ${PALETTE.redDeep} 0%, ${PALETTE.red} 45%, ${PALETTE.lightOrange} 130%)`,
       animation: 'hiFadeIn 400ms ease',
       boxShadow: '0 10px 24px rgba(196,41,13,0.26)',
@@ -545,7 +578,7 @@ function HeroCard({ wallet, nextReward, onScanQR }: {
         {nextReward ? `Scan Eggs to Unlock ₹${nextReward.discountAmount} OFF` : 'Scan Eggs to Earn Points'}
         <ArrowRight size={13} color={PALETTE.red} />
       </button>
-    </div>
+    </HighlightCard>
   );
 }
 
@@ -1344,11 +1377,12 @@ const COUPON_FILTER_TABS: { key: CouponFilterTab; label: string }[] = [
   { key: 'expired',    label: 'Expired' },
 ];
 
-function CouponsTab({ coupons, filter, onFilterChange, onMarkUsed }: {
+function CouponsTab({ coupons, filter, onFilterChange, onMarkUsed, highlightCouponId }: {
   coupons: RewardCoupon[];
   filter: CouponFilterTab;
   onFilterChange: (f: CouponFilterTab) => void;
   onMarkUsed: (couponId: string) => void;
+  highlightCouponId?: string;
 }) {
   return (
     <>
@@ -1374,7 +1408,7 @@ function CouponsTab({ coupons, filter, onFilterChange, onMarkUsed }: {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {coupons.map((c, i) => (
-            <CouponTicket key={c.id} coupon={c} index={i} onMarkUsed={() => onMarkUsed(c.id)} />
+            <CouponTicket key={c.id} coupon={c} index={i} onMarkUsed={() => onMarkUsed(c.id)} highlight={c.id === highlightCouponId} />
           ))}
         </div>
       )}
@@ -1410,7 +1444,7 @@ function CouponsEmptyState({ filter }: { filter: CouponFilterTab }) {
   );
 }
 
-function CouponTicket({ coupon, index, onMarkUsed }: { coupon: RewardCoupon; index: number; onMarkUsed: () => void }) {
+function CouponTicket({ coupon, index, onMarkUsed, highlight }: { coupon: RewardCoupon; index: number; onMarkUsed: () => void; highlight?: boolean }) {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [instructionsOpen, setInstructionsOpen] = useState(false);
   const [shareState, setShareState] = useState<'idle' | 'copied'>('idle');
@@ -1442,10 +1476,12 @@ function CouponTicket({ coupon, index, onMarkUsed }: { coupon: RewardCoupon; ind
   const isAvailable = coupon.status === 'available';
 
   return (
-    <div
+    <HighlightCard
+      active={!!highlight}
+      glowColor={PALETTE.gold}
       className="rc-coupon-card"
       style={{
-        background: isUsed ? '#F2EFEA' : PALETTE.warmWhite, borderRadius: 20, overflow: 'hidden', position: 'relative',
+        background: isUsed ? '#F2EFEA' : PALETTE.warmWhite, overflow: 'hidden', position: 'relative',
         boxShadow: isAvailable ? `0 4px 20px ${PALETTE.gold}30, 0 0 0 1px ${PALETTE.gold}22` : '0 2px 10px rgba(43,36,32,0.06)',
         border: `1px solid ${isUsed ? '#E5DFD5' : PALETTE.eggshell}`,
         animation: `cardRise 420ms ease both`, animationDelay: `${Math.min(index, 8) * 60}ms`,
@@ -1534,7 +1570,7 @@ function CouponTicket({ coupon, index, onMarkUsed }: { coupon: RewardCoupon; ind
           </ul>
         </div>
       )}
-    </div>
+    </HighlightCard>
   );
 }
 
@@ -1582,7 +1618,11 @@ function historyGroupLabel(date: Date): string {
   return 'Earlier';
 }
 
-function HistoryTab({ transactions }: { transactions: RewardTransaction[] }) {
+function HistoryTab({ transactions, highlightMostRecentRedeem }: { transactions: RewardTransaction[]; highlightMostRecentRedeem?: boolean }) {
+  const mostRecentRedeemId = highlightMostRecentRedeem
+    ? transactions.find(t => t.type === 'redeem')?.id
+    : undefined;
+
   if (transactions.length === 0) {
     return (
       <div style={{
@@ -1618,7 +1658,7 @@ function HistoryTab({ transactions }: { transactions: RewardTransaction[] }) {
         <div key={label}>
           <p style={{ fontSize: 11, fontWeight: 800, color: PALETTE.inkSoft, textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 8px 4px' }}>{label}</p>
           <div style={{ background: PALETTE.warmWhite, borderRadius: 20, padding: 6, boxShadow: '0 2px 10px rgba(43,36,32,0.06)' }}>
-            <ActivityTimeline transactions={txs} />
+            <ActivityTimeline transactions={txs} highlightId={mostRecentRedeemId} />
           </div>
         </div>
       ))}
@@ -1626,7 +1666,7 @@ function HistoryTab({ transactions }: { transactions: RewardTransaction[] }) {
   );
 }
 
-function ActivityTimeline({ transactions }: { transactions: RewardTransaction[] }) {
+function ActivityTimeline({ transactions, highlightId }: { transactions: RewardTransaction[]; highlightId?: string }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       {transactions.map((t, i) => {
@@ -1637,8 +1677,10 @@ function ActivityTimeline({ transactions }: { transactions: RewardTransaction[] 
         const timeLabel = date ? date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '';
         const dateLabel = date ? date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '';
         return (
-          <div
+          <HighlightCard
             key={t.id}
+            active={t.id === highlightId}
+            glowColor={PALETTE.gold}
             style={{ display: 'flex', gap: 12, padding: '10px 10px', animation: 'cardRise 380ms ease both', animationDelay: `${Math.min(i, 10) * 40}ms` }}
           >
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
@@ -1664,7 +1706,7 @@ function ActivityTimeline({ transactions }: { transactions: RewardTransaction[] 
                 </span>
               </div>
             </div>
-          </div>
+          </HighlightCard>
         );
       })}
     </div>

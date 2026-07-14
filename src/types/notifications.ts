@@ -54,6 +54,7 @@ export type NotificationType =
   // Rewards Club
   | 'reward_points_earned'
   | 'reward_redeemable'
+  | 'reward_redeemed'
   | 'membership_tier_up'
   | 'coupon_expiring'
   // Admin
@@ -87,6 +88,13 @@ export interface AppNotification {
   metadata?: Record<string, string | number | boolean>;
   // admin broadcasts have a targetAll flag
   targetAll?: boolean;
+  // Smart navigation (optional — resolved from `type` + `metadata` by
+  // resolveNavTarget() when absent, so most notifications never need to
+  // set these explicitly). Present for parity with the Firestore schema
+  // described in the smart-navigation spec, e.g. route: "/rewards/coupons".
+  route?: string;
+  section?: string;
+  entityId?: string;
 }
 
 export interface NotificationSettings {
