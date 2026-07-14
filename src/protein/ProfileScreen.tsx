@@ -36,12 +36,11 @@ import StickerDetailModal from './StickerDetailModal';
 import HealthProfileScreen from './HealthProfileScreen';
 import RewardsClubScreen from './RewardsClubScreen';
 import DevTestCenterScreen from './DevTestCenterScreen';
-import {
-  isDevUser,
-  devAddTestProtein, devAddStreakDays, devResetTodayEgg,
-  devSimulateTomorrow, devUnlockAllMilestones, devUnlockMilestone,
-  devResetStreakData, devTriggerTestNotification,
-} from '../services/protein/devToolsService';
+import { isDevUser } from '../services/protein/devTestCenterService';
+
+function isFiniteNumber(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v);
+}
 
 type View = 'profile' | 'edit_profile' | 'edit_goal' | 'delete_confirm';
 
@@ -75,8 +74,6 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
   const [loading,     setLoading]     = useState(true);
   const [isDevRole,       setIsDevRole]       = useState(false);
   const [devMode,         setDevMode]         = useState<boolean>(readDevMode);
-  const [devMsg,          setDevMsg]          = useState('');
-  const [devBusy,         setDevBusy]         = useState(false);
   const [devDebugOpen,    setDevDebugOpen]    = useState(false);
   const [claimedDates,    setClaimedDates]    = useState<Map<number, string>>(new Map());
   const [favorites,       setFavorites]       = useState<Set<number>>(new Set());
@@ -84,6 +81,7 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
   const [rarityFilter,    setRarityFilter]    = useState<Rarity | 'All'>('All');
   const [lockedToast,     setLockedToast]     = useState<number | null>(null); // days value of locked sticker tapped
   const [shakingDays,     setShakingDays]     = useState<number | null>(null); // for shake animation
+  const [avatarBroken,    setAvatarBroken]    = useState(false);
 
   const [profile,       setProfile]       = useState<ExtendedProfile>({ playerName: '', age: '', gender: '', height: '', weight: '', goalWeight: '', phone: '' });
   const [profileErr,    setProfileErr]    = useState('');
@@ -112,22 +110,8 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
     finally { setLoading(false); }
   }, [user.uid]);
 
-  const runDevAction = async (label: string, fn: () => Promise<void>) => {
-    setDevBusy(true);
-    setDevMsg(`Running: ${label}…`);
-    try {
-      await fn();
-      setDevMsg(`✅ ${label} done`);
-      await load();
-    } catch (e: unknown) {
-      setDevMsg(`❌ Error: ${(e as Error).message ?? String(e)}`);
-    } finally {
-      setDevBusy(false);
-      setTimeout(() => setDevMsg(''), 3000);
-    }
-  };
-
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setAvatarBroken(false); }, [user.photoURL]);
 
   const playerName = user.displayName ?? 'Champion';
   const joinedDate = user.metadata.creationTime
@@ -369,8 +353,14 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '0 20px 20px' }}>
           {/* Avatar */}
           <div style={{ position: 'relative', flexShrink: 0 }}>
-            {user.photoURL ? (
-              <img src={user.photoURL} alt="" style={{ width: 76, height: 76, borderRadius: '50%', objectFit: 'cover', border: '3px solid rgba(255,255,255,0.6)' }} />
+            {user.photoURL && !avatarBroken ? (
+              <img
+                src={user.photoURL}
+                alt=""
+                referrerPolicy="no-referrer"
+                onError={() => setAvatarBroken(true)}
+                style={{ width: 76, height: 76, borderRadius: '50%', objectFit: 'cover', border: '3px solid rgba(255,255,255,0.6)' }}
+              />
             ) : (
               <div style={{ width: 76, height: 76, borderRadius: '50%', background: 'rgba(255,255,255,0.18)', border: '3px solid rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <span style={{ fontSize: 30, fontWeight: 900, color: '#fff' }}>{playerName[0]?.toUpperCase() ?? '?'}</span>
@@ -388,7 +378,7 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
             </div>
             {/* Edit profile button */}
             <button
-              onClick={() => { setProfile({ playerName: user.displayName ?? '', age: String(userDoc.age ?? ''), gender: String(userDoc.gender ?? ''), height: String(userDoc.height ?? ''), weight: String(userDoc.weight ?? ''), goalWeight: String(userDoc.goalWeight ?? ''), phone: String(userDoc.phone ?? '') }); setView('edit_profile'); }}
+              onClick={() => { setProfile({ playerName: String(userDoc.playerName ?? user.displayName ?? ''), age: String(userDoc.age ?? ''), gender: String(userDoc.gender ?? ''), height: String(userDoc.height ?? ''), weight: String(userDoc.weight ?? ''), goalWeight: String(userDoc.goalWeight ?? ''), phone: String(userDoc.phone ?? '') }); setView('edit_profile'); }}
               style={{
                 position: 'absolute', top: -4, right: -4,
                 width: 24, height: 24, borderRadius: '50%',
@@ -459,10 +449,10 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
             <InfoRow label="Name"       value={playerName} />
             <InfoRow label="Email"      value={user.email ?? '—'} />
             <InfoRow label="Daily Goal" value={`${settings?.dailyGoal ?? DEFAULT_DAILY_GOAL}g protein`} highlight />
-            {(userDoc.age    as number) && <InfoRow label="Age"    value={`${userDoc.age} years`} />}
-            {(userDoc.gender as string) && <InfoRow label="Gender" value={userDoc.gender as string} />}
-            {(userDoc.height as number) && <InfoRow label="Height" value={`${userDoc.height} cm`} />}
-            {(userDoc.weight as number) && <InfoRow label="Weight" value={`${userDoc.weight} kg`} />}
+            {isFiniteNumber(userDoc.age)    && <InfoRow label="Age"    value={`${userDoc.age} years`} />}
+            {(userDoc.gender as string)     && <InfoRow label="Gender" value={userDoc.gender as string} />}
+            {isFiniteNumber(userDoc.height) && <InfoRow label="Height" value={`${userDoc.height} cm`} />}
+            {isFiniteNumber(userDoc.weight) && <InfoRow label="Weight" value={`${userDoc.weight} kg`} />}
           </SectionCard>
 
           {/* Actions — Change Daily Goal only */}
@@ -786,49 +776,13 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
                   </div>
                 </div>
 
-                {/* Status message */}
-                {devMsg && (
-                  <div style={{
-                    margin: '10px 14px 0',
-                    background: devMsg.startsWith('✅') ? '#F0FDF4' : devMsg.startsWith('❌') ? '#FEF2F2' : '#F5F3FF',
-                    border: `1px solid ${devMsg.startsWith('✅') ? '#86EFAC' : devMsg.startsWith('❌') ? '#FECACA' : '#C4B5FD'}`,
-                    borderRadius: 10, padding: '8px 12px', fontSize: 11, fontWeight: 700,
-                    color: devMsg.startsWith('✅') ? '#166534' : devMsg.startsWith('❌') ? '#991B1B' : '#5B21B6',
-                  }}>
-                    {devMsg}
-                  </div>
-                )}
-
-                {/* Action buttons — only when mode is ON */}
+                {/* Single entry point — all test actions live in the Developer Test Center now */}
                 {devMode && (
                   <div style={{ padding: '12px 14px 14px', display: 'flex', flexDirection: 'column', gap: 7 }}>
 
-                    <DevSectionLabel label="Protein & Eggs" />
-                    <DevBtn disabled={devBusy} label="🥚 Add Test Protein (+6g)" onClick={() => runDevAction('Add Test Protein', () => devAddTestProtein(user.uid))} />
-                    <DevBtn disabled={devBusy} label="❌ Reset Today's Egg"      onClick={() => runDevAction("Reset Today's Egg", () => devResetTodayEgg(user.uid))} color="#EF4444" />
-
-                    <DevSectionLabel label="Streak Simulation" />
-                    <DevBtn disabled={devBusy} label="🔥 Add 1 Streak Day"   onClick={() => runDevAction('Add 1 Streak Day',   () => devAddStreakDays(user.uid, 1))} />
-                    <DevBtn disabled={devBusy} label="🔥 Add 7-Day Streak"   onClick={() => runDevAction('Add 7 Streak Days',  () => devAddStreakDays(user.uid, 7))} />
-                    <DevBtn disabled={devBusy} label="🔥 Add 30-Day Streak"  onClick={() => runDevAction('Add 30 Streak Days', () => devAddStreakDays(user.uid, 30))} />
-                    <DevBtn disabled={devBusy} label="📅 Simulate Tomorrow"  onClick={() => runDevAction('Simulate Tomorrow',   () => devSimulateTomorrow(user.uid))} />
-                    <DevBtn disabled={devBusy} label="🗑 Reset Streak Data"  onClick={() => runDevAction('Reset Streak Data',   () => devResetStreakData(user.uid))} color="#EF4444" />
-
-                    <DevSectionLabel label="Milestones & Stickers" />
-                    <DevBtn disabled={devBusy} label="🏆 Unlock Test Milestone" onClick={() => {
-                      const next = MILESTONES.find(m => !claimed.has(m.days));
-                      if (!next) { setDevMsg('All milestones already unlocked'); return; }
-                      runDevAction(`Unlock ${next.days}d Milestone`, () => devUnlockMilestone(user.uid, next.days));
-                    }} />
-                    <DevBtn disabled={devBusy} label="🪪 Unlock All Stickers"   onClick={() => runDevAction('Unlock All Stickers', () => devUnlockAllMilestones(user.uid))} />
-
-                    <DevSectionLabel label="Notifications & Debug" />
-                    <DevBtn disabled={devBusy} label="📢 Send Test Notification" onClick={() => runDevAction('Test Notification', () => devTriggerTestNotification(user.uid))} />
-                    <DevBtn disabled={devBusy} label="♻ Refresh Profile Data"   onClick={() => runDevAction('Refresh', async () => { await load(); })} />
-                    <DevBtn disabled={devBusy} label="📊 View Debug Information" onClick={() => setDevDebugOpen(d => !d)} />
-
-                    <DevSectionLabel label="Full Test Center" />
-                    <DevBtn disabled={devBusy} label="🧪 Open Full Test Center" onClick={() => setShowTestCenter(true)} />
+                    <DevBtn label="🧪 Open Developer Test Center" onClick={() => setShowTestCenter(true)} />
+                    <DevBtn label="♻ Refresh Profile Data" onClick={() => load()} />
+                    <DevBtn label="📊 View Debug Information" onClick={() => setDevDebugOpen(d => !d)} />
 
                     {devDebugOpen && (
                       <div style={{
@@ -1006,17 +960,5 @@ function DevBtn({ label, onClick, disabled, color = '#7C3AED' }: { label: string
     >
       {label}
     </button>
-  );
-}
-
-function DevSectionLabel({ label }: { label: string }) {
-  return (
-    <p style={{
-      fontSize: 9, fontWeight: 800, color: '#8B5CF6',
-      textTransform: 'uppercase', letterSpacing: 1,
-      margin: '6px 0 2px 2px',
-    }}>
-      {label}
-    </p>
   );
 }

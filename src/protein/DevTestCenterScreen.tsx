@@ -2,26 +2,28 @@ import { useEffect, useState, useCallback } from 'react';
 import type { User } from 'firebase/auth';
 import {
   ChevronLeft, Wrench, Database, Bell, Egg, Coins, Flame, Calendar,
-  Award, BookOpen, Ticket, Gift, Crown, Ruler, Target as TargetIcon,
-  Trophy, RefreshCw,
+  Award, BookOpen, Ticket, Gift, Crown, Ruler,
+  RefreshCw, Search, ChevronDown, X, CheckCircle2, XCircle,
+  AlertTriangle, User as UserIcon, BarChart3, Trash2,
 } from 'lucide-react';
 import {
   getDevEnvSnapshot, type DevEnvSnapshot,
-  devAddProtein, devResetProtein,
+  getDevDebugSnapshot, type DevDebugSnapshot,
+  devAddProtein, devResetProtein, devSetCustomProtein,
   devAddPoints, devResetPoints,
-  devAddStreak, devResetStreak,
-  devCompleteCurrentWeek, devUnlockNextWeek, devResetWeekly,
+  devAddStreak, devResetStreak, devSetCustomStreak,
+  devCompleteCurrentWeek, devResetWeekly,
   devUnlockNextSticker, devUnlockRarity, devUnlockAllStickers, devResetStickers,
-  devCompleteCurrentPassport, devUnlockNextPassport, devCompleteAllPassports, devResetPassport,
+  devUnlockNextPassport, devCompleteAllPassports, devResetPassport,
   devNotify, devClearNotifications, devGenerateSampleNotifications,
   devGenerateCoupon, devExpireCoupons, devResetCoupons,
-  devGenerateReward, devRedeemReward, devResetRewards,
+  devResetRewards,
+  devRedeemCatalogItemNear, devRedeemFeaturedProduct,
   devSetMembership,
-  devAddEggs, devResetEggs,
-  devGenerateBmi, devResetBmi,
-  devCompleteDailyGoal, devResetDailyGoal,
-  devCompleteChallenge, devResetChallenges,
+  devResetEggs, devSetTodayEggs, devSimulateLifetimeEggs, devGenerate365DayHistory,
+  devGenerateBmi, devResetBmi, devSetCustomBmi,
   devSyncUser, devReloadUser, devClearCache, devRefreshCatalog,
+  devFactoryReset,
 } from '../services/protein/devTestCenterService';
 import { MEMBERSHIP_TIERS, type MembershipTier } from '../constants/rewards';
 import type { Rarity } from '../services/protein/milestoneRewardService';
@@ -32,233 +34,328 @@ interface DevTestCenterScreenProps {
   onDataChanged?: () => void;
 }
 
+// ── Premium dark palette (red accents, per brief) ──────────────────
+const DEV = {
+  bg:        '#0F0D14',
+  surface:   '#1A1721',
+  surface2:  '#221E2B',
+  border:    '#322C3C',
+  text:      '#F3F1F7',
+  textSoft:  '#9C94AE',
+  textFaint: '#6B647A',
+  red:       '#EF4444',
+  redDeep:   '#DC2626',
+  accent:    '#EF4444',
+};
+
+type ToastKind = 'success' | 'error' | 'info';
+interface ToastState { kind: ToastKind; message: string; }
+
 export default function DevTestCenterScreen({ user, onBack, onDataChanged }: DevTestCenterScreenProps) {
   const [env, setEnv] = useState<DevEnvSnapshot | null>(null);
+  const [debug, setDebug] = useState<DevDebugSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
-  const [statusMsg, setStatusMsg] = useState('');
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const [search, setSearch] = useState('');
+  const [openSections, setOpenSections] = useState<Set<string>>(new Set(['User Progress', 'Debug Information']));
+  const [confirmAction, setConfirmAction] = useState<{ label: string; danger: boolean; fn: () => Promise<void> } | null>(null);
+  const [customStreak, setCustomStreak] = useState('');
+  const [customProtein, setCustomProtein] = useState('');
+  const [customBmi, setCustomBmi] = useState('');
 
-  const refreshEnv = useCallback(async () => {
+  const refresh = useCallback(async () => {
     try {
-      const snap = await getDevEnvSnapshot(user.uid, user.email);
+      const [snap, dbg] = await Promise.all([
+        getDevEnvSnapshot(user.uid, user.email),
+        getDevDebugSnapshot(user.uid),
+      ]);
       setEnv(snap);
+      setDebug(dbg);
     } catch (e) { console.error('[DevTestCenter]', e); }
   }, [user.uid, user.email]);
 
-  useEffect(() => { refreshEnv(); }, [refreshEnv]);
+  useEffect(() => { refresh(); }, [refresh]);
 
   const runAction = async (label: string, fn: () => Promise<void>) => {
     setBusy(true);
-    setStatusMsg(`Running: ${label}…`);
     try {
       await fn();
-      setStatusMsg(`✅ ${label} done`);
-      await refreshEnv();
+      setToast({ kind: 'success', message: `${label} — done` });
+      await refresh();
       onDataChanged?.();
     } catch (e: unknown) {
-      setStatusMsg(`❌ Error: ${(e as Error).message ?? String(e)}`);
+      setToast({ kind: 'error', message: `${label} failed: ${(e as Error).message ?? String(e)}` });
     } finally {
       setBusy(false);
-      setTimeout(() => setStatusMsg(''), 3000);
+      setTimeout(() => setToast(null), 3000);
     }
   };
 
-  return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#FAFAFA' }}>
+  const requestConfirm = (label: string, danger: boolean, fn: () => Promise<void>) => {
+    setConfirmAction({ label, danger, fn });
+  };
 
-      {/* ── Header ── */}
+  const toggleSection = (title: string) => {
+    setOpenSections(prev => {
+      const next = new Set(prev);
+      if (next.has(title)) next.delete(title); else next.add(title);
+      return next;
+    });
+  };
+
+  const matches = (haystack: string) => search.trim() === '' || haystack.toLowerCase().includes(search.trim().toLowerCase());
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: DEV.bg }}>
+
+      {/* ── Sticky header ── */}
       <div style={{
-        background: 'linear-gradient(150deg,#7C3AED 0%,#6D28D9 55%,#4C1D95 100%)',
-        padding: '18px 18px 20px', flexShrink: 0, position: 'relative', overflow: 'hidden',
+        background: `linear-gradient(150deg, ${DEV.redDeep} 0%, #7F1D1D 60%, ${DEV.bg} 130%)`,
+        padding: '16px 16px 14px', flexShrink: 0, position: 'relative', overflow: 'hidden',
+        borderBottom: `1px solid ${DEV.border}`,
       }}>
-        <div style={{ position: 'absolute', top: -50, right: -50, width: 180, height: 180, borderRadius: '50%', background: 'rgba(255,255,255,0.06)', pointerEvents: 'none' }} />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ position: 'absolute', top: -50, right: -50, width: 180, height: 180, borderRadius: '50%', background: 'rgba(255,255,255,0.04)', pointerEvents: 'none' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
           <button onClick={onBack} style={{
-            width: 34, height: 34, borderRadius: 10, background: 'rgba(255,255,255,0.15)', border: 'none',
+            width: 34, height: 34, borderRadius: 10, background: 'rgba(255,255,255,0.12)', border: 'none',
             cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
           }}>
             <ChevronLeft size={18} color="#fff" />
           </button>
-          <div style={{ width: 34, height: 34, borderRadius: 10, background: 'rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <div style={{ width: 34, height: 34, borderRadius: 10, background: 'rgba(255,255,255,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <Wrench size={16} color="#fff" />
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <h2 style={{ fontSize: 16, fontWeight: 900, color: '#fff', margin: 0 }}>Developer Test Center</h2>
-            <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.7)', margin: 0, fontWeight: 700 }}>Temporary — dev builds only</p>
+            <h2 style={{ fontSize: 15, fontWeight: 900, color: '#fff', margin: 0 }}>Developer Test Center</h2>
+            <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.65)', margin: 0, fontWeight: 700 }}>Internal QA only — never shipped to production</p>
           </div>
           <span style={{
-            fontSize: 9, fontWeight: 900, color: '#4C1D95', background: '#fff', borderRadius: 20,
+            fontSize: 9, fontWeight: 900, color: DEV.redDeep, background: '#fff', borderRadius: 20,
             padding: '4px 9px', flexShrink: 0, letterSpacing: 0.5,
           }}>
             ACTIVE
           </span>
         </div>
+
+        {/* Search bar */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(0,0,0,0.28)',
+          borderRadius: 12, padding: '9px 12px',
+        }}>
+          <Search size={14} color="rgba(255,255,255,0.6)" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search test sections…"
+            style={{
+              flex: 1, background: 'none', border: 'none', outline: 'none', color: '#fff',
+              fontSize: 12.5, fontWeight: 600,
+            }}
+          />
+          {search && (
+            <button onClick={() => setSearch('')} style={{ border: 'none', background: 'none', cursor: 'pointer', padding: 0, display: 'flex' }}>
+              <X size={13} color="rgba(255,255,255,0.6)" />
+            </button>
+          )}
+        </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px 90px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* ── Toast ── */}
+      {toast && <Toast toast={toast} />}
 
-        {/* ── Dashboard ── */}
-        <div style={{ background: '#fff', borderRadius: 20, padding: 16, boxShadow: '0 2px 10px rgba(0,0,0,0.06)' }}>
-          <p style={{ fontSize: 11, fontWeight: 800, color: '#999', textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 10px' }}>Dashboard</p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <DashTile label="Version" value={env?.version ?? '—'} />
-            <DashTile label="Environment" value={env?.environment ?? '—'} />
-            <DashTile label="Database" value={env?.database ?? '—'} />
-            <DashTile label="Notifications" value={env?.notification ?? '—'} />
-            <DashTile label="Current Points" value={String(env?.currentPoints ?? 0)} highlight />
-            <DashTile label="Membership" value={env?.membership ?? '—'} highlight />
-          </div>
-          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #F5F5F5' }}>
-            <p style={{ fontSize: 11, fontWeight: 800, color: '#1A1A1A', margin: 0 }}>{env?.userEmail ?? user.email}</p>
-            <p style={{ fontSize: 9, color: '#bbb', margin: '2px 0 0', fontFamily: 'monospace' }}>{env?.userUid ?? user.uid}</p>
-          </div>
-        </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '14px 14px 90px', display: 'flex', flexDirection: 'column', gap: 10 }}>
 
-        {/* ── Status banner ── */}
-        {statusMsg && (
-          <div style={{
-            background: statusMsg.startsWith('✅') ? '#F0FDF4' : statusMsg.startsWith('❌') ? '#FEF2F2' : '#F5F3FF',
-            border: `1px solid ${statusMsg.startsWith('✅') ? '#86EFAC' : statusMsg.startsWith('❌') ? '#FECACA' : '#C4B5FD'}`,
-            borderRadius: 12, padding: '10px 14px', fontSize: 12, fontWeight: 700,
-            color: statusMsg.startsWith('✅') ? '#166534' : statusMsg.startsWith('❌') ? '#991B1B' : '#5B21B6',
-            position: 'sticky', top: 0, zIndex: 5,
-          }}>
-            {statusMsg}
-          </div>
+        {/* ── Debug Information (live panel, always near top) ── */}
+        {matches('debug information user id firestore status') && (
+          <DebugPanel env={env} debug={debug} uid={user.uid} email={user.email} onRefresh={refresh} />
         )}
 
-        {/* ── Protein ── */}
-        <DevSection title="Protein" icon={<Egg size={14} color="#7C3AED" />}>
-          <DevBtn disabled={busy} label="🥚 +6g Protein" onClick={() => runAction('+6g Protein', () => devAddProtein(user.uid, 6))} />
-          <DevBtn disabled={busy} label="🥚 +12g Protein" onClick={() => runAction('+12g Protein', () => devAddProtein(user.uid, 12))} />
-          <DevBtn disabled={busy} label="🥚 +30g Protein" onClick={() => runAction('+30g Protein', () => devAddProtein(user.uid, 30))} />
-          <DevBtn disabled={busy} label="🗑 Reset Protein" color="#EF4444" onClick={() => runAction('Reset Protein', () => devResetProtein(user.uid))} />
-        </DevSection>
-
-        {/* ── Reward Points ── */}
-        <DevSection title="Reward Points" icon={<Coins size={14} color="#7C3AED" />}>
-          {[10, 50, 100, 500, 1000].map(p => (
-            <DevBtn key={p} disabled={busy} label={`🎁 +${p} Points`} onClick={() => runAction(`+${p} Points`, () => devAddPoints(user.uid, p))} />
+        {/* ── User Progress ── */}
+        <DevSection title="User Progress" icon={<UserIcon size={14} color={DEV.accent} />} open={openSections.has('User Progress')} onToggle={() => toggleSection('User Progress')} visible={matches('user progress egg scan')}>
+          {[1, 5, 10, 50, 100].map(n => (
+            <DevBtn key={n} disabled={busy} label={`+${n} Egg Scan${n > 1 ? 's' : ''}`} onClick={() => runAction(`+${n} Egg Scan(s)`, () => devAddProtein(user.uid, n * 6))} />
           ))}
-          <DevBtn disabled={busy} label="🗑 Reset Points" color="#EF4444" onClick={() => runAction('Reset Points', () => devResetPoints(user.uid))} />
         </DevSection>
 
-        {/* ── Daily Streak ── */}
-        <DevSection title="Daily Streak" icon={<Flame size={14} color="#7C3AED" />}>
-          {[1, 7, 30, 100].map(d => (
-            <DevBtn key={d} disabled={busy} label={`🔥 +${d} Day${d > 1 ? 's' : ''}`} onClick={() => runAction(`+${d} Streak Day(s)`, () => devAddStreak(user.uid, d))} />
+        {/* ── Streak Testing ── */}
+        <DevSection title="Streak Testing" icon={<Flame size={14} color={DEV.accent} />} open={openSections.has('Streak Testing')} onToggle={() => toggleSection('Streak Testing')} visible={matches('streak testing weekly batch monthly')}>
+          {[1, 7, 30, 60, 90, 180, 365].map(d => (
+            <DevBtn key={d} disabled={busy} label={`+${d} Day${d > 1 ? 's' : ''}`} onClick={() => runAction(`+${d} Streak Day(s)`, () => devAddStreak(user.uid, d))} />
           ))}
-          <DevBtn disabled={busy} label="🗑 Reset Streak" color="#EF4444" onClick={() => runAction('Reset Streak', () => devResetStreak(user.uid))} />
+          <CustomValueRow
+            placeholder="Set custom streak (days)"
+            value={customStreak}
+            onChange={setCustomStreak}
+            disabled={busy}
+            onSubmit={() => {
+              const n = parseInt(customStreak, 10);
+              if (!Number.isFinite(n) || n < 0) return;
+              runAction(`Set Streak to ${n}`, () => devSetCustomStreak(user.uid, n));
+              setCustomStreak('');
+            }}
+          />
+          <DevBtn disabled={busy} danger label="Reset Streak" onClick={() => requestConfirm('Reset Streak', true, () => devResetStreak(user.uid))} />
         </DevSection>
 
-        {/* ── Weekly Batch ── */}
-        <DevSection title="Weekly Batch" icon={<Calendar size={14} color="#7C3AED" />}>
-          <DevBtn disabled={busy} label="✅ Complete Current Week" onClick={() => runAction('Complete Current Week', () => devCompleteCurrentWeek(user.uid))} />
-          <DevBtn disabled={busy} label="🔓 Unlock Next Week" onClick={() => runAction('Unlock Next Week', () => devUnlockNextWeek(user.uid))} />
-          <DevBtn disabled={busy} label="🗑 Reset Weekly Progress" color="#EF4444" onClick={() => runAction('Reset Weekly Progress', () => devResetWeekly(user.uid))} />
+        {/* ── Protein Testing ── */}
+        <DevSection title="Protein Testing" icon={<Egg size={14} color={DEV.accent} />} open={openSections.has('Protein Testing')} onToggle={() => toggleSection('Protein Testing')} visible={matches('protein testing daily weekly monthly goals insights')}>
+          {[6, 12, 24, 60, 120].map(g => (
+            <DevBtn key={g} disabled={busy} label={`+${g}g Protein`} onClick={() => runAction(`+${g}g Protein`, () => devAddProtein(user.uid, g))} />
+          ))}
+          <CustomValueRow
+            placeholder="Set custom protein (g)"
+            value={customProtein}
+            onChange={setCustomProtein}
+            disabled={busy}
+            onSubmit={() => {
+              const n = parseInt(customProtein, 10);
+              if (!Number.isFinite(n) || n < 0) return;
+              runAction(`Set Protein +${n}g`, () => devSetCustomProtein(user.uid, n));
+              setCustomProtein('');
+            }}
+          />
+          <DevBtn disabled={busy} danger label="Reset Protein" onClick={() => requestConfirm('Reset Protein', true, () => devResetProtein(user.uid))} />
+        </DevSection>
+
+        {/* ── Reward Testing ── */}
+        <DevSection title="Reward Testing" icon={<Coins size={14} color={DEV.accent} />} open={openSections.has('Reward Testing')} onToggle={() => toggleSection('Reward Testing')} visible={matches('reward points wallet membership coupons store')}>
+          {[10, 25, 50, 100, 250, 500, 1000].map(p => (
+            <DevBtn key={p} disabled={busy} label={`+${p} Points`} onClick={() => runAction(`+${p} Points`, () => devAddPoints(user.uid, p))} />
+          ))}
+          <DevBtn disabled={busy} danger label="Reset Points" onClick={() => requestConfirm('Reset Points', true, () => devResetPoints(user.uid))} />
         </DevSection>
 
         {/* ── Sticker Testing ── */}
-        <DevSection title="Sticker Testing" icon={<Award size={14} color="#7C3AED" />}>
-          <DevBtn disabled={busy} label="🏆 Unlock Next Sticker" onClick={() => runAction('Unlock Next Sticker', () => devUnlockNextSticker(user.uid))} />
+        <DevSection title="Sticker Testing" icon={<Award size={14} color={DEV.accent} />} open={openSections.has('Sticker Testing')} onToggle={() => toggleSection('Sticker Testing')} visible={matches('sticker testing collection profile notifications reward progress')}>
+          <DevBtn disabled={busy} label="Unlock Next" onClick={() => runAction('Unlock Next Sticker', () => devUnlockNextSticker(user.uid))} />
           {(['Common', 'Rare', 'Epic', 'Legendary'] as Rarity[]).map(r => (
-            <DevBtn key={r} disabled={busy} label={`⭐ Unlock All ${r}`} onClick={() => runAction(`Unlock All ${r}`, () => devUnlockRarity(user.uid, r))} />
+            <DevBtn key={r} disabled={busy} label={`Unlock ${r}`} onClick={() => runAction(`Unlock All ${r}`, () => devUnlockRarity(user.uid, r))} />
           ))}
-          <DevBtn disabled={busy} label="🪪 Unlock All Stickers" onClick={() => runAction('Unlock All Stickers', () => devUnlockAllStickers(user.uid))} />
-          <DevBtn disabled={busy} label="🗑 Reset Sticker Collection" color="#EF4444" onClick={() => runAction('Reset Sticker Collection', () => devResetStickers(user.uid))} />
+          <DevBtn disabled={busy} label="Unlock All" onClick={() => runAction('Unlock All Stickers', () => devUnlockAllStickers(user.uid))} />
+          <DevBtn disabled={busy} danger label="Reset Stickers" onClick={() => requestConfirm('Reset Stickers', true, () => devResetStickers(user.uid))} />
         </DevSection>
 
-        {/* ── Passport ── */}
-        <DevSection title="Passport" icon={<BookOpen size={14} color="#7C3AED" />}>
-          <DevBtn disabled={busy} label="✅ Complete Current Passport" onClick={() => runAction('Complete Current Passport', () => devCompleteCurrentPassport(user.uid))} />
-          <DevBtn disabled={busy} label="🔓 Unlock Next Passport" onClick={() => runAction('Unlock Next Passport', () => devUnlockNextPassport(user.uid))} />
-          <DevBtn disabled={busy} label="🎉 Complete All" onClick={() => runAction('Complete All Passports', () => devCompleteAllPassports(user.uid))} />
-          <DevBtn disabled={busy} label="🗑 Reset Passport" color="#EF4444" onClick={() => runAction('Reset Passport', () => devResetPassport(user.uid))} />
+        {/* ── Membership Testing ── */}
+        <DevSection title="Membership Testing" icon={<Crown size={14} color={DEV.accent} />} open={openSections.has('Membership Testing')} onToggle={() => toggleSection('Membership Testing')} visible={matches('membership testing bronze silver gold platinum diamond')}>
+          {MEMBERSHIP_TIERS.map(t => (
+            <DevBtn key={t.tier} disabled={busy} label={t.tier} onClick={() => runAction(`Switch to ${t.tier}`, () => devSetMembership(user.uid, t.tier as MembershipTier))} />
+          ))}
+          <DevBtn disabled={busy} label="Auto Recalculate" onClick={() => runAction('Recalculate Membership', () => devSyncUser(user.uid))} />
+        </DevSection>
+
+        {/* ── Coupon Testing ── */}
+        <DevSection title="Coupon Testing" icon={<Ticket size={14} color={DEV.accent} />} open={openSections.has('Coupon Testing')} onToggle={() => toggleSection('Coupon Testing')} visible={matches('coupon testing generate expire')}>
+          {[10, 20, 50].map(v => (
+            <DevBtn key={v} disabled={busy} label={`Generate ₹${v}`} onClick={() => runAction(`Generate ₹${v} Coupon`, () => devGenerateCoupon(user.uid, v))} />
+          ))}
+          <DevBtn disabled={busy} label="Generate All" onClick={() => runAction('Generate All Coupons', async () => { await devGenerateCoupon(user.uid, 10); await devGenerateCoupon(user.uid, 20); await devGenerateCoupon(user.uid, 50); })} />
+          <DevBtn disabled={busy} danger label="Expire All" onClick={() => requestConfirm('Expire All Coupons', false, () => devExpireCoupons(user.uid))} />
+          <DevBtn disabled={busy} danger label="Reset Coupons" onClick={() => requestConfirm('Reset Coupons', true, () => devResetCoupons(user.uid))} />
         </DevSection>
 
         {/* ── Notifications ── */}
-        <DevSection title="Notifications" icon={<Bell size={14} color="#7C3AED" />}>
-          <DevBtn disabled={busy} label="🛠 Send Test Notification" onClick={() => runAction('Test Notification', () => devNotify.test(user.uid))} />
-          <DevBtn disabled={busy} label="👋 Send Welcome Notification" onClick={() => runAction('Welcome Notification', () => devNotify.welcome(user.uid))} />
-          <DevBtn disabled={busy} label="🥚 Send Reminder Notification" onClick={() => runAction('Reminder Notification', () => devNotify.reminder(user.uid))} />
-          <DevBtn disabled={busy} label="🎁 Send Reward Notification" onClick={() => runAction('Reward Notification', () => devNotify.reward(user.uid))} />
-          <DevBtn disabled={busy} label="🎫 Send Coupon Notification" onClick={() => runAction('Coupon Notification', () => devNotify.coupon(user.uid))} />
-          <DevBtn disabled={busy} label="⭐ Send Sticker Notification" onClick={() => runAction('Sticker Notification', () => devNotify.sticker(user.uid))} />
-          <DevBtn disabled={busy} label="💪 Send Daily Goal Reminder" onClick={() => runAction('Daily Goal Reminder', () => devNotify.dailyGoal(user.uid))} />
-          <DevBtn disabled={busy} label="✨ Generate Sample Notifications" onClick={() => runAction('Generate Sample Notifications', () => devGenerateSampleNotifications(user.uid))} />
-          <DevBtn disabled={busy} label="🗑 Clear All Notifications" color="#EF4444" onClick={() => runAction('Clear All Notifications', () => devClearNotifications(user.uid))} />
-        </DevSection>
-
-        {/* ── Coupons ── */}
-        <DevSection title="Coupons" icon={<Ticket size={14} color="#7C3AED" />}>
-          {[10, 20, 50].map(v => (
-            <DevBtn key={v} disabled={busy} label={`🎫 Generate ₹${v} Coupon`} onClick={() => runAction(`Generate ₹${v} Coupon`, () => devGenerateCoupon(user.uid, v))} />
-          ))}
-          <DevBtn disabled={busy} label="⏰ Expire Coupons" color="#EF4444" onClick={() => runAction('Expire Coupons', () => devExpireCoupons(user.uid))} />
-          <DevBtn disabled={busy} label="🗑 Reset Coupons" color="#EF4444" onClick={() => runAction('Reset Coupons', () => devResetCoupons(user.uid))} />
-        </DevSection>
-
-        {/* ── Rewards ── */}
-        <DevSection title="Rewards" icon={<Gift size={14} color="#7C3AED" />}>
-          <DevBtn disabled={busy} label="🎁 Generate Reward" onClick={() => runAction('Generate Reward', () => devGenerateReward(user.uid))} />
-          <DevBtn disabled={busy} label="✅ Redeem Reward" onClick={() => runAction('Redeem Reward', () => devRedeemReward(user.uid))} />
-          <DevBtn disabled={busy} label="🗑 Reset Rewards" color="#EF4444" onClick={() => runAction('Reset Rewards', () => devResetRewards(user.uid))} />
-        </DevSection>
-
-        {/* ── Membership ── */}
-        <DevSection title="Membership" icon={<Crown size={14} color="#7C3AED" />}>
-          {MEMBERSHIP_TIERS.map(t => (
-            <DevBtn
-              key={t.tier}
-              disabled={busy}
-              label={`👑 ${t.tier}`}
-              color={t.color}
-              onClick={() => runAction(`Switch to ${t.tier}`, () => devSetMembership(user.uid, t.tier as MembershipTier))}
-            />
-          ))}
-        </DevSection>
-
-        {/* ── Egg Consumption ── */}
-        <DevSection title="Egg Consumption" icon={<Egg size={14} color="#7C3AED" />}>
-          {[1, 5, 10, 30].map(n => (
-            <DevBtn key={n} disabled={busy} label={`🥚 +${n} Egg${n > 1 ? 's' : ''}`} onClick={() => runAction(`+${n} Egg(s)`, () => devAddEggs(user.uid, n))} />
-          ))}
-          <DevBtn disabled={busy} label="🗑 Reset Consumption" color="#EF4444" onClick={() => runAction('Reset Consumption', () => devResetEggs(user.uid))} />
+        <DevSection title="Notifications" icon={<Bell size={14} color={DEV.accent} />} open={openSections.has('Notifications')} onToggle={() => toggleSection('Notifications')} visible={matches('notifications test scan reward sticker membership coupon reminder')}>
+          <DevBtn disabled={busy} label="Test Scan Notification" onClick={() => runAction('Test Scan Notification', () => devNotify.welcome(user.uid))} />
+          <DevBtn disabled={busy} label="Test Reward Notification" onClick={() => runAction('Test Reward Notification', () => devNotify.reward(user.uid))} />
+          <DevBtn disabled={busy} label="Test Sticker Unlock" onClick={() => runAction('Test Sticker Unlock', () => devNotify.sticker(user.uid))} />
+          <DevBtn disabled={busy} label="Test Membership Upgrade" onClick={() => runAction('Test Membership Upgrade', () => devNotify.test(user.uid))} />
+          <DevBtn disabled={busy} label="Test Coupon" onClick={() => runAction('Test Coupon Notification', () => devNotify.coupon(user.uid))} />
+          <DevBtn disabled={busy} label="Test Reminder" onClick={() => runAction('Test Reminder Notification', () => devNotify.reminder(user.uid))} />
+          <DevBtn disabled={busy} label="Generate Sample Set" onClick={() => runAction('Generate Sample Notifications', () => devGenerateSampleNotifications(user.uid))} />
+          <DevBtn disabled={busy} danger label="Clear Notifications" onClick={() => requestConfirm('Clear All Notifications', true, () => devClearNotifications(user.uid))} />
         </DevSection>
 
         {/* ── BMI ── */}
-        <DevSection title="BMI" icon={<Ruler size={14} color="#7C3AED" />}>
-          <DevBtn disabled={busy} label="💚 Generate Healthy BMI" onClick={() => runAction('Generate Healthy BMI', async () => { await devGenerateBmi(user.uid, 'healthy'); })} />
-          <DevBtn disabled={busy} label="🔵 Generate Underweight" onClick={() => runAction('Generate Underweight', async () => { await devGenerateBmi(user.uid, 'underweight'); })} />
-          <DevBtn disabled={busy} label="🟠 Generate Overweight" onClick={() => runAction('Generate Overweight', async () => { await devGenerateBmi(user.uid, 'overweight'); })} />
-          <DevBtn disabled={busy} label="🔴 Generate Obese" onClick={() => runAction('Generate Obese', async () => { await devGenerateBmi(user.uid, 'obese'); })} />
-          <DevBtn disabled={busy} label="🗑 Reset BMI" color="#EF4444" onClick={() => runAction('Reset BMI', () => devResetBmi(user.uid))} />
+        <DevSection title="BMI" icon={<Ruler size={14} color={DEV.accent} />} open={openSections.has('BMI')} onToggle={() => toggleSection('BMI')} visible={matches('bmi health intelligence recommendations insights')}>
+          <DevBtn disabled={busy} label="Healthy" onClick={() => runAction('Generate Healthy BMI', async () => { await devGenerateBmi(user.uid, 'healthy'); })} />
+          <DevBtn disabled={busy} label="Underweight" onClick={() => runAction('Generate Underweight BMI', async () => { await devGenerateBmi(user.uid, 'underweight'); })} />
+          <DevBtn disabled={busy} label="Overweight" onClick={() => runAction('Generate Overweight BMI', async () => { await devGenerateBmi(user.uid, 'overweight'); })} />
+          <DevBtn disabled={busy} label="Obese" onClick={() => runAction('Generate Obese BMI', async () => { await devGenerateBmi(user.uid, 'obese'); })} />
+          <CustomValueRow
+            placeholder="Set custom BMI"
+            value={customBmi}
+            onChange={setCustomBmi}
+            disabled={busy}
+            onSubmit={() => {
+              const n = parseFloat(customBmi);
+              if (!Number.isFinite(n) || n <= 0) return;
+              runAction(`Set BMI to ${n}`, async () => { await devSetCustomBmi(user.uid, n); });
+              setCustomBmi('');
+            }}
+          />
+          <DevBtn disabled={busy} danger label="Reset BMI" onClick={() => requestConfirm('Reset BMI', true, () => devResetBmi(user.uid))} />
         </DevSection>
 
-        {/* ── Daily Goal ── */}
-        <DevSection title="Daily Goal" icon={<TargetIcon size={14} color="#7C3AED" />}>
-          <DevBtn disabled={busy} label="✅ Complete Daily Goal" onClick={() => runAction('Complete Daily Goal', () => devCompleteDailyGoal(user.uid))} />
-          <DevBtn disabled={busy} label="🗑 Reset Daily Goal" color="#EF4444" onClick={() => runAction('Reset Daily Goal', () => devResetDailyGoal(user.uid))} />
+        {/* ── Weekly Batch ── */}
+        <DevSection title="Weekly Batch" icon={<Calendar size={14} color={DEV.accent} />} open={openSections.has('Weekly Batch')} onToggle={() => toggleSection('Weekly Batch')} visible={matches('weekly batch complete week month')}>
+          <DevBtn disabled={busy} label="Complete Week" onClick={() => runAction('Complete Current Week', () => devCompleteCurrentWeek(user.uid))} />
+          <DevBtn disabled={busy} label="Complete Month" onClick={() => runAction('Complete Month', async () => { for (let i = 0; i < 4; i++) await devCompleteCurrentWeek(user.uid); })} />
+          <DevBtn disabled={busy} danger label="Reset Weekly Progress" onClick={() => requestConfirm('Reset Weekly Progress', true, () => devResetWeekly(user.uid))} />
         </DevSection>
 
-        {/* ── Challenges ── */}
-        <DevSection title="Challenges" icon={<Trophy size={14} color="#7C3AED" />}>
-          <DevBtn disabled={busy} label="✅ Complete Daily Challenge" onClick={() => runAction('Complete Daily Challenge', () => devCompleteChallenge(user.uid, 'daily'))} />
-          <DevBtn disabled={busy} label="✅ Complete Weekly Challenge" onClick={() => runAction('Complete Weekly Challenge', () => devCompleteChallenge(user.uid, 'weekly'))} />
-          <DevBtn disabled={busy} label="✅ Complete Monthly Challenge" onClick={() => runAction('Complete Monthly Challenge', () => devCompleteChallenge(user.uid, 'monthly'))} />
-          <DevBtn disabled={busy} label="🗑 Reset Challenges" color="#EF4444" onClick={() => runAction('Reset Challenges', () => devResetChallenges(user.uid))} />
+        {/* ── Passport ── */}
+        <DevSection title="Passport" icon={<BookOpen size={14} color={DEV.accent} />} open={openSections.has('Passport')} onToggle={() => toggleSection('Passport')} visible={matches('passport stamp')}>
+          <DevBtn disabled={busy} label="Unlock Next Stamp" onClick={() => runAction('Unlock Next Passport Stamp', () => devUnlockNextPassport(user.uid))} />
+          <DevBtn disabled={busy} label="Complete Passport" onClick={() => runAction('Complete Passport', () => devCompleteAllPassports(user.uid))} />
+          <DevBtn disabled={busy} danger label="Reset Passport" onClick={() => requestConfirm('Reset Passport', true, () => devResetPassport(user.uid))} />
+        </DevSection>
+
+        {/* ── Redeem Store ── */}
+        <DevSection title="Redeem Store" icon={<Gift size={14} color={DEV.accent} />} open={openSections.has('Redeem Store')} onToggle={() => toggleSection('Redeem Store')} visible={matches('redeem store featured product refund')}>
+          <DevBtn disabled={busy} label="Redeem ₹10 Coupon" onClick={() => runAction('Redeem ₹10 Coupon', async () => { await devRedeemCatalogItemNear(user.uid, 10); })} />
+          <DevBtn disabled={busy} label="Redeem ₹20 Coupon" onClick={() => runAction('Redeem ₹20 Coupon', async () => { await devRedeemCatalogItemNear(user.uid, 20); })} />
+          <DevBtn disabled={busy} label="Redeem Featured Product" onClick={() => runAction('Redeem Featured Product', async () => { await devRedeemFeaturedProduct(user.uid); })} />
+          <p style={{ fontSize: 10, color: DEV.textFaint, margin: '2px 0 0', lineHeight: 1.5 }}>
+            Refund a specific coupon from the Coupons tab of the app (dev-only credit-back, no production refund flow exists).
+          </p>
+        </DevSection>
+
+        {/* ── Statistics ── */}
+        <DevSection title="Statistics" icon={<BarChart3 size={14} color={DEV.accent} />} open={openSections.has('Statistics')} onToggle={() => toggleSection('Statistics')} visible={matches('statistics eggs history activity timeline')}>
+          <DevBtn disabled={busy} label="100 Eggs Today" onClick={() => runAction('Set 100 Eggs Today', () => devSetTodayEggs(user.uid, 100))} />
+          <DevBtn disabled={busy} label="1000 Eggs (Lifetime)" onClick={() => runAction('Simulate 1000 Lifetime Eggs', () => devSimulateLifetimeEggs(user.uid, 1000))} />
+          <DevBtn disabled={busy} label="365 Day History" onClick={() => runAction('Generate 365-Day History', () => devGenerate365DayHistory(user.uid))} />
+          <DevBtn disabled={busy} label="Generate Activity Timeline" onClick={() => runAction('Generate Activity Timeline', () => devGenerateSampleNotifications(user.uid))} />
+        </DevSection>
+
+        {/* ── Data Reset ── */}
+        <DevSection title="Data Reset" icon={<Trash2 size={14} color={DEV.accent} />} open={openSections.has('Data Reset')} onToggle={() => toggleSection('Data Reset')} visible={matches('data reset factory')}>
+          <DevBtn disabled={busy} danger label="Reset Rewards" onClick={() => requestConfirm('Reset Rewards', true, () => devResetRewards(user.uid))} />
+          <DevBtn disabled={busy} danger label="Reset Streak" onClick={() => requestConfirm('Reset Streak', true, () => devResetStreak(user.uid))} />
+          <DevBtn disabled={busy} danger label="Reset Protein" onClick={() => requestConfirm('Reset Protein', true, () => devResetProtein(user.uid))} />
+          <DevBtn disabled={busy} danger label="Reset Membership" onClick={() => requestConfirm('Reset Membership (→ Bronze)', true, () => devSetMembership(user.uid, 'Bronze'))} />
+          <DevBtn disabled={busy} danger label="Reset Stickers" onClick={() => requestConfirm('Reset Stickers', true, () => devResetStickers(user.uid))} />
+          <DevBtn disabled={busy} danger label="Reset Coupons" onClick={() => requestConfirm('Reset Coupons', true, () => devResetCoupons(user.uid))} />
+          <DevBtn disabled={busy} danger label="Reset Notifications" onClick={() => requestConfirm('Reset Notifications', true, () => devClearNotifications(user.uid))} />
+          <DevBtn disabled={busy} danger label="Reset Statistics" onClick={() => requestConfirm('Reset Statistics', true, () => devResetEggs(user.uid))} />
+          <DevBtn disabled={busy} danger label="Factory Reset (Everything)" onClick={() => requestConfirm('Factory Reset — wipes ALL dev test data for this account', true, () => devFactoryReset(user.uid))} />
         </DevSection>
 
         {/* ── Firestore ── */}
-        <DevSection title="Firestore" icon={<Database size={14} color="#7C3AED" />}>
-          <DevBtn disabled={busy} label="🔄 Sync User" onClick={() => runAction('Sync User', () => devSyncUser(user.uid))} />
-          <DevBtn disabled={busy} label="🔄 Reload User" onClick={() => runAction('Reload User', () => devReloadUser(user.uid))} />
-          <DevBtn disabled={busy} label="🔄 Clear Cache" onClick={() => runAction('Clear Cache', () => devClearCache(user.uid))} />
-          <DevBtn disabled={busy} label="🔄 Refresh Rewards" onClick={() => runAction('Refresh Rewards', async () => { await devRefreshCatalog(); })} />
-          <DevBtn disabled={busy} label="🔄 Refresh Stickers" onClick={() => runAction('Refresh Stickers', async () => { onDataChanged?.(); })} />
-          <DevBtn disabled={busy} label="🔄 Refresh Passport" onClick={() => runAction('Refresh Passport', async () => { onDataChanged?.(); })} />
+        <DevSection title="Firestore" icon={<Database size={14} color={DEV.accent} />} open={openSections.has('Firestore')} onToggle={() => toggleSection('Firestore')} visible={matches('firestore sync reload cache refresh')}>
+          <DevBtn disabled={busy} label="Sync User" onClick={() => runAction('Sync User', () => devSyncUser(user.uid))} />
+          <DevBtn disabled={busy} label="Reload User" onClick={() => runAction('Reload User', () => devReloadUser(user.uid))} />
+          <DevBtn disabled={busy} label="Clear Cache" onClick={() => runAction('Clear Cache', () => devClearCache(user.uid))} />
+          <DevBtn disabled={busy} label="Refresh Catalog" onClick={() => runAction('Refresh Rewards Catalog', async () => { await devRefreshCatalog(); })} />
         </DevSection>
 
       </div>
+
+      {/* ── Confirmation dialog ── */}
+      {confirmAction && (
+        <ConfirmDialog
+          label={confirmAction.label}
+          danger={confirmAction.danger}
+          onConfirm={() => { const a = confirmAction; setConfirmAction(null); runAction(a.label, a.fn); }}
+          onCancel={() => setConfirmAction(null)}
+        />
+      )}
+
+      <style>{`
+        @keyframes devToastIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes devSpin { to { transform: rotate(360deg); } }
+        @keyframes devPopIn { from { opacity: 0; transform: scale(0.92); } to { opacity: 1; transform: scale(1); } }
+      `}</style>
     </div>
   );
 }
@@ -267,45 +364,213 @@ export default function DevTestCenterScreen({ user, onBack, onDataChanged }: Dev
 // Sub-components
 // ─────────────────────────────────────────────────────────────
 
-function DashTile({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
+function Toast({ toast }: { toast: ToastState }) {
+  const meta: Record<ToastKind, { bg: string; border: string; color: string; icon: React.ReactNode }> = {
+    success: { bg: 'rgba(22,163,74,0.15)', border: '#16A34A', color: '#4ADE80', icon: <CheckCircle2 size={14} color="#4ADE80" /> },
+    error:   { bg: 'rgba(239,68,68,0.15)', border: DEV.red, color: '#FCA5A5', icon: <XCircle size={14} color="#FCA5A5" /> },
+    info:    { bg: 'rgba(148,163,184,0.15)', border: '#64748B', color: '#CBD5E1', icon: <AlertTriangle size={14} color="#CBD5E1" /> },
+  };
+  const m = meta[toast.kind];
   return (
-    <div style={{ background: '#FAFAFA', borderRadius: 12, padding: '8px 10px' }}>
-      <p style={{ fontSize: 8, fontWeight: 800, color: '#bbb', textTransform: 'uppercase', letterSpacing: 0.5, margin: 0 }}>{label}</p>
-      <p style={{ fontSize: 12, fontWeight: 800, color: highlight ? '#7C3AED' : '#1A1A1A', margin: '3px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</p>
+    <div style={{
+      margin: '10px 14px 0', padding: '10px 14px', borderRadius: 12,
+      background: m.bg, border: `1px solid ${m.border}`,
+      display: 'flex', alignItems: 'center', gap: 8,
+      animation: 'devToastIn 200ms ease',
+    }}>
+      {m.icon}
+      <span style={{ fontSize: 12, fontWeight: 700, color: m.color }}>{toast.message}</span>
     </div>
   );
 }
 
-function DevSection({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+function ConfirmDialog({ label, danger, onConfirm, onCancel }: { label: string; danger: boolean; onConfirm: () => void; onCancel: () => void }) {
   return (
-    <div style={{ background: '#fff', borderRadius: 18, border: '1.5px solid #EDE9FE', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 14px', background: '#F9F7FF', borderBottom: '1px solid #EDE9FE' }}>
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 100,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
+    }} onClick={onCancel}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '100%', maxWidth: 360, background: DEV.surface, borderRadius: 20, padding: 22,
+        border: `1px solid ${DEV.border}`, animation: 'devPopIn 200ms cubic-bezier(0.34,1.4,0.64,1)',
+      }}>
+        <div style={{
+          width: 44, height: 44, borderRadius: '50%', background: 'rgba(239,68,68,0.15)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14,
+        }}>
+          <AlertTriangle size={20} color={DEV.red} />
+        </div>
+        <p style={{ fontSize: 14, fontWeight: 800, color: DEV.text, margin: '0 0 6px' }}>Confirm Action</p>
+        <p style={{ fontSize: 12.5, color: DEV.textSoft, margin: '0 0 20px', lineHeight: 1.6 }}>
+          {label}. This action calls real production write paths — proceed?
+        </p>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button onClick={onCancel} style={{
+            flex: 1, padding: '12px 0', borderRadius: 12, border: `1px solid ${DEV.border}`,
+            background: 'none', color: DEV.textSoft, fontWeight: 700, fontSize: 13, cursor: 'pointer',
+          }}>
+            Cancel
+          </button>
+          <button onClick={onConfirm} style={{
+            flex: 1, padding: '12px 0', borderRadius: 12, border: 'none',
+            background: danger ? `linear-gradient(135deg, ${DEV.red}, ${DEV.redDeep})` : `linear-gradient(135deg, #7C3AED, #6D28D9)`,
+            color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer',
+          }}>
+            Confirm
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DebugPanel({ env, debug, uid, email, onRefresh }: {
+  env: DevEnvSnapshot | null;
+  debug: DevDebugSnapshot | null;
+  uid: string;
+  email: string | null;
+  onRefresh: () => void;
+}) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div style={{ background: DEV.surface, borderRadius: 18, border: `1px solid ${DEV.border}`, overflow: 'hidden' }}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px',
+        background: DEV.surface2, border: 'none', cursor: 'pointer', textAlign: 'left',
+      }}>
+        <Database size={14} color={DEV.accent} />
+        <p style={{ fontSize: 12, fontWeight: 900, color: DEV.text, margin: 0, flex: 1 }}>Debug Information</p>
+        <button
+          onClick={e => { e.stopPropagation(); onRefresh(); }}
+          style={{ border: 'none', background: 'none', cursor: 'pointer', display: 'flex', padding: 4 }}
+        >
+          <RefreshCw size={13} color={DEV.textSoft} />
+        </button>
+        <ChevronDown size={14} color={DEV.textSoft} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 200ms' }} />
+      </button>
+      {open && (
+        <div style={{ padding: '12px 14px 14px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <DebugTile label="User ID" value={uid.slice(0, 12) + '…'} mono />
+            <DebugTile label="Email" value={email ?? '—'} />
+            <DebugTile label="Membership" value={debug?.membership ?? '—'} highlight />
+            <DebugTile label="Reward Points" value={String(debug?.rewardPoints ?? 0)} highlight />
+            <DebugTile label="Lifetime Points" value={String(debug?.lifetimePoints ?? 0)} />
+            <DebugTile label="Protein Today" value={`${debug?.proteinToday ?? 0}g`} />
+            <DebugTile label="Current Streak" value={`${debug?.currentStreak ?? 0}d`} />
+            <DebugTile label="Best Streak" value={`${debug?.bestStreak ?? 0}d`} />
+            <DebugTile label="Weekly Progress" value={`${debug?.weeklyBatchProgress ?? 0}/7 (Wk ${debug?.weeklyBatchNumber ?? 1})`} />
+            <DebugTile label="Sticker Count" value={`${debug?.stickerCount ?? 0}/${debug?.stickerTotal ?? 8}`} />
+            <DebugTile label="Coupon Count" value={`${debug?.availableCouponCount ?? 0} avail / ${debug?.couponCount ?? 0} total`} />
+            <DebugTile label="Notification Count" value={String(debug?.notificationCount ?? 0)} />
+            <DebugTile label="BMI" value={debug?.bmi != null ? debug.bmi.toFixed(1) : '—'} />
+            <DebugTile label="Health Score" value={debug?.healthScore != null ? String(debug.healthScore) : '—'} />
+            <DebugTile label="Last Sync" value={debug?.lastSyncTime ?? '—'} />
+            <DebugTile
+              label="Firestore Status"
+              value={debug?.firestoreStatus === 'connected' ? 'Connected' : 'Error'}
+              status={debug?.firestoreStatus}
+            />
+          </div>
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${DEV.border}`, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+            <DebugTile label="Build" value={env?.environment ?? '—'} />
+            <DebugTile label="Version" value={env?.version ?? '—'} />
+            <DebugTile label="Notify Server" value={env?.notification ?? '—'} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DebugTile({ label, value, highlight, mono, status }: { label: string; value: string; highlight?: boolean; mono?: boolean; status?: 'connected' | 'error' }) {
+  const statusColor = status === 'connected' ? '#4ADE80' : status === 'error' ? DEV.red : undefined;
+  return (
+    <div style={{ background: DEV.surface2, borderRadius: 10, padding: '8px 10px' }}>
+      <p style={{ fontSize: 8, fontWeight: 800, color: DEV.textFaint, textTransform: 'uppercase', letterSpacing: 0.5, margin: 0 }}>{label}</p>
+      <p style={{
+        fontSize: 12, fontWeight: 800, margin: '3px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        color: statusColor ?? (highlight ? DEV.accent : DEV.text),
+        fontFamily: mono ? 'monospace' : undefined,
+      }}>
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function DevSection({ title, icon, children, open, onToggle, visible }: {
+  title: string; icon: React.ReactNode; children: React.ReactNode; open: boolean; onToggle: () => void; visible: boolean;
+}) {
+  if (!visible) return null;
+  return (
+    <div style={{ background: DEV.surface, borderRadius: 18, border: `1px solid ${DEV.border}`, overflow: 'hidden' }}>
+      <button onClick={onToggle} style={{
+        width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px',
+        background: DEV.surface2, border: 'none', cursor: 'pointer', textAlign: 'left',
+      }}>
         {icon}
-        <p style={{ fontSize: 12, fontWeight: 900, color: '#1A1A1A', margin: 0 }}>{title}</p>
-      </div>
-      <div style={{ padding: '10px 12px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {children}
-      </div>
+        <p style={{ fontSize: 12, fontWeight: 900, color: DEV.text, margin: 0, flex: 1 }}>{title}</p>
+        <ChevronDown size={14} color={DEV.textSoft} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 200ms' }} />
+      </button>
+      {open && (
+        <div style={{ padding: '10px 12px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {children}
+        </div>
+      )}
     </div>
   );
 }
 
-function DevBtn({ label, onClick, disabled, color = '#7C3AED' }: { label: string; onClick: () => void; disabled?: boolean; color?: string }) {
+function DevBtn({ label, onClick, disabled, danger }: { label: string; onClick: () => void; disabled?: boolean; danger?: boolean }) {
+  const color = danger ? DEV.red : DEV.accent;
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       style={{
         width: '100%', padding: '11px 14px', borderRadius: 12,
-        border: `1.5px solid ${color}33`,
-        background: disabled ? '#F5F5F5' : `${color}10`,
-        color: disabled ? '#bbb' : color,
-        fontWeight: 700, fontSize: 12, cursor: disabled ? 'not-allowed' : 'pointer',
-        textAlign: 'left', opacity: disabled ? 0.7 : 1,
+        border: `1px solid ${color}44`,
+        background: disabled ? 'rgba(255,255,255,0.03)' : `${color}14`,
+        color: disabled ? DEV.textFaint : color,
+        fontWeight: 700, fontSize: 12.5, cursor: disabled ? 'not-allowed' : 'pointer',
+        textAlign: 'left', opacity: disabled ? 0.6 : 1,
         transition: 'background 120ms',
       }}
     >
       {label}
     </button>
+  );
+}
+
+function CustomValueRow({ placeholder, value, onChange, onSubmit, disabled }: {
+  placeholder: string; value: string; onChange: (v: string) => void; onSubmit: () => void; disabled?: boolean;
+}) {
+  return (
+    <div style={{ display: 'flex', gap: 6 }}>
+      <input
+        type="number"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        disabled={disabled}
+        style={{
+          flex: 1, padding: '10px 12px', borderRadius: 12, border: `1px solid ${DEV.border}`,
+          background: DEV.surface2, color: DEV.text, fontSize: 12, outline: 'none',
+        }}
+      />
+      <button
+        onClick={onSubmit}
+        disabled={disabled || value.trim() === ''}
+        style={{
+          padding: '0 16px', borderRadius: 12, border: 'none',
+          background: disabled || value.trim() === '' ? 'rgba(255,255,255,0.06)' : `linear-gradient(135deg, ${DEV.accent}, ${DEV.redDeep})`,
+          color: disabled || value.trim() === '' ? DEV.textFaint : '#fff',
+          fontWeight: 800, fontSize: 12, cursor: disabled || value.trim() === '' ? 'not-allowed' : 'pointer',
+        }}
+      >
+        Set
+      </button>
+    </div>
   );
 }

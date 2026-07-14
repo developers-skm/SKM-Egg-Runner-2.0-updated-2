@@ -243,8 +243,6 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
 
             // Section dividers
             const prevBatch     = batches[idx - 1];
-            const showUpcoming  = batch.isLocked  && !prevBatch?.isLocked  && !prevBatch?.isCurrent === false;
-            const showCompleted = batch.isComplete && !prevBatch?.isComplete;
 
             // Determine if upcoming divider should show (first locked batch)
             const isFirstLocked    = batch.isLocked  && (!prevBatch || !prevBatch.isLocked);
@@ -357,7 +355,7 @@ export default function EggStreakScreen({ user, refreshKey, onScanQR }: EggStrea
                       {batch.days.map((d, i) => {
                         const dayNames = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
                         const isPast   = d.completed;
-                        const isCurDay = !d.completed && i === batch.days.filter(x => x.completed).length;
+                        const isCurDay = !d.completed && i === daysCompleted;
                         return (
                           <div key={i} style={{
                             flex: 1, borderRadius: 10, padding: '6px 2px', textAlign: 'center',

@@ -36,11 +36,14 @@ export default function ProteinTrackerScreen({ onBack }: ProteinTrackerScreenPro
   const { user, logout } = useAuth();
   const [tab,        setTab]        = useState<Tab>('dashboard');
   const [refreshKey, setRefreshKey] = useState(0);
+  const [avatarBroken, setAvatarBroken] = useState(false);
 
   // Preload html5-qrcode in the background so the scanner opens instantly
   useEffect(() => {
     import('html5-qrcode').catch(() => {});
   }, []);
+
+  useEffect(() => { setAvatarBroken(false); }, [user?.photoURL]);
 
   const typedUser = user as User;
   if (!typedUser) return null;
@@ -100,8 +103,14 @@ export default function ProteinTrackerScreen({ onBack }: ProteinTrackerScreenPro
               border: tab === 'profile' ? '2px solid #D71920' : '2px solid transparent',
               background: 'none', cursor: 'pointer', padding: 0, flexShrink: 0,
             }}>
-              {typedUser.photoURL ? (
-                <img src={typedUser.photoURL} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              {typedUser.photoURL && !avatarBroken ? (
+                <img
+                  src={typedUser.photoURL}
+                  alt=""
+                  referrerPolicy="no-referrer"
+                  onError={() => setAvatarBroken(true)}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                />
               ) : (
                 <div style={{ width: '100%', height: '100%', background: '#FCE8E8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <span style={{ fontSize: 12, fontWeight: 900, color: '#D71920' }}>{(typedUser.displayName ?? 'U')[0].toUpperCase()}</span>
