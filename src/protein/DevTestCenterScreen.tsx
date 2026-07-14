@@ -32,6 +32,7 @@ import {
 } from '../services/protein/devTestCenterService';
 import { MEMBERSHIP_TIERS, type MembershipTier } from '../constants/rewards';
 import type { Rarity } from '../services/protein/milestoneRewardService';
+import { HapticService } from '../services/audio/hapticService';
 
 interface DevTestCenterScreenProps {
   user: User;
@@ -272,9 +273,9 @@ export default function DevTestCenterScreen({ user, onBack, onDataChanged }: Dev
         {/* ── Coupon Testing ── */}
         <DevSection title="Coupon Testing" icon={<Ticket size={14} color={DEV.accent} />} open={openSections.has('Coupon Testing')} onToggle={() => toggleSection('Coupon Testing')} visible={matches('coupon testing generate expire redeem reset')}>
           {[10, 20, 50].map(v => (
-            <DevBtn key={v} disabled={busy} label={`Generate ₹${v} Coupon`} onClick={() => runAction(`Generate ₹${v} Coupon`, () => devGenerateCoupon(user.uid, v))} />
+            <DevBtn key={v} disabled={busy} label={`Generate ₹${v} Coupon`} onClick={() => { HapticService.selection(); runAction(`Generate ₹${v} Coupon`, () => devGenerateCoupon(user.uid, v)); }} />
           ))}
-          <DevBtn disabled={busy} label="Generate All Coupons" onClick={() => runAction('Generate All Coupons', async () => { await devGenerateCoupon(user.uid, 10); await devGenerateCoupon(user.uid, 20); await devGenerateCoupon(user.uid, 50); })} />
+          <DevBtn disabled={busy} label="Generate All Coupons" onClick={() => { HapticService.selection(); runAction('Generate All Coupons', async () => { await devGenerateCoupon(user.uid, 10); await devGenerateCoupon(user.uid, 20); await devGenerateCoupon(user.uid, 50); }); }} />
           <DevBtn disabled={busy} danger label="Expire All Coupons" onClick={() => requestConfirm('Expire All Coupons', false, () => devExpireCoupons(user.uid))} />
           <DevBtn disabled={busy} label="Redeem Coupon" onClick={() => runAction('Redeem Coupon', async () => { await devRedeemCatalogItemNear(user.uid, 10); })} />
           <DevBtn disabled={busy} danger label="Reset Coupons" onClick={() => requestConfirm('Reset Coupons', true, () => devResetCoupons(user.uid))} />
@@ -328,9 +329,9 @@ export default function DevTestCenterScreen({ user, onBack, onDataChanged }: Dev
 
         {/* ── Weekly Batch ── */}
         <DevSection title="Weekly Batch" icon={<Calendar size={14} color={DEV.accent} />} open={openSections.has('Weekly Batch')} onToggle={() => toggleSection('Weekly Batch')} visible={matches('weekly batch complete week month all preview completion animation')}>
-          <DevBtn disabled={busy} label="Complete Current Week" onClick={() => runAction('Complete Current Week', () => devCompleteCurrentWeek(user.uid))} />
-          <DevBtn disabled={busy} label="Complete Current Month" onClick={() => runAction('Complete Current Month', async () => { for (let i = 0; i < 4; i++) await devCompleteCurrentWeek(user.uid); })} />
-          <DevBtn disabled={busy} label="Complete All Weekly Batches" onClick={() => runAction('Complete All Weekly Batches', async () => { for (let i = 0; i < 12; i++) await devCompleteCurrentWeek(user.uid); })} />
+          <DevBtn disabled={busy} label="Complete Current Week" onClick={() => { HapticService.success(); runAction('Complete Current Week', () => devCompleteCurrentWeek(user.uid)); }} />
+          <DevBtn disabled={busy} label="Complete Current Month" onClick={() => { HapticService.success(); runAction('Complete Current Month', async () => { for (let i = 0; i < 4; i++) await devCompleteCurrentWeek(user.uid); }); }} />
+          <DevBtn disabled={busy} label="Complete All Weekly Batches" onClick={() => { HapticService.success(); runAction('Complete All Weekly Batches', async () => { for (let i = 0; i < 12; i++) await devCompleteCurrentWeek(user.uid); }); }} />
           <DevBtn disabled={busy} label="Preview Weekly Completion Animation" onClick={() => runAction('Preview Weekly Completion Animation', () => devCompleteCurrentWeek(user.uid))} />
           <DevBtn disabled={busy} danger label="Reset Weekly Batches" onClick={() => requestConfirm('Reset Weekly Batches', true, () => devResetWeekly(user.uid))} />
         </DevSection>
@@ -356,8 +357,8 @@ export default function DevTestCenterScreen({ user, onBack, onDataChanged }: Dev
 
         {/* ── Passport ── */}
         <DevSection title="Passport Testing" icon={<BookOpen size={14} color={DEV.accent} />} open={openSections.has('Passport Testing')} onToggle={() => toggleSection('Passport Testing')} visible={matches('passport testing unlock stamp complete reset')}>
-          <DevBtn disabled={busy} label="Unlock Stamp" onClick={() => runAction('Unlock Next Passport Stamp', () => devUnlockNextPassport(user.uid))} />
-          <DevBtn disabled={busy} label="Complete Passport" onClick={() => runAction('Complete Passport', () => devCompleteAllPassports(user.uid))} />
+          <DevBtn disabled={busy} label="Unlock Stamp" onClick={() => { HapticService.medium(); runAction('Unlock Next Passport Stamp', () => devUnlockNextPassport(user.uid)); }} />
+          <DevBtn disabled={busy} label="Complete Passport" onClick={() => { HapticService.medium(); runAction('Complete Passport', () => devCompleteAllPassports(user.uid)); }} />
           <DevBtn disabled={busy} danger label="Reset Passport" onClick={() => requestConfirm('Reset Passport', true, () => devResetPassport(user.uid))} />
         </DevSection>
 

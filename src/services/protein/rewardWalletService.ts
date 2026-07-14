@@ -117,6 +117,7 @@ export async function awardScanPoints(uid: string, currentStreak: number): Promi
 
   if (wallet.membership !== before.membership) {
     notifyMembershipTierUp(uid, wallet.membership).catch(() => {});
+    HapticService.heavy(); // Membership Upgrade
   }
 }
 
@@ -127,6 +128,7 @@ export async function awardMilestoneStickerPoints(uid: string, points: number, d
   notifyRewardPointsEarned(uid, points, wallet.currentPoints).catch(() => {});
   if (wallet.membership !== before.membership) {
     notifyMembershipTierUp(uid, wallet.membership).catch(() => {});
+    HapticService.heavy(); // Membership Upgrade
   }
 }
 

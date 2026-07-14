@@ -21,6 +21,7 @@ import { getTodayStats } from '../services/protein/proteinTrackerService';
 import { MEMBERSHIP_TIERS, POINTS_PER_SCAN, type MembershipTier } from '../constants/rewards';
 import { useNavigation, type NavTarget } from '../context/NavigationContext';
 import HighlightCard from './HighlightCard';
+import { HapticService } from '../services/audio/hapticService';
 
 interface RewardsClubScreenProps {
   user: User;
@@ -178,10 +179,12 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, navTarget }:
   const handleRedeem = async () => {
     if (!confirmItem || !wallet) return;
     setRedeeming(true); setRedeemErr('');
+    HapticService.selection(); // major button press — Redeem confirm
     try {
       const coupon = await redeemReward(user.uid, confirmItem);
       setConfirmItem(null);
       setSuccessCoupon(coupon);
+      HapticService.success(); // Coupon Unlocked / Reward Redeemed
       await load();
     } catch {
       setRedeemErr('Failed to redeem. Please try again.');
@@ -1887,7 +1890,7 @@ function RedeemSuccessScreen({ coupon, onViewCoupons, onDone }: {
       </div>
 
       <div style={{ display: 'flex', gap: 10, width: '100%', maxWidth: 340 }}>
-        <button onClick={onDone} style={{
+        <button onClick={() => { HapticService.selection(); onDone(); }} style={{
           flex: 1, padding: '14px 0', borderRadius: 14, border: `1.5px solid ${PALETTE.eggshell}`,
           background: PALETTE.warmWhite, color: PALETTE.red, fontWeight: 700, fontSize: 14, cursor: 'pointer',
         }}>

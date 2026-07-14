@@ -39,6 +39,7 @@ import DevTestCenterScreen from './DevTestCenterScreen';
 import { isDevUser } from '../services/protein/devTestCenterService';
 import { useNavigation, type NavTarget } from '../context/NavigationContext';
 import HighlightCard from './HighlightCard';
+import { HapticService } from '../services/audio/hapticService';
 
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
@@ -80,6 +81,7 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
   const [loading,     setLoading]     = useState(true);
   const [isDevRole,       setIsDevRole]       = useState(false);
   const [devMode,         setDevMode]         = useState<boolean>(readDevMode);
+  const [hapticsOn,       setHapticsOn]       = useState<boolean>(HapticService.isEnabled);
   const [devDebugOpen,    setDevDebugOpen]    = useState(false);
   const [claimedDates,    setClaimedDates]    = useState<Map<number, string>>(new Map());
   const [favorites,       setFavorites]       = useState<Set<number>>(new Set());
@@ -492,6 +494,48 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
             <ActionRow icon={<TargetIcon size={18} color="#D71920" />} label="Change Daily Goal" onClick={() => { setNewGoal(String(settings?.dailyGoal ?? DEFAULT_DAILY_GOAL)); setView('edit_goal'); }} />
           </div>
+
+          {/* Settings — Haptic Feedback toggle */}
+          <SectionCard title="Settings" style={{ marginTop: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px 14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: 11, background: '#FCE8E8',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                }}>
+                  <SettingsIcon size={17} color="#D71920" />
+                </div>
+                <div>
+                  <p style={{ fontSize: 13, fontWeight: 800, color: '#1A1A1A', margin: 0 }}>Haptic Feedback</p>
+                  <p style={{ fontSize: 10, color: '#999', margin: 0, fontWeight: 600 }}>
+                    {hapticsOn ? 'Vibration on scans and rewards' : 'Vibration disabled'}
+                  </p>
+                </div>
+              </div>
+              <div
+                onClick={() => {
+                  const next = !hapticsOn;
+                  HapticService.setEnabled(next);
+                  setHapticsOn(next);
+                  if (next) HapticService.selection(); // confirm the change is felt immediately
+                }}
+                style={{
+                  width: 48, height: 26, borderRadius: 13, cursor: 'pointer',
+                  background: hapticsOn ? '#D71920' : '#E8E8E8',
+                  position: 'relative', transition: 'background 200ms', flexShrink: 0,
+                }}
+              >
+                <div style={{
+                  position: 'absolute', top: 3,
+                  left: hapticsOn ? 25 : 3,
+                  width: 20, height: 20, borderRadius: '50%',
+                  background: '#fff',
+                  transition: 'left 200ms',
+                  boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
+                }} />
+              </div>
+            </div>
+          </SectionCard>
 
           {/* ── STICKER COLLECTION GALLERY ── */}
           <div style={{ marginTop: 14 }}>

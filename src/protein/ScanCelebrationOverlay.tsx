@@ -8,6 +8,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { MILESTONES } from '../services/protein/milestoneRewardService';
+import { HapticService } from '../services/audio/hapticService';
 
 interface ScanCelebrationProps {
   streak:       number;
@@ -527,7 +528,7 @@ export default function ScanCelebrationOverlay({
             {/* ── Continue button — only shown in done stage ── */}
             {stage === 'done' && (
               <button
-                onClick={dismiss}
+                onClick={() => { HapticService.selection(); dismiss(); }}
                 style={{
                   width: '100%', padding: '17px 0', borderRadius: 20,
                   border: 'none', cursor: 'pointer',
