@@ -78,3 +78,30 @@ function _play(c: AudioContext): void {
     osc.stop(start + dur + 0.01);
   });
 }
+
+/**
+ * Short neutral UI click — a single filtered tick, distinct from the
+ * chick chirp. Used for confirmation feedback outside the scan-success
+ * flow (e.g. the Developer Mode "Test Haptic" button).
+ */
+export function playUiClick(): void {
+  if (!enabled) return;
+  const c = getCtx();
+  if (!c) return;
+  const fire = () => {
+    const now = c.currentTime;
+    const osc  = c.createOscillator();
+    const gain = c.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(1200, now);
+    osc.frequency.exponentialRampToValueAtTime(600, now + 0.05);
+    gain.gain.setValueAtTime(0.35, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+    osc.connect(gain);
+    gain.connect(c.destination);
+    osc.start(now);
+    osc.stop(now + 0.07);
+  };
+  if (c.state === 'suspended') c.resume().then(fire).catch(() => {});
+  else fire();
+}

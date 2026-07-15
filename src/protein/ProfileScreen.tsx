@@ -39,6 +39,7 @@ import { isDevUser } from '../services/protein/devTestCenterService';
 import { useNavigation, type NavTarget } from '../context/NavigationContext';
 import HighlightCard from './HighlightCard';
 import { HapticService } from '../services/audio/hapticService';
+import { playUiClick } from '../services/audio/chickSound';
 
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
@@ -81,6 +82,7 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
   const [isDevRole,       setIsDevRole]       = useState(false);
   const [devMode,         setDevMode]         = useState<boolean>(readDevMode);
   const [hapticsOn,       setHapticsOn]       = useState<boolean>(HapticService.isEnabled);
+  const [hapticToast,     setHapticToast]     = useState<{ text: string; ok: boolean } | null>(null);
   const [devDebugOpen,    setDevDebugOpen]    = useState(false);
   const [claimedDates,    setClaimedDates]    = useState<Map<number, string>>(new Map());
   const [favorites,       setFavorites]       = useState<Set<number>>(new Set());
@@ -509,7 +511,22 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
                   const next = !hapticsOn;
                   HapticService.setEnabled(next);
                   setHapticsOn(next);
-                  if (next) HapticService.selection(); // confirm the change is felt immediately
+                  setHapticToast(null);
+
+                  if (next) {
+                    // Turning ON → immediately attempt a 200ms test vibration so the
+                    // user can feel the change take effect right away, regardless of
+                    // the enabled flag (test() always attempts, per its own contract).
+                    const result = HapticService.test();
+                    setHapticToast(
+                      result.fired
+                        ? { text: 'Haptic feedback enabled', ok: true }
+                        : { text: result.reason ?? 'Device or browser does not support vibration.', ok: false }
+                    );
+                  }
+                  // Turning OFF → no vibration, no toast — silence is the entire point.
+
+                  setTimeout(() => setHapticToast(null), 2600);
                 }}
                 style={{
                   width: 48, height: 26, borderRadius: 13, cursor: 'pointer',
@@ -527,6 +544,45 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
                 }} />
               </div>
             </div>
+
+            {/* Haptic toggle result — confirms the change was actually felt */}
+            {hapticToast && (
+              <div style={{
+                margin: '0 16px 14px', padding: '9px 12px', borderRadius: 10,
+                background: hapticToast.ok ? '#F0FDF4' : '#FEF2F2',
+                border: `1px solid ${hapticToast.ok ? '#BBF7D0' : '#FECACA'}`,
+                animation: 'haptic-toast-in 200ms cubic-bezier(0.34,1.56,0.64,1)',
+              }}>
+                <p style={{ fontSize: 11, fontWeight: 700, color: hapticToast.ok ? '#16A34A' : '#DC2626', margin: 0 }}>
+                  {hapticToast.text}
+                </p>
+              </div>
+            )}
+
+            {/* Developer Mode only — instant haptic/sound verification */}
+            {devMode && (
+              <div style={{ margin: '0 16px 14px' }}>
+                <button
+                  onClick={() => {
+                    const result = HapticService.test();
+                    playUiClick();
+                    setHapticToast(
+                      result.fired
+                        ? { text: 'Haptic test fired successfully', ok: true }
+                        : { text: result.reason ?? 'Device or browser does not support vibration.', ok: false }
+                    );
+                    setTimeout(() => setHapticToast(null), 2600);
+                  }}
+                  style={{
+                    width: '100%', padding: '10px 0', borderRadius: 12,
+                    border: '1px solid #DDD6FE', background: '#F5F3FF', cursor: 'pointer',
+                    color: '#7C3AED', fontWeight: 800, fontSize: 12,
+                  }}
+                >
+                  Test Haptic
+                </button>
+              </div>
+            )}
           </SectionCard>
 
           {/* ── STICKER COLLECTION GALLERY ── */}
@@ -769,6 +825,10 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
             @keyframes sticker-toast-in {
               from { transform: translateY(8px); opacity: 0; }
               to   { transform: translateY(0);   opacity: 1; }
+            }
+            @keyframes haptic-toast-in {
+              from { transform: scale(0.96); opacity: 0; }
+              to   { transform: scale(1);    opacity: 1; }
             }
           `}</style>
 
