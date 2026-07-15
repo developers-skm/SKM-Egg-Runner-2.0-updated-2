@@ -41,6 +41,8 @@ interface NotificationContextValue {
   drawerOpen:     boolean;
   pushPermission: 'granted' | 'denied' | 'default' | 'unsupported';
   pushEnabled:    boolean;
+  /** True only when permission was granted but token registration genuinely failed (e.g. FCM 401) — not when the user simply denied/hasn't been asked. */
+  pushSetupFailed: boolean;
   openDrawer:     () => void;
   closeDrawer:    () => void;
   markRead:       (id: string) => Promise<void>;
@@ -59,6 +61,7 @@ const NotificationContext = createContext<NotificationContextValue>({
   drawerOpen:     false,
   pushPermission: 'default',
   pushEnabled:    false,
+  pushSetupFailed: false,
   openDrawer:     () => {},
   closeDrawer:    () => {},
   markRead:       async () => {},
@@ -81,6 +84,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     getPushPermissionState()
   );
   const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushSetupFailed, setPushSetupFailed] = useState(false);
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
@@ -107,6 +111,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   useEffect(() => {
     if (!uid) {
       setPushEnabled(false);
+      setPushSetupFailed(false);
       return;
     }
 
@@ -134,6 +139,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         const token = await initFCMToken(uid);
         if (aborted) return;
         setPushEnabled(!!token);
+        setPushSetupFailed(!token);
         if (token) await sendLoginNotification(uid, email);
         return;
       }
@@ -152,6 +158,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           const token = await initFCMToken(uid);
           if (aborted) return;
           setPushEnabled(!!token);
+          setPushSetupFailed(!token);
           if (token) await sendLoginNotification(uid, email);
         }
         return;
@@ -242,6 +249,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     if (perm === 'granted') {
       const token = await initFCMToken(uid).catch(() => null);
       setPushEnabled(!!token);
+      setPushSetupFailed(!token);
     }
   }, [uid]);
 
@@ -249,6 +257,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     if (!uid) return;
     await revokeFCMToken(uid);
     setPushEnabled(false);
+    setPushSetupFailed(false);
     await updateSettings({ ...settings, pushNotifications: false });
   }, [uid, settings, updateSettings]);
 
@@ -260,6 +269,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       drawerOpen,
       pushPermission,
       pushEnabled,
+      pushSetupFailed,
       openDrawer,
       closeDrawer,
       markRead,

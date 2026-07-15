@@ -11,8 +11,8 @@
  * Firebase compat SDK required inside service workers (no ES modules in SW).
  */
 
-importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/12.15.0/firebase-messaging-compat.js');
 
 // ─── App shell cache ──────────────────────────────────────────────────────────
 

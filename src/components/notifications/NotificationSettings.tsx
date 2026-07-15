@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import {
-  Bell, Egg, Flame, Trophy, Crown, Megaphone, Calendar, Target
+  Bell, Egg, Flame, Trophy, Crown, Megaphone, Calendar, Target, AlertTriangle
 } from 'lucide-react';
 import { useNotifications } from '../../context/NotificationContext';
 import type { NotificationSettings as NS } from '../../types/notifications';
@@ -61,7 +61,7 @@ function ToggleRow({ icon, label, description, value, onChange }: ToggleRowProps
 }
 
 export default function NotificationSettings() {
-  const { settings, updateSettings } = useNotifications();
+  const { settings, updateSettings, pushSetupFailed } = useNotifications();
   const [saving, setSaving] = useState(false);
 
   const update = async (key: keyof NS, val: boolean) => {
@@ -136,6 +136,19 @@ export default function NotificationSettings() {
           <span style={{ fontSize: 10, color: '#10B981', marginLeft: 'auto', fontWeight: 700 }}>Saving…</span>
         )}
       </div>
+
+      {pushSetupFailed && (
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: 8,
+          background: '#FFF7ED', border: '1px solid #FED7AA',
+          borderRadius: 12, padding: '10px 12px', marginBottom: 10,
+        }}>
+          <AlertTriangle size={15} color="#EA580C" style={{ flexShrink: 0, marginTop: 1 }} />
+          <p style={{ margin: 0, fontSize: 11.5, color: '#9A3412', fontWeight: 600, lineHeight: 1.5 }}>
+            Push notifications are currently unavailable. You'll still see updates in this list — try again later or check your connection.
+          </p>
+        </div>
+      )}
 
       {rows.map(row => (
         <ToggleRow
