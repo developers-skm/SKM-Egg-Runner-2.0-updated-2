@@ -203,6 +203,7 @@ function AppRoot() {
     return (
       <ProteinTrackerScreen
         onBack={() => setScreen('MODULE_SELECT')}
+        onPlayGame={() => setScreen('GAME')}
       />
     );
   }

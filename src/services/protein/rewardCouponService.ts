@@ -18,6 +18,7 @@ import { db } from '../firebase/firebase';
 import { DEFAULT_COUPON_VALID_DAYS } from '../../constants/rewards';
 import { spendPoints } from './rewardWalletService';
 import { notifyRewardRedeemed } from '../notifications/notificationService';
+import type { GameStage } from '../game/gameStatsService';
 
 export interface RewardCatalogItem {
   id:              string;
@@ -29,6 +30,9 @@ export interface RewardCatalogItem {
   pointsCost:      number;
   active:          boolean;
   sortOrder:       number;
+  /** Optional Egg Runner gate — if set, the reward also requires this game stage before it can be claimed, in addition to pointsCost. Items without this behave exactly as before (points-only). */
+  requiredStage?:      GameStage;
+  requiredStageLabel?: string; // display label, e.g. "Stage 2" or "Champion Stage"
 }
 
 export type CouponStatus = 'available' | 'used' | 'expired';
@@ -58,7 +62,7 @@ export async function getRewardCatalog(): Promise<RewardCatalogItem[]> {
 
 // ── Coupon code generation ──────────────────────────────────────
 
-function generateCouponCode(): string {
+export function generateCouponCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous chars (0/O, 1/I)
   let code = 'SKM-';
   for (let i = 0; i < 8; i++) {
@@ -68,7 +72,7 @@ function generateCouponCode(): string {
   return code;
 }
 
-function addDays(days: number): string {
+export function addDays(days: number): string {
   const d = new Date();
   d.setDate(d.getDate() + days);
   return d.toLocaleDateString('sv-SE'); // YYYY-MM-DD
@@ -76,11 +80,27 @@ function addDays(days: number): string {
 
 // ── Redemption flow ──────────────────────────────────────────────
 
+const STAGE_ORDER: GameStage[] = ['EGG', 'CHICK', 'ADULT', 'STAGE2'];
+function stageRank(stage: GameStage): number {
+  const i = STAGE_ORDER.indexOf(stage);
+  return i === -1 ? 0 : i;
+}
+
+/** True once the player's highest-reached game stage meets or exceeds the reward's requiredStage (if any). */
+export function meetsStageRequirement(item: RewardCatalogItem, highestStage: GameStage): boolean {
+  if (!item.requiredStage) return true;
+  return stageRank(highestStage) >= stageRank(item.requiredStage);
+}
+
 /**
  * Spends points and issues a new coupon for the given catalog item.
- * Throws if the user has insufficient points — caller should catch and show an error.
+ * Throws if the user has insufficient points, or if the item has a game-stage
+ * gate that hasn't been reached yet — caller should catch and show an error.
  */
-export async function redeemReward(uid: string, item: RewardCatalogItem): Promise<RewardCoupon> {
+export async function redeemReward(uid: string, item: RewardCatalogItem, highestStage: GameStage): Promise<RewardCoupon> {
+  if (!meetsStageRequirement(item, highestStage)) {
+    throw new Error(`Reach ${item.requiredStageLabel ?? item.requiredStage} in Egg Runner to unlock this reward.`);
+  }
   await spendPoints(uid, item.pointsCost, `Redeemed ${item.discountAmount > 0 ? `₹${item.discountAmount} OFF` : item.productName} — ${item.productName}`);
 
   const couponCode = generateCouponCode();

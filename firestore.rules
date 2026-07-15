@@ -200,6 +200,13 @@ service cloud.firestore {
       allow write:  if isOwner(uid);
     }
 
+    // Game stats bridge — Egg Runner run summaries, read by the Protein
+    // Tracker/Rewards Club (see services/game/gameStatsService.ts).
+    match /users/{uid}/gameStats/{docId} {
+      allow read:  if isOwner(uid) || isDeveloper();
+      allow write: if isOwner(uid);
+    }
+
     // ── PROTEIN TRACKER COLLECTIONS ─────────────────────────
 
     match /protein_logs/{uid}/entries/{entryId} {

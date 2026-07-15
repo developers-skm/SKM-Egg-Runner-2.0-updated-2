@@ -14,7 +14,7 @@ import {
   getRecentRewardTransactions, type RewardTransaction,
 } from '../services/protein/rewardTransactionService';
 import {
-  getRewardCatalog, redeemReward, getUserCoupons, markCouponUsed,
+  getRewardCatalog, redeemReward, getUserCoupons, markCouponUsed, meetsStageRequirement,
   type RewardCatalogItem, type RewardCoupon, type CouponStatus,
 } from '../services/protein/rewardCouponService';
 import { getTodayStats } from '../services/protein/proteinTrackerService';
@@ -23,11 +23,18 @@ import { MEMBERSHIP_TIERS, POINTS_PER_SCAN, type MembershipTier } from '../const
 import { useNavigation, type NavTarget } from '../context/NavigationContext';
 import HighlightCard from './HighlightCard';
 import { HapticService } from '../services/audio/hapticService';
+import { getGameStats, type GameStage } from '../services/game/gameStatsService';
+
+const STAGE_DISPLAY: Record<GameStage, string> = {
+  EGG: 'Stage 1', CHICK: 'Stage 2', ADULT: 'Stage 3', STAGE2: 'Stage 4',
+};
 
 interface RewardsClubScreenProps {
   user: User;
   onBack: () => void;
   onScanQR?: () => void;
+  /** Navigates to the existing Egg Runner Home screen (main.tsx setScreen('GAME')) — never launches gameplay directly. */
+  onPlayGame?: () => void;
   /** Set by ProteinTrackerScreen when a tapped notification targets this screen. */
   navTarget?: NavTarget | null;
 }
@@ -113,7 +120,7 @@ function formatCountdown(ms: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-export default function RewardsClubScreen({ user, onBack, onScanQR, navTarget }: RewardsClubScreenProps) {
+export default function RewardsClubScreen({ user, onBack, onScanQR, onPlayGame, navTarget }: RewardsClubScreenProps) {
   const { consumeTarget } = useNavigation();
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<HubTab>('overview');
@@ -126,6 +133,7 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, navTarget }:
   const [todayGoal, setTodayGoal] = useState(0);
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
   const [couponFilter, setCouponFilter] = useState<CouponFilterTab>('available');
+  const [highestStage, setHighestStage] = useState<GameStage>('EGG');
 
   const [confirmItem, setConfirmItem] = useState<RewardCatalogItem | null>(null);
   const [redeeming, setRedeeming] = useState(false);
@@ -136,17 +144,19 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, navTarget }:
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [w, cat, cp, tx, today] = await Promise.all([
+      const [w, cat, cp, tx, today, gameStats] = await Promise.all([
         getRewardWallet(user.uid),
         getRewardCatalog(),
         getUserCoupons(user.uid),
         getRecentRewardTransactions(user.uid, 30),
         getTodayStats(user.uid),
+        getGameStats(user.uid),
       ]);
       setWallet(w); setCatalog(cat); setCoupons(cp); setTransactions(tx);
       setTodayEggs(today?.totalEggs ?? 0);
       setTodayProtein(today?.totalProtein ?? 0);
       setTodayGoal(today?.goal ?? 0);
+      setHighestStage(gameStats.highestStage);
     } catch (e) { console.error('[RewardsClub]', e); }
     finally { setLoading(false); }
   }, [user.uid]);
@@ -182,7 +192,7 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, navTarget }:
     setRedeeming(true); setRedeemErr('');
     HapticService.selection(); // major button press — Redeem confirm
     try {
-      const coupon = await redeemReward(user.uid, confirmItem);
+      const coupon = await redeemReward(user.uid, confirmItem, highestStage);
       setConfirmItem(null);
       setSuccessCoupon(coupon);
       HapticService.success(); // Coupon Unlocked / Reward Redeemed
@@ -345,6 +355,7 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, navTarget }:
             categoryFilter={categoryFilter}
             onCategoryChange={setCategoryFilter}
             wallet={wallet}
+            highestStage={highestStage}
             onSelect={item => { setRedeemErr(''); setConfirmItem(item); }}
           />
         )}
@@ -369,10 +380,12 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, navTarget }:
         <ConfirmRedeemDialog
           item={confirmItem}
           currentPoints={wallet.currentPoints}
+          highestStage={highestStage}
           saving={redeeming}
           error={redeemErr}
           onConfirm={handleRedeem}
           onCancel={() => setConfirmItem(null)}
+          onPlayGame={onPlayGame}
         />
       )}
 
@@ -1257,12 +1270,13 @@ function buildCatalogSections(catalog: RewardCatalogItem[]): CatalogSection[] {
   return sections;
 }
 
-function RewardsTab({ catalog, categories, categoryFilter, onCategoryChange, wallet, onSelect }: {
+function RewardsTab({ catalog, categories, categoryFilter, onCategoryChange, wallet, highestStage, onSelect }: {
   catalog: RewardCatalogItem[];
   categories: string[];
   categoryFilter: string;
   onCategoryChange: (c: string) => void;
   wallet: RewardWallet;
+  highestStage: GameStage;
   onSelect: (item: RewardCatalogItem) => void;
 }) {
   const sections = useMemo(() => buildCatalogSections(catalog), [catalog]);
@@ -1297,7 +1311,12 @@ function RewardsTab({ catalog, categories, categoryFilter, onCategoryChange, wal
         // Filtered by category — flat grid (sections don't make sense once filtered)
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginTop: 4 }}>
           {catalog.map((item, i) => (
-            <ProductCard key={item.id} item={item} index={i} affordable={wallet.currentPoints >= item.pointsCost} onSelect={() => onSelect(item)} />
+            <ProductCard
+              key={item.id} item={item} index={i}
+              affordable={wallet.currentPoints >= item.pointsCost && meetsStageRequirement(item, highestStage)}
+              stageLocked={!meetsStageRequirement(item, highestStage)}
+              onSelect={() => onSelect(item)}
+            />
           ))}
         </div>
       ) : (
@@ -1311,7 +1330,12 @@ function RewardsTab({ catalog, categories, categoryFilter, onCategoryChange, wal
               </div>
               <div className="rc-carousel" style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
                 {section.items.map((item, i) => (
-                  <ProductCard key={item.id} item={item} index={i} affordable={wallet.currentPoints >= item.pointsCost} onSelect={() => onSelect(item)} compact />
+                  <ProductCard
+                    key={item.id} item={item} index={i}
+                    affordable={wallet.currentPoints >= item.pointsCost && meetsStageRequirement(item, highestStage)}
+                    stageLocked={!meetsStageRequirement(item, highestStage)}
+                    onSelect={() => onSelect(item)} compact
+                  />
                 ))}
               </div>
             </div>
@@ -1322,10 +1346,11 @@ function RewardsTab({ catalog, categories, categoryFilter, onCategoryChange, wal
   );
 }
 
-function ProductCard({ item, index, affordable, onSelect, compact }: {
+function ProductCard({ item, index, affordable, stageLocked, onSelect, compact }: {
   item: RewardCatalogItem;
   index: number;
   affordable: boolean;
+  stageLocked?: boolean;
   onSelect: () => void;
   compact?: boolean;
 }) {
@@ -1365,10 +1390,16 @@ function ProductCard({ item, index, affordable, onSelect, compact }: {
         <p style={{ fontSize: compact ? 11 : 12, fontWeight: 800, color: PALETTE.ink, margin: 0, lineHeight: 1.3 }}>{item.productName}</p>
         <p style={{ fontSize: compact ? 9 : 10, color: PALETTE.inkSoft, margin: compact ? '2px 0 8px' : '3px 0 10px', fontWeight: 600, textDecoration: 'line-through' }}>MRP ₹{item.mrp}</p>
 
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: compact ? 8 : 10 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: compact ? 6 : 8 }}>
           <span style={{ fontSize: compact ? 15 : 17, fontWeight: 900, color: PALETTE.red }}>₹{item.discountAmount}</span>
           <span style={{ fontSize: 10, fontWeight: 700, color: PALETTE.inkSoft }}>OFF</span>
         </div>
+
+        {item.requiredStageLabel && (
+          <p style={{ fontSize: 9.5, fontWeight: 700, color: stageLocked ? PALETTE.goldDeep : '#16A34A', margin: compact ? '0 0 8px' : '0 0 10px' }}>
+            {stageLocked ? '🎮 ' : '✅ '}{item.requiredStageLabel}
+          </p>
+        )}
 
         <div
           style={{
@@ -1768,20 +1799,27 @@ function ActivityTimeline({ transactions, highlightId }: { transactions: RewardT
 // Redeem here calls the same redeemReward() flow — no logic change.
 // ─────────────────────────────────────────────────────────────
 
-function ConfirmRedeemDialog({ item, currentPoints, saving, error, onConfirm, onCancel }: {
+const STAGE_ORDER_UI: GameStage[] = ['EGG', 'CHICK', 'ADULT', 'STAGE2'];
+
+function ConfirmRedeemDialog({ item, currentPoints, highestStage, saving, error, onConfirm, onCancel, onPlayGame }: {
   item: RewardCatalogItem;
   currentPoints: number;
+  highestStage: GameStage;
   saving: boolean;
   error: string;
   onConfirm: () => void;
   onCancel: () => void;
+  onPlayGame?: () => void;
 }) {
   const theme = rangeTheme(item.range);
   const remaining = currentPoints - item.pointsCost;
   const pointsShort = Math.max(0, item.pointsCost - currentPoints);
   const eggsRemaining = Math.ceil(pointsShort / POINTS_PER_SCAN);
   const pct = Math.min(100, Math.round((currentPoints / item.pointsCost) * 100));
-  const affordable = currentPoints >= item.pointsCost;
+  const pointsMet = currentPoints >= item.pointsCost;
+  const stageMet = meetsStageRequirement(item, highestStage);
+  const affordable = pointsMet && stageMet;
+  const hasStageGate = !!item.requiredStage;
 
   return (
     <div style={{
@@ -1828,21 +1866,42 @@ function ConfirmRedeemDialog({ item, currentPoints, saving, error, onConfirm, on
             <DetailStat label="Points Required" value={String(item.pointsCost)} />
           </div>
 
-          {/* Progress */}
+          {/* Requirements checklist — points always shown; game-stage gate only if this reward has one */}
           <div style={{ background: PALETTE.cream, borderRadius: 16, padding: 14, marginBottom: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: PALETTE.inkSoft }}>Your Current Points</span>
-              <span style={{ fontSize: 13, fontWeight: 900, color: PALETTE.ink }}>{currentPoints} / {item.pointsCost}</span>
+            <p style={{ fontSize: 11, fontWeight: 800, color: PALETTE.inkSoft, margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: 0.3 }}>
+              Requirements
+            </p>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: hasStageGate ? 10 : 0 }}>
+              {pointsMet ? <CheckCircle2 size={16} color="#16A34A" /> : <XCircle size={16} color="#DC2626" />}
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: PALETTE.ink, flex: 1 }}>Reward Points</span>
+              <span style={{ fontSize: 12, fontWeight: 800, color: PALETTE.inkSoft }}>{currentPoints} / {item.pointsCost}</span>
             </div>
-            <div style={{ height: 8, background: PALETTE.eggshell, borderRadius: 12, overflow: 'hidden' }}>
+
+            {hasStageGate && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {stageMet ? <CheckCircle2 size={16} color="#16A34A" /> : <XCircle size={16} color="#DC2626" />}
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: PALETTE.ink, flex: 1 }}>
+                  Reach {item.requiredStageLabel ?? STAGE_DISPLAY[item.requiredStage!]}
+                </span>
+              </div>
+            )}
+
+            <div style={{ height: 8, background: PALETTE.eggshell, borderRadius: 12, overflow: 'hidden', marginTop: 12 }}>
               <div style={{
                 height: '100%', width: `${pct}%`, borderRadius: 12, transition: 'width 700ms cubic-bezier(0.34,1.56,0.4,1)',
                 background: `linear-gradient(90deg, ${PALETTE.gold}, ${PALETTE.red})`,
               }} />
             </div>
-            {!affordable && eggsRemaining > 0 && (
+            {!pointsMet && eggsRemaining > 0 && (
               <p style={{ fontSize: 10.5, fontWeight: 700, color: PALETTE.goldDeep, margin: '8px 0 0' }}>
                 ≈ Scan {eggsRemaining} more egg{eggsRemaining === 1 ? '' : 's'} to unlock this reward
+              </p>
+            )}
+
+            {hasStageGate && (
+              <p style={{ fontSize: 10.5, fontWeight: 700, color: stageMet ? '#16A34A' : PALETTE.goldDeep, margin: '8px 0 0' }}>
+                Current Progress: {STAGE_ORDER_UI.includes(highestStage) ? STAGE_DISPLAY[highestStage] : 'Stage 1'} / {item.requiredStageLabel ?? STAGE_DISPLAY[item.requiredStage!]}
               </p>
             )}
           </div>
@@ -1860,18 +1919,30 @@ function ConfirmRedeemDialog({ item, currentPoints, saving, error, onConfirm, on
               flex: 1, padding: '14px 0', borderRadius: 14, border: `1.5px solid ${PALETTE.eggshell}`,
               background: PALETTE.warmWhite, color: PALETTE.red, fontWeight: 700, fontSize: 14, cursor: 'pointer',
             }}>
-              Cancel
+              Not Now
             </button>
-            <button className="rc-btn-ripple" disabled={saving || !affordable} onClick={onConfirm} style={{
-              flex: 1, padding: '14px 0', borderRadius: 14, border: 'none',
-              background: affordable ? `linear-gradient(135deg, ${PALETTE.red}, ${PALETTE.redDeep})` : PALETTE.eggshell,
-              color: affordable ? '#fff' : PALETTE.inkSoft,
-              fontWeight: 900, fontSize: 14, opacity: saving ? 0.6 : 1, cursor: saving || !affordable ? 'not-allowed' : 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-            }}>
-              {!affordable ? <Lock size={13} color={PALETTE.inkSoft} /> : null}
-              {saving ? 'Redeeming…' : affordable ? 'Redeem Now' : 'Not Enough Points'}
-            </button>
+            {!stageMet && hasStageGate ? (
+              <button className="rc-btn-ripple" disabled={!onPlayGame} onClick={onPlayGame} style={{
+                flex: 1, padding: '14px 0', borderRadius: 14, border: 'none',
+                background: onPlayGame ? `linear-gradient(135deg, ${PALETTE.red}, ${PALETTE.redDeep})` : PALETTE.eggshell,
+                color: onPlayGame ? '#fff' : PALETTE.inkSoft,
+                fontWeight: 900, fontSize: 14, cursor: onPlayGame ? 'pointer' : 'not-allowed',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              }}>
+                🎮 Play Game
+              </button>
+            ) : (
+              <button className="rc-btn-ripple" disabled={saving || !affordable} onClick={onConfirm} style={{
+                flex: 1, padding: '14px 0', borderRadius: 14, border: 'none',
+                background: affordable ? `linear-gradient(135deg, ${PALETTE.red}, ${PALETTE.redDeep})` : PALETTE.eggshell,
+                color: affordable ? '#fff' : PALETTE.inkSoft,
+                fontWeight: 900, fontSize: 14, opacity: saving ? 0.6 : 1, cursor: saving || !affordable ? 'not-allowed' : 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              }}>
+                {!affordable ? <Lock size={13} color={PALETTE.inkSoft} /> : null}
+                {saving ? 'Claiming…' : affordable ? '✅ Claim Reward' : 'Not Enough Points'}
+              </button>
+            )}
           </div>
         </div>
       </div>

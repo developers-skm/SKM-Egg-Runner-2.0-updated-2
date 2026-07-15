@@ -15,6 +15,11 @@
  *   active:          boolean  — true = shown in the Rewards Club catalog
  *   sortOrder:       number   — display order
  *   createdAt:       Timestamp
+ *   requiredStage:      string (optional) — Egg Runner gate: 'EGG'|'CHICK'|'ADULT'|'STAGE2'.
+ *                                            If set, the reward also requires the player's
+ *                                            highest-reached game stage to meet/exceed this,
+ *                                            in addition to pointsCost.
+ *   requiredStageLabel: string (optional) — display label, e.g. "Stage 2", "Champion Stage"
  *
  * pointsCost is set at 10 points per ₹1 of discount as the default conversion rate.
  * Admins can edit any field directly in Firestore afterwards — this script only
@@ -51,20 +56,20 @@ const POINTS_PER_RUPEE_DISCOUNT = 10;
 const CATALOG = [
   // SKM BEST FRESH
   { slug: 'fresh-6',  range: 'SKM Best Fresh', productName: 'Fresh 6',  mrp: 84,  discountAmount: 10, minimumPurchase: 100 },
-  { slug: 'fresh-12', range: 'SKM Best Fresh', productName: 'Fresh 12', mrp: 165, discountAmount: 15, minimumPurchase: 200 },
+  { slug: 'fresh-12', range: 'SKM Best Fresh', productName: 'Fresh 12', mrp: 165, discountAmount: 15, minimumPurchase: 200, requiredStage: 'CHICK', requiredStageLabel: 'Stage 2' },
   { slug: 'fresh-15', range: 'SKM Best Fresh', productName: 'Fresh 15', mrp: 204, discountAmount: 20, minimumPurchase: 250 },
-  { slug: 'fresh-30', range: 'SKM Best Fresh', productName: 'Fresh 30', mrp: 405, discountAmount: 40, minimumPurchase: 400 },
+  { slug: 'fresh-30', range: 'SKM Best Fresh', productName: 'Fresh 30', mrp: 405, discountAmount: 40, minimumPurchase: 400, requiredStage: 'ADULT', requiredStageLabel: 'Stage 4' },
 
   // SKM BEST PLUS
   { slug: 'plus-6',   range: 'SKM Best Plus', productName: 'Plus 6',  mrp: 96,  discountAmount: 10, minimumPurchase: 100 },
-  { slug: 'plus-12',  range: 'SKM Best Plus', productName: 'Plus 12', mrp: 189, discountAmount: 20, minimumPurchase: 200 },
+  { slug: 'plus-12',  range: 'SKM Best Plus', productName: 'Plus 12', mrp: 189, discountAmount: 20, minimumPurchase: 200, requiredStage: 'CHICK', requiredStageLabel: 'Stage 2' },
   { slug: 'plus-24',  range: 'SKM Best Plus', productName: 'Plus 24', mrp: 372, discountAmount: 35, minimumPurchase: 350 },
-  { slug: 'plus-30',  range: 'SKM Best Plus', productName: 'Plus 30', mrp: 462, discountAmount: 45, minimumPurchase: 450 },
+  { slug: 'plus-30',  range: 'SKM Best Plus', productName: 'Plus 30', mrp: 462, discountAmount: 45, minimumPurchase: 450, requiredStage: 'STAGE2', requiredStageLabel: 'Champion Stage' },
 
   // SKM BEST BROWN
   { slug: 'brown-6',  range: 'SKM Best Brown', productName: 'Brown 6',  mrp: 105, discountAmount: 10, minimumPurchase: 100 },
-  { slug: 'brown-12', range: 'SKM Best Brown', productName: 'Brown 12', mrp: 207, discountAmount: 20, minimumPurchase: 200 },
-  { slug: 'brown-30', range: 'SKM Best Brown', productName: 'Brown 30', mrp: 510, discountAmount: 50, minimumPurchase: 500 },
+  { slug: 'brown-12', range: 'SKM Best Brown', productName: 'Brown 12', mrp: 207, discountAmount: 20, minimumPurchase: 200, requiredStage: 'ADULT', requiredStageLabel: 'Stage 4' },
+  { slug: 'brown-30', range: 'SKM Best Brown', productName: 'Brown 30', mrp: 510, discountAmount: 50, minimumPurchase: 500, requiredStage: 'STAGE2', requiredStageLabel: 'Champion Stage' },
 
   // PREMIUM RANGE
   { slug: 'cardio',   range: 'Premium Range', productName: 'Cardio',   mrp: 108, discountAmount: 10, minimumPurchase: 100 },
@@ -89,8 +94,10 @@ async function seed() {
       active:          true,
       sortOrder:       i,
       createdAt:       FieldValue.serverTimestamp(),
+      ...(item.requiredStage ? { requiredStage: item.requiredStage, requiredStageLabel: item.requiredStageLabel } : {}),
     }, { merge: true });
-    console.log(`  ✅ ${item.slug} — ${item.productName} (₹${item.discountAmount} OFF, ${item.discountAmount * POINTS_PER_RUPEE_DISCOUNT} pts)`);
+    const gate = item.requiredStage ? `, gate: ${item.requiredStageLabel}` : '';
+    console.log(`  ✅ ${item.slug} — ${item.productName} (₹${item.discountAmount} OFF, ${item.discountAmount * POINTS_PER_RUPEE_DISCOUNT} pts${gate})`);
   });
 
   await batch.commit();

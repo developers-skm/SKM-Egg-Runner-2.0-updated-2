@@ -17,27 +17,42 @@ import { db } from '../firebase/firebase';
 // Types
 // ─────────────────────────────────────────────────────────────
 
+export type GameStage = 'EGG' | 'CHICK' | 'ADULT' | 'STAGE2';
+
+// Ratchet order — a user's highestStage only ever moves forward, never backward.
+const STAGE_ORDER: GameStage[] = ['EGG', 'CHICK', 'ADULT', 'STAGE2'];
+function stageRank(stage: GameStage): number {
+  const i = STAGE_ORDER.indexOf(stage);
+  return i === -1 ? 0 : i;
+}
+
 export interface GameStats {
-  gamesPlayed:     number;
-  totalDistance:   number;
-  bestDistance:    number;
-  totalCoins:      number; // feeds earned across all runs
-  totalXP:         number;
-  eggsCollected:   number; // eggs rewarded in-game (NOT protein-scan eggs)
-  skinsUnlocked:   number;
-  bestScore:       number;
-  lastPlayed:      string; // ISO date
-  currentLevel:    number;
+  gamesPlayed:            number;
+  totalDistance:          number;
+  bestDistance:           number;
+  totalCoins:             number; // feeds earned across all runs
+  totalXP:                number;
+  eggsCollected:          number; // eggs rewarded in-game (NOT protein-scan eggs)
+  skinsUnlocked:          number;
+  bestScore:              number;
+  lastPlayed:             string; // ISO date
+  currentLevel:           number;
+  highestStage:           GameStage; // highest evolution stage ever reached, across all runs
+  championReached:        boolean;   // true once the Chicken Champion (EGG→CHICK) sequence has been hit
+  missionsCompletedTotal:  number;    // cumulative missions claimed across all runs
 }
 
 export interface RunSummary {
-  distance:      number;
-  score:         number;
-  feedsEarned:   number; // feeds collected this run (used as coins)
-  xpEarned:      number;
-  eggsRewarded:  number; // eggs rewarded at run-end
-  skinsUnlocked: number; // current total unlocked skins
-  currentLevel:  number;
+  distance:                 number;
+  score:                    number;
+  feedsEarned:              number; // feeds collected this run (used as coins)
+  xpEarned:                 number;
+  eggsRewarded:             number; // eggs rewarded at run-end
+  skinsUnlocked:            number; // current total unlocked skins
+  currentLevel:             number;
+  highestStage:             GameStage; // highest stage reached during this run
+  championReached:          boolean;   // whether this run reached CHICK stage or beyond
+  missionsCompletedThisRun: number;    // missions newly claimed during this run
 }
 
 const EMPTY_STATS: GameStats = {
@@ -51,6 +66,9 @@ const EMPTY_STATS: GameStats = {
   bestScore:     0,
   lastPlayed:    '',
   currentLevel:  1,
+  highestStage:  'EGG',
+  championReached: false,
+  missionsCompletedTotal: 0,
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -87,7 +105,12 @@ export async function saveRunStats(uid: string, run: RunSummary): Promise<void> 
     const newBestDistance = Math.max(existing.bestDistance ?? 0, run.distance);
     const newBestScore    = Math.max(existing.bestScore    ?? 0, run.score);
 
-    const update: Record<string, number | string | FieldValue> = {
+    const existingHighestStage = existing.highestStage ?? 'EGG';
+    const newHighestStage = stageRank(run.highestStage) > stageRank(existingHighestStage)
+      ? run.highestStage
+      : existingHighestStage;
+
+    const update: Record<string, number | string | boolean | FieldValue> = {
       gamesPlayed:   increment(1),
       totalDistance: increment(Math.round(run.distance)),
       bestDistance:  newBestDistance,
@@ -98,6 +121,9 @@ export async function saveRunStats(uid: string, run: RunSummary): Promise<void> 
       bestScore:     newBestScore,
       lastPlayed:    new Date().toISOString().slice(0, 10),
       currentLevel:  run.currentLevel,
+      highestStage:  newHighestStage,
+      championReached: (existing.championReached ?? false) || run.championReached,
+      missionsCompletedTotal: increment(run.missionsCompletedThisRun),
       updatedAt:     serverTimestamp() as unknown as string,
     };
 

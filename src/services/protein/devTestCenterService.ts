@@ -639,7 +639,9 @@ export async function devRedeemCatalogItemNear(uid: string, targetDiscount: numb
   if (wallet.currentPoints < closest.pointsCost) {
     await addPoints(uid, closest.pointsCost - wallet.currentPoints, 'adjustment', 'Dev test — top-up to afford redemption');
   }
-  return redeemReward(uid, closest);
+  // Dev-only shortcut — bypass the game-stage gate by claiming the highest stage, same as
+  // the point top-up above bypasses the points gate. Real users still go through Play Game.
+  return redeemReward(uid, closest, 'STAGE2');
 }
 
 /** Redeems the single highest-discount catalog item (mirrors the Rewards Club's "Featured Reward"). */
@@ -651,7 +653,8 @@ export async function devRedeemFeaturedProduct(uid: string): Promise<RewardCoupo
   if (wallet.currentPoints < featured.pointsCost) {
     await addPoints(uid, featured.pointsCost - wallet.currentPoints, 'adjustment', 'Dev test — top-up to afford redemption');
   }
-  return redeemReward(uid, featured);
+  // Dev-only shortcut — bypass the game-stage gate, same rationale as devRedeemCatalogItemNear above.
+  return redeemReward(uid, featured, 'STAGE2');
 }
 
 /**

@@ -14,7 +14,11 @@ import NotificationBell from '../components/notifications/NotificationBell';
 
 type Tab = 'dashboard' | 'scan' | 'log' | 'stats' | 'profile' | 'streaks' | 'rewards';
 
-interface ProteinTrackerScreenProps { onBack: () => void; }
+interface ProteinTrackerScreenProps {
+  onBack: () => void;
+  /** Navigates to the existing Egg Runner Home screen (main.tsx setScreen('GAME')) — never launches gameplay directly. */
+  onPlayGame?: () => void;
+}
 
 function FlameNavIcon({ active }: { active: boolean }) {
   return (
@@ -35,7 +39,7 @@ const PRIMARY_NAV: { key: Tab; label: string; icon: (a: boolean) => React.ReactN
   { key: 'rewards',   label: 'Rewards', icon: (a) => <GiftIcon      size={20} color={a ? '#D71920' : '#bbb'} /> },
 ];
 
-export default function ProteinTrackerScreen({ onBack }: ProteinTrackerScreenProps) {
+export default function ProteinTrackerScreen({ onBack, onPlayGame }: ProteinTrackerScreenProps) {
   const { user, logout } = useAuth();
   const [tab,        setTab]        = useState<Tab>('dashboard');
   const [refreshKey, setRefreshKey] = useState(0);
@@ -170,6 +174,7 @@ export default function ProteinTrackerScreen({ onBack }: ProteinTrackerScreenPro
             user={typedUser}
             onBack={() => setTab('dashboard')}
             onScanQR={() => setTab('scan')}
+            onPlayGame={onPlayGame}
             navTarget={pendingTarget?.tab === 'rewards' ? pendingTarget : null}
           />
         )}

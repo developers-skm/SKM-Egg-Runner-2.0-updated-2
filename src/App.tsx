@@ -34,7 +34,7 @@ import {
   SettingsModal
 } from './frontend';
 import { syncConfigWithServer, addDebugLog, getActiveLiveConfig } from './liveConfig';
-import { saveRunStats } from './services/game/gameStatsService';
+import { saveRunStats, type GameStage } from './services/game/gameStatsService';
 import { consumeOnePlay } from './services/qr/qrService';
 import { isDeveloperModeEnabled } from './services/dev/devModeService';
 
@@ -226,6 +226,9 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
   const runStatsRef = useRef<ActiveGameStats>({
     score: 0, feeds: 0, gems: 0, distance: 0, speed: 16.0, multiplier: 1.0, eggs: 0
   });
+  // Snapshot of claimed-mission count at run start, so run-end can compute
+  // how many missions were newly claimed during just this run.
+  const missionsClaimedAtRunStartRef = useRef(0);
   const hudFastRef = useRef<HudSnapshot>({
     score: 0, feeds: 0, gems: 0, distance: 0,
     currentStage: 'EGG', grainsCollected: 0,
@@ -635,6 +638,7 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
     setRunStats(freshRunStats);
     setActivePowerUps([]);
     runStatsRef.current = { ...freshRunStats };
+    missionsClaimedAtRunStartRef.current = missions.filter(m => m.claimed).length;
     hudFastRef.current = {
       score: 0, feeds: 0, gems: 0, distance: 0,
       currentStage: 'EGG', grainsCollected: 0,
@@ -854,6 +858,9 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
 
       // Persist run stats to Firestore so Protein Tracker can read live game data
       if (uid && uid !== 'guest') {
+        const highestStage: GameStage = isStage2
+          ? 'STAGE2'
+          : (hudFastRef.current.currentStage as GameStage);
         saveRunStats(uid, {
           distance:      Math.round(runStatsRef.current.distance),
           score:         runStatsRef.current.score,
@@ -862,6 +869,12 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
           eggsRewarded:  totalEggsRewarded,
           skinsUnlocked: updated.unlockedSkins.length,
           currentLevel:  updated.level,
+          highestStage,
+          championReached: highestStage !== 'EGG',
+          missionsCompletedThisRun: Math.max(
+            0,
+            missions.filter(m => m.claimed).length - missionsClaimedAtRunStartRef.current,
+          ),
         }).catch(() => { /* non-fatal */ });
       }
 
