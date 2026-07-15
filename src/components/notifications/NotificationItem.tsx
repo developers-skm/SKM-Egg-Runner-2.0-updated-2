@@ -11,8 +11,21 @@ import {
 import { useNotifications } from '../../context/NotificationContext';
 import { useNavigation } from '../../context/NavigationContext';
 import { resolveNavTarget } from '../../services/notifications/notificationNavigation';
+import { isDeveloperModeEnabled } from '../../services/dev/devModeService';
 import NotificationDetailModal from './NotificationDetailModal';
 import type { AppNotification, NotificationType } from '../../types/notifications';
+
+function logNav(n: AppNotification, outcome: 'success' | 'failed', reason?: string): void {
+  if (!isDeveloperModeEnabled()) return;
+  const target = resolveNavTarget(n);
+  console.log(
+    '[Notification]',
+    `\n  Type: ${n.type}`,
+    `\n  Route: ${target ? `${target.tab}${target.section ? `/${target.section}` : ''}` : '(none)'}`,
+    `\n  Target Section: ${target?.section ?? target?.entityId ?? '(none)'}`,
+    outcome === 'success' ? '\n  Navigation Success.' : `\n  Navigation Failed. Reason: ${reason ?? 'unknown'}`,
+  );
+}
 
 interface Props { notification: AppNotification }
 
@@ -174,21 +187,36 @@ export default function NotificationItem({ notification: n }: Props) {
   const [tapped, setTapped] = useState(false);
   const [showDetail, setShowDetail] = useState(false);
 
-  const handleClick = async () => {
-    // Subtle tap animation
-    setTapped(true);
-    setTimeout(() => setTapped(false), 180);
-
+  // Shared by both the row tap and each "View X" quick-action button, so
+  // there is exactly one navigation path — no second, divergent mapping
+  // keyed off action.actionType. Order is fixed: mark read → resolve route →
+  // close drawer → navigate, matching the sequence the app is expected to
+  // follow everywhere a notification triggers navigation.
+  const navigate = async () => {
     if (!n.read) await markRead(n.id);
 
     const target = resolveNavTarget(n);
     if (target) {
       closeDrawer();
       navigateTo(target);
+      logNav(n, 'success');
     } else {
       // Unknown type — never crash, just show the notification's own details.
       setShowDetail(true);
+      logNav(n, 'failed', 'no route mapped for this notification type');
     }
+  };
+
+  const handleClick = async () => {
+    // Subtle tap animation
+    setTapped(true);
+    setTimeout(() => setTapped(false), 180);
+    await navigate();
+  };
+
+  const handleActionClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    await navigate();
   };
 
   return (
@@ -254,7 +282,7 @@ export default function NotificationItem({ notification: n }: Props) {
             {n.actions.map((action, i) => (
               <button
                 key={i}
-                onClick={e => { e.stopPropagation(); }}
+                onClick={handleActionClick}
                 style={{
                   padding: '4px 10px', borderRadius: 8,
                   border: `1px solid ${accent}40`,

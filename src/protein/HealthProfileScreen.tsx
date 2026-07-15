@@ -13,6 +13,7 @@ import {
 } from '../services/protein/healthProfileService';
 import { getStreakInfo, getTodayStats, getWeeklyData, todayKey } from '../services/protein/proteinTrackerService';
 import { MILESTONES } from '../services/protein/milestoneRewardService';
+import HighlightCard from './HighlightCard';
 
 const EGG_BENEFIT_ICON: Record<EggBenefitCard['iconKey'], React.ReactNode> = {
   'egg':          <Egg size={18} color="#D71920" />,
@@ -24,6 +25,29 @@ const EGG_BENEFIT_ICON: Record<EggBenefitCard['iconKey'], React.ReactNode> = {
   'award':        <Award size={18} color="#D71920" />,
   'activity':     <Activity size={18} color="#D71920" />,
 };
+
+/** Maps a save failure to a specific, actionable message instead of a generic one. */
+function describeSaveError(e: unknown): string {
+  const msg = (e as { code?: string; message?: string })?.message ?? String(e);
+  const code = (e as { code?: string })?.code ?? '';
+
+  if (code === 'permission-denied' || /permission.denied/i.test(msg)) {
+    return 'Permission denied. Please sign in again and retry.';
+  }
+  if (code === 'unauthenticated' || /unauthenticated/i.test(msg)) {
+    return 'Your session has expired. Please sign in again.';
+  }
+  if (code === 'unavailable' || /unavailable/i.test(msg)) {
+    return 'Unable to connect to the server. Check your connection and try again.';
+  }
+  if (!navigator.onLine) {
+    return 'You appear to be offline. Reconnect and try again.';
+  }
+  if (/invalid.data|invalid.argument|unsupported field/i.test(msg)) {
+    return 'Some information could not be saved. Please review your entries and try again.';
+  }
+  return `Failed to save: ${msg}`;
+}
 
 /** Smoothly counts up to `target` whenever it changes — used for the Health Score number. */
 function useCountUp(target: number, durationMs = 700): number {
@@ -55,6 +79,8 @@ interface HealthProfileScreenProps {
   onProfileSaved: () => void; // lets ProfileScreen/Dashboard know to refresh the goal
   /** Pre-select a hub tab, e.g. when a notification routes here (Health Insight → 'insights', BMI Reminder → 'body'). */
   initialTab?: HubTab;
+  /** True when a notification targeted the BMI card specifically — pulses/scrolls it into view once. */
+  highlightBmi?: boolean;
 }
 
 type WizardStep = 0 | 1 | 2 | 3 | 4;
@@ -68,7 +94,7 @@ const HUB_TABS: { key: HubTab; label: string }[] = [
   { key: 'insights', label: 'Insights' },
 ];
 
-export default function HealthProfileScreen({ user, onBack, onProfileSaved, initialTab }: HealthProfileScreenProps) {
+export default function HealthProfileScreen({ user, onBack, onProfileSaved, initialTab, highlightBmi }: HealthProfileScreenProps) {
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<HealthProfile | null>(null);
   const [mode, setMode] = useState<'view' | 'wizard' | 'edit'>('view');
@@ -182,8 +208,9 @@ export default function HealthProfileScreen({ user, onBack, onProfileSaved, init
       setProfile(saved);
       setMode('view');
       onProfileSaved();
-    } catch {
-      setErr('Failed to save. Please try again.');
+    } catch (e) {
+      console.error('[HealthProfile] save failed:', e);
+      setErr(describeSaveError(e));
     } finally {
       setSaving(false);
     }
@@ -530,13 +557,15 @@ export default function HealthProfileScreen({ user, onBack, onProfileSaved, init
             </div>
 
             {/* BMI — small section, not the focus */}
-            <SectionCard title="Body Mass Index">
-              <InfoRow label="BMI" value={`${profile.bmi} · ${status}`} highlight />
-              <InfoRow label="Height" value={`${profile.heightCm} cm`} />
-              <InfoRow label="Weight" value={`${profile.weightKg} kg`} />
-              <InfoRow label="Activity Level" value={profile.activityLevel} />
-              <InfoRow label="Member Since" value={memberSince} />
-            </SectionCard>
+            <HighlightCard active={highlightBmi} glowColor="#D71920" style={{ background: '#fff', overflow: 'hidden' }}>
+              <SectionCard title="Body Mass Index">
+                <InfoRow label="BMI" value={`${profile.bmi} · ${status}`} highlight />
+                <InfoRow label="Height" value={`${profile.heightCm} cm`} />
+                <InfoRow label="Weight" value={`${profile.weightKg} kg`} />
+                <InfoRow label="Activity Level" value={profile.activityLevel} />
+                <InfoRow label="Member Since" value={memberSince} />
+              </SectionCard>
+            </HighlightCard>
           </>
         )}
 

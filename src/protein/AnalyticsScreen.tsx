@@ -8,10 +8,17 @@ import {
 import { getUserSummary, syncSummaryFromDailyStats, type UserSummary } from '../services/protein/userSummaryService';
 import { AnalyticsIcon, TrendUpIcon, TargetIcon, FlameIcon, ZapIcon } from './Icons';
 import { startTimer, endTimer } from '../utils/perfTimer';
+import { useNavigation, type NavTarget } from '../context/NavigationContext';
+import HighlightCard from './HighlightCard';
 
 type Period = 'week' | 'month';
 
-interface AnalyticsScreenProps { user: User; refreshKey: number; }
+interface AnalyticsScreenProps {
+  user: User;
+  refreshKey: number;
+  /** Set by ProteinTrackerScreen when a tapped notification targets this screen. */
+  navTarget?: NavTarget | null;
+}
 
 // ── Skeleton card ────────────────────────────────────────────────────────────
 
@@ -26,7 +33,14 @@ function SkeletonCard({ height = 80 }: { height?: number }) {
 
 // ── Main component ───────────────────────────────────────────────────────────
 
-export default function AnalyticsScreen({ user, refreshKey }: AnalyticsScreenProps) {
+export default function AnalyticsScreen({ user, refreshKey, navTarget }: AnalyticsScreenProps) {
+  const { consumeTarget } = useNavigation();
+  const highlightSummary = navTarget?.tab === 'stats';
+
+  useEffect(() => {
+    if (highlightSummary) consumeTarget();
+  }, [highlightSummary, consumeTarget]);
+
   const [period,   setPeriod]   = useState<Period>('week');
   const [summary,  setSummary]  = useState<UserSummary | null>(null);
   const [settings, setSettings] = useState<TrackerSettings | null>(null);
@@ -364,7 +378,7 @@ export default function AnalyticsScreen({ user, refreshKey }: AnalyticsScreenPro
         )}
 
         {/* Summary — from summary doc + chart data */}
-        <div style={{ background: '#fff', borderRadius: 20, padding: 18, margin: '12px 16px 0', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
+        <HighlightCard active={highlightSummary} glowColor="#EAB308" style={{ background: '#fff', padding: 18, margin: '12px 16px 0', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
           <p style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A', margin: '0 0 12px' }}>Summary</p>
           {summary === null ? (
             <SkeletonCard height={180} />
@@ -384,7 +398,7 @@ export default function AnalyticsScreen({ user, refreshKey }: AnalyticsScreenPro
               </div>
             ))
           )}
-        </div>
+        </HighlightCard>
 
       </div>
     </div>

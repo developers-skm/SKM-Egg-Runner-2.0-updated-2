@@ -275,7 +275,6 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
 
       // Play chick chirp — only on genuine success, never on error/duplicate
       playChickSuccess();
-      HapticService.light();
 
       const [ts, stg] = await Promise.all([
         getTodayStats(user.uid),
@@ -288,6 +287,11 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
       const todayGoal      = stg.dailyGoal;
       const streakIsNew    = streakInfo.currentStreak > (prevStreak ?? 0);
       const isMilestone    = [3, 7, 14, 30, 60, 100].includes(streakInfo.currentStreak);
+      const streak         = streakInfo.currentStreak;
+      const goalJustHit    = todayProtein >= todayGoal;
+      const streakMilestoneHit = [3, 7, 14, 30, 60, 100].includes(streak);
+      const lifetimeMs     = [100, 500, 1000, 5000];
+      const proteinMilestoneHit = lifetimeMs.some(m => todayProtein >= m && todayProtein - PROTEIN_PER_EGG < m);
 
       setResult({
         protein:      PROTEIN_PER_EGG,
@@ -300,31 +304,23 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
       });
       setPhase('success');
 
-      // Daily Streak Increased — a distinct haptic from the base scan-success tap.
-      if (streakIsNew) HapticService.medium();
+      // navigator.vibrate() plays one pattern at a time — a later call replaces
+      // whatever's still running, so firing several patterns back-to-back here
+      // (base scan, streak, goal, milestone) would just cancel each other and
+      // only the last one would ever be felt. Fire exactly one, picking the
+      // most significant event for this scan, right as the UI reaches 'success'
+      // (the latest point in this handler, minimizing Android Chrome's chance
+      // of the sticky user-activation window having expired).
+      if (streakMilestoneHit || proteinMilestoneHit || goalJustHit) HapticService.success();
+      else if (streakIsNew) HapticService.medium();
+      else HapticService.light();
 
       // Write Firestore notification docs — Cloud Function / FCM sends
       // real Android push notification to the device. No in-app popup shown.
       notifyProteinAdded(user.uid, PROTEIN_PER_EGG, todayProtein).catch(() => {});
-
-      if (todayProtein >= todayGoal) {
-        notifyProteinGoalComplete(user.uid, todayGoal).catch(() => {});
-        HapticService.success(); // Daily Goal Completed
-      }
-
-      // Streak milestones → push notification via FCM
-      const streak = streakInfo.currentStreak;
-      if ([3, 7, 14, 30, 60, 100].includes(streak)) {
-        notifyStreakMilestone(user.uid, streak).catch(() => {});
-        HapticService.success(); // Weekly/streak milestone — success pattern
-      }
-
-      // Cumulative protein milestones → push notification via FCM
-      const lifetimeMs = [100, 500, 1000, 5000];
-      if (lifetimeMs.some(m => todayProtein >= m && todayProtein - PROTEIN_PER_EGG < m)) {
-        notifyProteinMilestone(user.uid, todayProtein).catch(() => {});
-        HapticService.light(); // Protein Goal Completed (cumulative milestone)
-      }
+      if (goalJustHit) notifyProteinGoalComplete(user.uid, todayGoal).catch(() => {});
+      if (streakMilestoneHit) notifyStreakMilestone(user.uid, streak).catch(() => {});
+      if (proteinMilestoneHit) notifyProteinMilestone(user.uid, todayProtein).catch(() => {});
 
     } catch (err: unknown) {
       const msg = (err as { message?: string }).message ?? String(err);

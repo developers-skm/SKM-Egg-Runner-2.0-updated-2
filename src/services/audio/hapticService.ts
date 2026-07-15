@@ -7,7 +7,16 @@
  * NEVER throws — a device with no vibration support (or a user who has
  * disabled haptics in-app) sees zero difference in behavior, only the
  * absence of vibration.
+ *
+ * IMPORTANT (Android Chrome): navigator.vibrate() silently returns `false`
+ * (no exception) once the page's "sticky user activation" window has
+ * lapsed — a few seconds after the user's last tap/click/touch. Any
+ * caller sitting behind several `await`s (Firestore round-trips, artificial
+ * setTimeout delays, etc.) can miss that window with zero visible symptom
+ * unless debug mode is on. See markGesture()/fire() below.
  */
+
+import { isDeveloperModeEnabled } from '../dev/devModeService';
 
 const STORAGE_KEY = 'skm_haptics_enabled';
 
@@ -21,12 +30,36 @@ function supported(): boolean {
   return typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
 }
 
+/** True if the page currently has an unexpired user-activation window (best-effort — falls back to true if the UA doesn't expose the API). */
+function hasActivation(): boolean {
+  const ua = (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation;
+  if (!ua) return true; // API not exposed (e.g. older browsers) — don't block on an unknown
+  return ua.isActive;
+}
+
+function log(pattern: number | number[], sent: boolean, reason?: string): void {
+  if (!isDeveloperModeEnabled()) return;
+  console.log(
+    '[HAPTIC]',
+    `\n  Device supports vibration: ${supported()}`,
+    `\n  navigator.vibrate exists: ${typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function'}`,
+    `\n  Haptic enabled in settings: ${enabled}`,
+    `\n  User activation active: ${hasActivation()}`,
+    `\n  Requested pattern: ${JSON.stringify(pattern)}`,
+    sent ? '\n  Vibration request sent.' : `\n  Vibration request BLOCKED (${reason ?? 'unknown'}).`,
+  );
+}
+
 /** Fires a vibration pattern. Safe no-op if unsupported, disabled, or if vibrate() throws. */
 function fire(pattern: number | number[]): void {
-  if (!enabled || !supported()) return;
+  if (!enabled) { log(pattern, false, 'haptics disabled in settings'); return; }
+  if (!supported()) { log(pattern, false, 'navigator.vibrate unsupported'); return; }
   try {
-    navigator.vibrate(pattern);
-  } catch { /* never let a haptic failure affect the app */ }
+    const accepted = navigator.vibrate(pattern);
+    log(pattern, accepted, accepted ? undefined : 'navigator.vibrate() returned false — likely expired user-activation window');
+  } catch (e) {
+    log(pattern, false, `navigator.vibrate() threw: ${(e as Error)?.message ?? e}`);
+  }
 }
 
 export const HapticService = {
@@ -83,4 +116,7 @@ export const HapticService = {
 
   /** Whether this device/browser exposes the Vibration API at all. */
   isSupported: supported,
+
+  /** Whether the page currently has an unexpired user-activation window (debug/diagnostic use). */
+  hasActivation,
 };

@@ -29,10 +29,11 @@ interface DashboardScreenProps {
 export default function DashboardScreen({ user, onScanQR, onViewAnalytics, onViewLog, onViewStreaks, refreshKey, navTarget }: DashboardScreenProps) {
   const { consumeTarget } = useNavigation();
   const highlightToday = navTarget?.entityId === 'today-protein-card';
+  const highlightGoal  = navTarget?.entityId === 'today-goal-card';
 
   useEffect(() => {
-    if (highlightToday) consumeTarget();
-  }, [highlightToday, consumeTarget]);
+    if (highlightToday || highlightGoal) consumeTarget();
+  }, [highlightToday, highlightGoal, consumeTarget]);
   const [todayStats, setTodayStats] = useState<DailyStats | null>(null);
   const [streak,     setStreak]     = useState<StreakInfo>({ currentStreak: 0, bestStreak: 0, lastActiveDate: '' });
   const [weekData,   setWeekData]   = useState<WeeklyData[]>([]);
@@ -118,8 +119,8 @@ export default function DashboardScreen({ user, onScanQR, onViewAnalytics, onVie
 
       <div style={{ padding: '0 14px' }}>
 
-        {/* ── Protein Ring Card ── */}
-        <div style={{ background: '#fff', borderRadius: 24, padding: 18, marginTop: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.08)' }}>
+        {/* ── Protein Ring Card (Daily Goal) ── */}
+        <HighlightCard active={highlightGoal} glowColor="#D71920" style={{ background: '#fff', padding: 18, marginTop: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.08)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <div style={{ position: 'relative', width: 116, height: 116, flexShrink: 0 }}>
               <svg width="116" height="116" style={{ transform: 'rotate(-90deg)' }}>
@@ -156,7 +157,7 @@ export default function DashboardScreen({ user, onScanQR, onViewAnalytics, onVie
               <span style={{ fontSize: 9, color: '#bbb', fontWeight: 500 }}>{goal}g</span>
             </div>
           </div>
-        </div>
+        </HighlightCard>
 
         {/* ── Quick stats row ── */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginTop: 12 }}>

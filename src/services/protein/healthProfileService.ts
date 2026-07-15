@@ -316,7 +316,7 @@ function buildProfile(uid: string, input: HealthProfileInput, prev: HealthProfil
     bmi, proteinGoalCompletionPct: 0, currentStreak: 0, consistencyPct: 0,
     scanFrequencyPct: 0, weeklyActivityPct: 0,
   });
-  return {
+  const profile: Omit<HealthProfile, 'updatedAt'> = {
     userId: uid,
     age: input.age,
     gender: input.gender,
@@ -332,8 +332,12 @@ function buildProfile(uid: string, input: HealthProfileInput, prev: HealthProfil
     idealWeightMax: max,
     healthScore,
     motivation: prev?.motivation ?? 100,
-    lastActiveDate: prev?.lastActiveDate,
   };
+  // lastActiveDate is optional and Firestore's default (strict) mode rejects
+  // any field with an `undefined` value — only include it when there's a
+  // real previous value (i.e. not on a user's first-ever save).
+  if (prev?.lastActiveDate) profile.lastActiveDate = prev.lastActiveDate;
+  return profile;
 }
 
 export async function getHealthProfile(uid: string): Promise<HealthProfile | null> {

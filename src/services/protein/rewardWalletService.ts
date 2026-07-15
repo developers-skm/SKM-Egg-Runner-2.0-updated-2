@@ -117,7 +117,12 @@ export async function awardScanPoints(uid: string, currentStreak: number): Promi
 
   if (wallet.membership !== before.membership) {
     notifyMembershipTierUp(uid, wallet.membership).catch(() => {});
-    HapticService.heavy(); // Membership Upgrade
+    // Membership Upgrade — best-effort only. This function is invoked
+    // fire-and-forget from QRScanScreen.tsx with no direct tie to a user
+    // gesture, so on Android Chrome navigator.vibrate() may silently no-op
+    // here if the page's sticky user-activation window has already lapsed.
+    // HapticService.fire() logs the outcome under Developer Mode.
+    HapticService.heavy();
   }
 }
 
@@ -128,7 +133,8 @@ export async function awardMilestoneStickerPoints(uid: string, points: number, d
   notifyRewardPointsEarned(uid, points, wallet.currentPoints).catch(() => {});
   if (wallet.membership !== before.membership) {
     notifyMembershipTierUp(uid, wallet.membership).catch(() => {});
-    HapticService.heavy(); // Membership Upgrade
+    // Membership Upgrade — see awardScanPoints() above re: activation-window caveat.
+    HapticService.heavy();
   }
 }
 

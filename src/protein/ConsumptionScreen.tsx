@@ -39,6 +39,32 @@ interface AddForm {
 
 const EMPTY_FORM: AddForm = { foodName: '', protein: '', calories: '', quantity: '1', meal: 'breakfast', category: 'Other' };
 
+/** Maps a load/save failure to a specific, actionable message instead of a generic one. */
+function describeError(e: unknown, action: 'load' | 'save'): string {
+  const msg  = (e as { code?: string; message?: string })?.message ?? String(e);
+  const code = (e as { code?: string })?.code ?? '';
+  const verb = action === 'load' ? 'load' : 'save';
+
+  if (code === 'permission-denied' || /permission.denied/i.test(msg)) {
+    return 'Permission denied. Please sign in again and retry.';
+  }
+  if (code === 'unauthenticated' || /unauthenticated/i.test(msg)) {
+    return 'Your session has expired. Please sign in again.';
+  }
+  if (code === 'failed-precondition' || /requires an index/i.test(msg)) {
+    return `Unable to ${verb} food log — the server index is still being set up. Please try again shortly.`;
+  }
+  if (code === 'unavailable' || /unavailable/i.test(msg)) {
+    return 'Unable to connect to the server. Check your connection and try again.';
+  }
+  if (!navigator.onLine) {
+    return 'You appear to be offline. Reconnect and try again.';
+  }
+  return `Failed to ${verb}: ${msg}`;
+}
+
+function describeLoadError(e: unknown): string { return describeError(e, 'load'); }
+
 export default function ConsumptionScreen({ user, onScanQR, refreshKey }: ConsumptionScreenProps) {
   const [entries,  setEntries]  = useState<ProteinLogEntry[]>([]);
   const [stats,    setStats]    = useState<DailyStats | null>(null);
@@ -53,18 +79,28 @@ export default function ConsumptionScreen({ user, onScanQR, refreshKey }: Consum
   const [saving,   setSaving]   = useState(false);
   const [loading,  setLoading]  = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [loadErr,  setLoadErr]  = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
-    try {
-      const [e, s, stg] = await Promise.all([
-        getTodayEntries(user.uid),
-        getTodayStats(user.uid),
-        getTrackerSettings(user.uid),
-      ]);
-      setEntries(e); setStats(s); setSettings(stg);
-    } catch (e) { console.error('[Consumption]', e); }
-    finally { setLoading(false); }
+    // Promise.allSettled — one failing read (e.g. a missing Firestore index)
+    // must not wipe out the others. Each setter only fires for the reads
+    // that actually succeeded, so a failure here never looks like data loss.
+    const [e, s, stg] = await Promise.allSettled([
+      getTodayEntries(user.uid),
+      getTodayStats(user.uid),
+      getTrackerSettings(user.uid),
+    ]);
+    if (e.status === 'fulfilled') setEntries(e.value);
+    else console.error('[Consumption] getTodayEntries failed:', e.reason);
+    if (s.status === 'fulfilled') setStats(s.value);
+    else console.error('[Consumption] getTodayStats failed:', s.reason);
+    if (stg.status === 'fulfilled') setSettings(stg.value);
+    else console.error('[Consumption] getTrackerSettings failed:', stg.reason);
+
+    const failed = [e, s, stg].find(r => r.status === 'rejected') as PromiseRejectedResult | undefined;
+    setLoadErr(failed ? describeLoadError(failed.reason) : '');
+    setLoading(false);
   }, [user.uid]);
 
   useEffect(() => { load(); }, [load, refreshKey]);
@@ -100,7 +136,10 @@ export default function ConsumptionScreen({ user, onScanQR, refreshKey }: Consum
       setShowAdd(false);
       setForm(EMPTY_FORM);
       await load();
-    } catch { setFormErr('Failed to save. Please try again.'); }
+    } catch (e) {
+      console.error('[Consumption] logManualEntry failed:', e);
+      setFormErr(describeError(e, 'save'));
+    }
     finally   { setSaving(false); }
   };
 
@@ -109,7 +148,10 @@ export default function ConsumptionScreen({ user, onScanQR, refreshKey }: Consum
     try {
       await deleteLogEntry(user.uid, entry.id, entry.protein * entry.quantity, entry.calories * entry.quantity, entry.type === 'qr_scan');
       await load();
-    } catch { /* ignore */ }
+    } catch (e) {
+      console.error('[Consumption] deleteLogEntry failed:', e);
+      setLoadErr(describeError(e, 'load'));
+    }
     finally   { setDeleting(null); }
   };
 
@@ -147,6 +189,12 @@ export default function ConsumptionScreen({ user, onScanQR, refreshKey }: Consum
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 90 }}>
+
+        {loadErr && (
+          <div style={{ margin: '12px 16px 0', padding: '10px 14px', borderRadius: 12, background: '#FEE2E2', border: '1px solid #FCA5A5' }}>
+            <p style={{ fontSize: 11.5, color: '#B91C1C', fontWeight: 600, margin: 0 }}>{loadErr}</p>
+          </div>
+        )}
 
         {/* Summary row */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, padding: '14px 16px 0' }}>

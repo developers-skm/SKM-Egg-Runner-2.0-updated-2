@@ -18,6 +18,7 @@ import {
   type RewardCatalogItem, type RewardCoupon, type CouponStatus,
 } from '../services/protein/rewardCouponService';
 import { getTodayStats } from '../services/protein/proteinTrackerService';
+import { getActivePromoEvent, type PromoEvent } from '../services/protein/promoEventService';
 import { MEMBERSHIP_TIERS, POINTS_PER_SCAN, type MembershipTier } from '../constants/rewards';
 import { useNavigation, type NavTarget } from '../context/NavigationContext';
 import HighlightCard from './HighlightCard';
@@ -475,8 +476,9 @@ function OverviewTab({
         <ProductCarousel products={carouselProducts} wallet={wallet} onSelect={onSelectReward} onViewAll={onViewRewards} />
       )}
 
-      {/* 7. FLASH OFFERS — presentational promo banners (no backend logic changed) */}
-      <FlashOffers />
+      {/* 7. PROMO EVENT — shown only while a real event is active; otherwise a
+             rotating healthy-tip card fills the slot (no backend logic changed) */}
+      <PromoEventSection onScanQR={onScanQR} />
 
       {/* 8. COUPON PREVIEW — always show the next goal, even if still locked */}
       {previewReward && <CouponPreview item={previewReward} wallet={wallet} />}
@@ -1006,74 +1008,117 @@ function ProductCarousel({ products, wallet, onSelect, onViewAll }: {
 // reward wallet, transaction ledger, or membership calculations.
 // ─────────────────────────────────────────────────────────────
 
-function FlashOffers() {
-  const midnight = useMemo(() => {
-    const d = new Date(); d.setHours(24, 0, 0, 0); return d;
-  }, []);
-  const sundayEnd = useMemo(() => {
-    const d = new Date();
-    const daysUntilSunday = (7 - d.getDay()) % 7;
-    d.setDate(d.getDate() + daysUntilSunday);
-    d.setHours(24, 0, 0, 0);
-    return d;
-  }, []);
-  const isWeekend = new Date().getDay() === 0 || new Date().getDay() === 6;
+// ─────────────────────────────────────────────────────────────
+// Promo Event Section — event-driven replacement for the old
+// hardcoded "Double Points Day" card. Only renders the promo
+// banner while a real promoEvents/{id} doc is active (active ==
+// true AND now is within [startAt, endAt)). New events (Weekend
+// Bonus, Protein Week, Festival Special, admin-created promos,
+// etc.) are added purely as Firestore docs — no UI code change
+// needed. When nothing is active, shows a rotating healthy-tip
+// card instead of a fake countdown.
+// ─────────────────────────────────────────────────────────────
 
-  const dailyMs = useCountdown(midnight);
-  const weekendMs = useCountdown(sundayEnd);
+const HEALTHY_TIPS = [
+  'Protein spread across meals is absorbed better than one big serving — pair your SKM eggs with breakfast and dinner.',
+  'One SKM egg has about 6g of high-quality protein — a great way to hit your daily goal without extra calories.',
+  'Boiled eggs keep their protein content intact and make a perfect on-the-go snack.',
+  'Pairing eggs with vegetables adds fibre and micronutrients alongside your protein intake.',
+  'Consistency beats intensity — a few eggs daily builds better long-term habits than an occasional binge.',
+];
+
+function useDailyTip(): string {
+  return useMemo(() => {
+    const dayIndex = Math.floor(Date.now() / 86400000);
+    return HEALTHY_TIPS[dayIndex % HEALTHY_TIPS.length];
+  }, []);
+}
+
+function PromoEventSection({ onScanQR }: { onScanQR?: () => void }) {
+  const [event, setEvent] = useState<PromoEvent | null | undefined>(undefined); // undefined = loading
+
+  useEffect(() => {
+    let cancelled = false;
+    getActivePromoEvent()
+      .then(e => { if (!cancelled) setEvent(e); })
+      .catch(() => { if (!cancelled) setEvent(null); });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (event === undefined) return null; // still loading — avoid a flash of tip content
+  if (event) return <PromoEventCard event={event} onScanQR={onScanQR} />;
+  return <HealthyTipCard />;
+}
+
+function PromoEventCard({ event, onScanQR }: { event: PromoEvent; onScanQR?: () => void }) {
+  const endAt = useMemo(() => event.endAt.toDate(), [event.endAt]);
+  const remainingMs = useCountdown(endAt);
+  const [expired, setExpired] = useState(remainingMs <= 0);
+
+  useEffect(() => { if (remainingMs <= 0) setExpired(true); }, [remainingMs]);
+
+  if (expired) return <HealthyTipCard />;
 
   return (
-    <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8, animation: 'hiFadeIn 700ms ease' }}>
-      <p style={{ fontSize: 12.5, fontWeight: 900, color: PALETTE.ink, margin: '0 0 2px 2px' }}>Flash Offers</p>
-
+    <div style={{ marginTop: 12, animation: 'hiFadeIn 700ms ease' }}>
       <div style={{
         borderRadius: 18, padding: '13px 15px', position: 'relative', overflow: 'hidden',
         background: `linear-gradient(135deg, #7C3AED, #5B21B6)`,
       }}>
         <div style={{ position: 'absolute', top: -20, right: -16, width: 80, height: 80, borderRadius: '50%', background: 'rgba(255,255,255,0.1)' }} />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
-          <div>
+          <div style={{ minWidth: 0 }}>
             <span style={{
               display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9, fontWeight: 900, color: '#fff',
               background: 'rgba(255,255,255,0.2)', borderRadius: 20, padding: '3px 8px', marginBottom: 6,
               animation: 'badgePulse 1.8s ease-in-out infinite',
             }}>
-              <Zap size={9} color="#fff" /> TODAY ONLY
+              <Zap size={9} color="#fff" /> {event.multiplier}× POINTS
             </span>
-            <p style={{ fontSize: 14, fontWeight: 900, color: '#fff', margin: 0 }}>Double Points Day</p>
-            <p style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.8)', margin: '2px 0 0', fontWeight: 600 }}>Protein Week Bonus — scan today to celebrate</p>
+            <p style={{ fontSize: 14, fontWeight: 900, color: '#fff', margin: 0 }}>{event.title}</p>
+            <p style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.8)', margin: '2px 0 0', fontWeight: 600 }}>{event.description}</p>
           </div>
           <div style={{ textAlign: 'center', flexShrink: 0 }}>
             <Timer size={14} color="rgba(255,255,255,0.85)" style={{ marginBottom: 3 }} />
-            <p style={{ fontSize: 11, fontWeight: 900, color: '#fff', margin: 0, fontFamily: 'monospace' }}>{formatCountdown(dailyMs)}</p>
+            <p style={{ fontSize: 11, fontWeight: 900, color: '#fff', margin: 0, fontFamily: 'monospace' }}>{formatCountdown(remainingMs)}</p>
           </div>
         </div>
+        <button
+          className="rc-btn-ripple"
+          onClick={onScanQR}
+          disabled={!onScanQR}
+          style={{
+            marginTop: 11, width: '100%', padding: '9px 0', borderRadius: 12, border: 'none',
+            background: 'rgba(255,255,255,0.92)', color: '#5B21B6', fontWeight: 900, fontSize: 11.5,
+            cursor: onScanQR ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            position: 'relative',
+          }}
+        >
+          <QrCode size={12} color="#5B21B6" /> {event.ctaText}
+        </button>
       </div>
+    </div>
+  );
+}
 
-      {isWeekend && (
-        <div style={{
-          borderRadius: 18, padding: '13px 15px', position: 'relative', overflow: 'hidden',
-          background: `linear-gradient(135deg, ${PALETTE.gold}, ${PALETTE.goldDeep})`,
-        }}>
-          <div style={{ position: 'absolute', top: -20, right: -16, width: 80, height: 80, borderRadius: '50%', background: 'rgba(255,255,255,0.12)' }} />
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
-            <div>
-              <span style={{
-                display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9, fontWeight: 900, color: '#fff',
-                background: 'rgba(255,255,255,0.2)', borderRadius: 20, padding: '3px 8px', marginBottom: 6,
-              }}>
-                <Sparkles size={9} color="#fff" /> WEEKEND SPECIAL
-              </span>
-              <p style={{ fontSize: 14, fontWeight: 900, color: '#fff', margin: 0 }}>Extra Reward Points</p>
-              <p style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.85)', margin: '2px 0 0', fontWeight: 600 }}>Scan more this weekend to celebrate with us</p>
-            </div>
-            <div style={{ textAlign: 'center', flexShrink: 0 }}>
-              <Timer size={14} color="rgba(255,255,255,0.85)" style={{ marginBottom: 3 }} />
-              <p style={{ fontSize: 11, fontWeight: 900, color: '#fff', margin: 0, fontFamily: 'monospace' }}>{formatCountdown(weekendMs)}</p>
-            </div>
-          </div>
-        </div>
-      )}
+function HealthyTipCard() {
+  const tip = useDailyTip();
+  return (
+    <div style={{
+      marginTop: 12, borderRadius: 18, padding: '13px 15px', display: 'flex', alignItems: 'flex-start', gap: 10,
+      background: PALETTE.warmWhite, border: `1px solid ${PALETTE.eggshell}`,
+      animation: 'hiFadeIn 700ms ease',
+    }}>
+      <div style={{
+        width: 30, height: 30, borderRadius: 10, flexShrink: 0, background: PALETTE.eggshell,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <Sparkles size={15} color={PALETTE.goldDeep} />
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <p style={{ fontSize: 9, fontWeight: 800, color: PALETTE.inkSoft, textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 3px' }}>Healthy Tip</p>
+        <p style={{ fontSize: 11.5, color: PALETTE.ink, margin: 0, fontWeight: 600, lineHeight: 1.4 }}>{tip}</p>
+      </div>
     </div>
   );
 }

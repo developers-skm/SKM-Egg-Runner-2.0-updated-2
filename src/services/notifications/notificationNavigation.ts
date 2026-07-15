@@ -28,7 +28,7 @@ export function resolveNavTarget(n: AppNotification): NavTarget | null {
     // ── Protein Goal Reached → Protein Dashboard, highlight Daily Goal card ──
     case 'protein_goal_complete':
     case 'protein_goal_missed':
-      return { screen: 'PROTEIN_TRACKER', tab: 'dashboard', entityId: 'today-protein-card' };
+      return { screen: 'PROTEIN_TRACKER', tab: 'dashboard', entityId: 'today-goal-card' };
 
     // ── Daily Streak → Streak Page, show celebration section ──
     case 'streak_milestone':
@@ -110,12 +110,13 @@ export function resolveNavTarget(n: AppNotification): NavTarget | null {
         metadata: { healthTab: 'insights' },
       };
 
-    // ── BMI Reminder → Health Intelligence → Body tab ──
+    // ── BMI Reminder → Health Intelligence → Body tab, highlight BMI card ──
     // No dedicated BMI notification type exists yet; anniversary doubles as
     // the closest "check your body stats" nudge in the current type set.
     case 'anniversary':
       return {
         screen: 'PROTEIN_TRACKER', tab: 'profile', section: 'health',
+        entityId: 'bmi-card',
         metadata: { healthTab: 'body' },
       };
 

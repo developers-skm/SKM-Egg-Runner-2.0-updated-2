@@ -9,7 +9,7 @@ import AnalyticsScreen   from '../protein/AnalyticsScreen';
 import ProfileScreen     from '../protein/ProfileScreen';
 import EggStreakScreen   from '../protein/EggStreakScreen';
 import RewardsClubScreen from '../protein/RewardsClubScreen';
-import { HomeIcon, CameraIcon, FoodLogIcon, AnalyticsIcon, UserIcon, GiftIcon } from '../protein/Icons';
+import { HomeIcon, CameraIcon, FoodLogIcon, AnalyticsIcon, GiftIcon } from '../protein/Icons';
 import NotificationBell from '../components/notifications/NotificationBell';
 
 type Tab = 'dashboard' | 'scan' | 'log' | 'stats' | 'profile' | 'streaks' | 'rewards';
@@ -24,13 +24,15 @@ function FlameNavIcon({ active }: { active: boolean }) {
   );
 }
 
+// Profile is intentionally excluded from the bottom tab bar — it's reachable
+// via the avatar button in the top app bar instead (see the top-right button
+// below that already sets tab to 'profile').
 const PRIMARY_NAV: { key: Tab; label: string; icon: (a: boolean) => React.ReactNode }[] = [
   { key: 'dashboard', label: 'Home',    icon: (a) => <HomeIcon      size={20} color={a ? '#D71920' : '#bbb'} /> },
   { key: 'scan',      label: 'Scan',    icon: (a) => <CameraIcon    size={20} color={a ? '#D71920' : '#bbb'} /> },
   { key: 'streaks',   label: 'Streaks', icon: (a) => <FlameNavIcon  active={a} /> },
   { key: 'stats',     label: 'Stats',   icon: (a) => <AnalyticsIcon size={20} color={a ? '#D71920' : '#bbb'} /> },
   { key: 'rewards',   label: 'Rewards', icon: (a) => <GiftIcon      size={20} color={a ? '#D71920' : '#bbb'} /> },
-  { key: 'profile',   label: 'Profile', icon: (a) => <UserIcon      size={20} color={a ? '#D71920' : '#bbb'} /> },
 ];
 
 export default function ProteinTrackerScreen({ onBack }: ProteinTrackerScreenProps) {
@@ -148,7 +150,13 @@ export default function ProteinTrackerScreen({ onBack }: ProteinTrackerScreenPro
         )}
         {tab === 'scan'    && <QRScanScreen      user={typedUser} onScanSuccess={handleScanSuccess} />}
         {tab === 'log'     && <ConsumptionScreen  user={typedUser} refreshKey={refreshKey} onScanQR={() => setTab('scan')} />}
-        {tab === 'stats'   && <AnalyticsScreen    user={typedUser} refreshKey={refreshKey} />}
+        {tab === 'stats'   && (
+          <AnalyticsScreen
+            user={typedUser}
+            refreshKey={refreshKey}
+            navTarget={pendingTarget?.tab === 'stats' ? pendingTarget : null}
+          />
+        )}
         {tab === 'streaks' && (
           <EggStreakScreen
             user={typedUser}
