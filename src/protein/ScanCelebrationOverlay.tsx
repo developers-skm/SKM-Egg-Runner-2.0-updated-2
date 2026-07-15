@@ -1,82 +1,99 @@
 /**
- * SKM Premium Scan Celebration Overlay — v2
+ * SKM Post-Scan Celebration — premium reward modal.
  *
- * Full-screen, multi-stage celebration after a valid egg scan.
- * MANUAL CLOSE ONLY — no auto-dismiss.
- * Stage order: mascot bounce → crack + fire + streak count-up → protein count-up → message → progress → button
+ * Complete redesign: centered card (max-width 420px) over a blurred, dimmed
+ * backdrop. Inspired by Apple Fitness / Nike Run Club / Duolingo streak
+ * screens — no mascot, no emoji stage sequence, no oversized CTA. Manual
+ * close only (Continue button + backdrop tap), single victory sound + haptic
+ * on mount, everything else driven by CSS animation delays so there is no
+ * multi-second JS stage machine to desync.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { ShieldCheck, Flame, TrendingUp, Sparkles, X } from 'lucide-react';
 import { MILESTONES } from '../services/protein/milestoneRewardService';
+import { POINTS_PER_STREAK_MILESTONE, MEMBERSHIP_TIERS } from '../constants/rewards';
+import { calcTierProgress } from '../services/protein/rewardWalletService';
+import type { RewardWallet } from '../services/protein/rewardWalletService';
 import { HapticService } from '../services/audio/hapticService';
 
 interface ScanCelebrationProps {
-  streak:       number;
-  protein:      number;
-  todayEggs:    number;
-  goal:         number;
-  todayProtein: number;
-  isMilestone?: boolean;
-  playVictory?: boolean; // true only after a genuinely new successful scan
-  onDismiss:    () => void;
+  streak:        number;
+  protein:       number;
+  todayEggs:     number;
+  goal:          number;
+  todayProtein:  number;
+  isMilestone?:  boolean;
+  pointsEarned:  number;
+  wallet:        RewardWallet | null;
+  playVictory?:  boolean; // true only after a genuinely new successful scan
+  onDismiss:     () => void;
 }
 
-// ─── Motivational messages ────────────────────────────────────
+// ─── Victory sound ────────────────────────────────────────────
+// Played exactly once per mount when playVictory=true. Ducks BGM, fades in/out.
 
-const MESSAGES = [
-  { icon: '🔥', line1: 'Amazing!',           line2: "You're building a healthy habit." },
-  { icon: '🥚', line1: 'Another great day!', line2: 'Keep your streak alive.' },
-  { icon: '💪', line1: 'Consistency',        line2: 'beats perfection.' },
-  { icon: '🏆', line1: 'Every egg counts.',  line2: "Champions never skip." },
-  { icon: '⭐', line1: 'Your future self',   line2: 'will thank you.' },
-  { icon: '🌟', line1: 'Unstoppable!',       line2: 'Every single day.' },
-  { icon: '🥇', line1: 'Champions show up',  line2: 'every single day.' },
-];
+function playVictorySound(): () => void {
+  try {
+    const audio = new Audio('/victory sound.mp3');
+    audio.volume = 0;
+    audio.preload = 'auto';
 
-// ─── Fire by streak ───────────────────────────────────────────
+    const bgm = document.getElementById('skm-bgm') as HTMLAudioElement | null;
+    const bgmOrigVol = bgm ? bgm.volume : 1;
+    if (bgm && !bgm.paused) bgm.volume = bgmOrigVol * 0.35;
 
-function fireEmoji(s: number)  { return s >= 100 ? '🔥🔥🔥🔥' : s >= 30 ? '🔥🔥🔥' : s >= 7 ? '🔥🔥' : s >= 3 ? '🔥' : '🌱'; }
-function fireColor(s: number)  { return s >= 100 ? '#F59E0B' : s >= 30 ? '#EF4444' : s >= 7 ? '#F97316' : '#22C55E'; }
-function heroGradient(s: number) {
-  if (s >= 100) return 'linear-gradient(160deg,#78350F 0%,#D97706 50%,#92400E 100%)';
-  if (s >= 30)  return 'linear-gradient(160deg,#4C1D95 0%,#7C3AED 50%,#B31217 100%)';
-  if (s >= 7)   return 'linear-gradient(160deg,#B31217 0%,#EF4444 50%,#F97316 100%)';
-  return 'linear-gradient(160deg,#D71920 0%,#B31217 60%,#991B1B 100%)';
+    audio.play().catch(() => {});
+
+    const FADE_IN = 150;
+    const TARGET_VOL = 0.7;
+    const fadeInStart = performance.now();
+    const fadeInTick = () => {
+      const t = Math.min((performance.now() - fadeInStart) / FADE_IN, 1);
+      audio.volume = TARGET_VOL * t;
+      if (t < 1) requestAnimationFrame(fadeInTick);
+    };
+    requestAnimationFrame(fadeInTick);
+
+    const FADE_OUT = 300;
+    const scheduleFadeOut = () => {
+      if (!isFinite(audio.duration) || audio.duration === 0) return;
+      const fadeOutAt = Math.max(0, (audio.duration - FADE_OUT / 1000) * 1000);
+      return setTimeout(() => {
+        const fadeOutStart = performance.now();
+        const fadeOutTick = () => {
+          const t = Math.min((performance.now() - fadeOutStart) / FADE_OUT, 1);
+          audio.volume = TARGET_VOL * (1 - t);
+          if (t < 1) requestAnimationFrame(fadeOutTick);
+          else {
+            audio.pause();
+            if (bgm && !bgm.paused) bgm.volume = bgmOrigVol;
+          }
+        };
+        requestAnimationFrame(fadeOutTick);
+      }, fadeOutAt);
+    };
+
+    let fadeTimer: ReturnType<typeof setTimeout> | undefined;
+    audio.addEventListener('loadedmetadata', () => { fadeTimer = scheduleFadeOut(); }, { once: true });
+    audio.addEventListener('ended', () => {
+      if (bgm && !bgm.paused) bgm.volume = bgmOrigVol;
+    }, { once: true });
+
+    return () => {
+      if (fadeTimer !== undefined) clearTimeout(fadeTimer);
+      audio.volume = 0;
+      audio.pause();
+      if (bgm && !bgm.paused) bgm.volume = bgmOrigVol;
+    };
+  } catch {
+    return () => {};
+  }
 }
 
-// ─── Particle system ──────────────────────────────────────────
+// ─── Count-up hook ────────────────────────────────────────────
 
-interface Particle { id: number; x: number; size: number; color: string; duration: number; delay: number; drift: number; shape: 'circle' | 'square' | 'diamond'; }
-const COLORS = ['#FFD700','#D71920','#F59E0B','#fff','#EC4899','#34D399','#60A5FA','#A78BFA','#FB923C'];
-function makeParticles(n: number): Particle[] {
-  return Array.from({ length: n }, (_, i) => ({
-    id: i, x: 3 + Math.random() * 94,
-    size: 5 + Math.random() * 9,
-    color: COLORS[i % COLORS.length],
-    duration: 1400 + Math.random() * 1200,
-    delay: Math.random() * 800,
-    drift: (Math.random() - 0.5) * 120,
-    shape: (['circle','square','diamond'] as const)[i % 3],
-  }));
-}
-
-// ─── Feather system ───────────────────────────────────────────
-
-interface Feather { id: number; x: number; size: number; duration: number; delay: number; drift: number; rotate: number; }
-function makeFeathers(n: number): Feather[] {
-  return Array.from({ length: n }, (_, i) => ({
-    id: i, x: Math.random() * 100,
-    size: 10 + Math.random() * 14,
-    duration: 2200 + Math.random() * 1800,
-    delay: Math.random() * 1200,
-    drift: (Math.random() - 0.5) * 150,
-    rotate: Math.random() * 720,
-  }));
-}
-
-// ─── Count-up hooks ───────────────────────────────────────────
-
-function useCountUp(target: number, durationMs: number, startDelay: number): number {
+function useCountUp(target: number, durationMs = 800, startDelay = 250): number {
   const [val, setVal] = useState(0);
   useEffect(() => {
     const t = setTimeout(() => {
@@ -93,530 +110,312 @@ function useCountUp(target: number, durationMs: number, startDelay: number): num
   return val;
 }
 
-function useCountUpFrom(from: number, to: number, durationMs: number, startDelay: number): number {
-  const [val, setVal] = useState(from);
-  useEffect(() => {
-    if (from === to) return;
-    const t = setTimeout(() => {
-      const range = to - from;
-      const start = performance.now();
-      const tick = () => {
-        const p = Math.min((performance.now() - start) / durationMs, 1);
-        setVal(Math.round(from + range * (1 - Math.pow(1 - p, 3))));
-        if (p < 1) requestAnimationFrame(tick);
-      };
-      requestAnimationFrame(tick);
-    }, startDelay);
-    return () => clearTimeout(t);
-  }, [from, to, durationMs, startDelay]);
-  return val;
+// ─── Minimal confetti (small, premium — a handful of soft particles) ──
+
+interface Particle { id: number; x: number; size: number; color: string; duration: number; delay: number; drift: number; }
+const PARTICLE_COLORS = ['#D71920', '#F0B429', '#FFFFFF', '#C9974A'];
+function makeParticles(n: number): Particle[] {
+  return Array.from({ length: n }, (_, i) => ({
+    id: i,
+    x: 20 + Math.random() * 60,
+    size: 4 + Math.random() * 5,
+    color: PARTICLE_COLORS[i % PARTICLE_COLORS.length],
+    duration: 1100 + Math.random() * 700,
+    delay: 200 + Math.random() * 400,
+    drift: (Math.random() - 0.5) * 90,
+  }));
 }
 
-// ─── Component ────────────────────────────────────────────────
+// ─── One-sentence motivation — resolved deterministically, never random noise ──
 
-type Stage = 'mascot' | 'crack' | 'fire' | 'protein' | 'message' | 'progress' | 'done';
-
-// ─── Victory sound ────────────────────────────────────────────
-// Played exactly once per mount when playVictory=true.
-// Fade-in 150ms, volume 70%, fade-out 300ms before end.
-// Ducks any playing BGM to 35% while active, then restores.
-
-function playVictorySound(): () => void {
-  try {
-    const audio = new Audio('/victory sound.mp3');
-    audio.volume = 0;
-    audio.preload = 'auto';
-
-    // Duck BGM if it exists (global SKM bgm element tagged with id="skm-bgm")
-    const bgm = document.getElementById('skm-bgm') as HTMLAudioElement | null;
-    const bgmOrigVol = bgm ? bgm.volume : 1;
-    if (bgm && !bgm.paused) bgm.volume = bgmOrigVol * 0.35;
-
-    // Optional haptic on supported devices
-    try { if (navigator.vibrate) navigator.vibrate(50); } catch { /* unsupported */ }
-
-    audio.play().catch(() => {});
-
-    // Fade in over 150ms
-    const FADE_IN = 150;
-    const TARGET_VOL = 0.7;
-    const fadeInStart = performance.now();
-    const fadeInTick = () => {
-      const t = Math.min((performance.now() - fadeInStart) / FADE_IN, 1);
-      audio.volume = TARGET_VOL * t;
-      if (t < 1) requestAnimationFrame(fadeInTick);
-    };
-    requestAnimationFrame(fadeInTick);
-
-    // Fade out 300ms before natural end; restore BGM after
-    const FADE_OUT = 300;
-    const scheduleFadeOut = () => {
-      if (!isFinite(audio.duration) || audio.duration === 0) return;
-      const fadeOutAt = Math.max(0, (audio.duration - FADE_OUT / 1000) * 1000);
-      const timer = setTimeout(() => {
-        const fadeOutStart = performance.now();
-        const fadeOutTick = () => {
-          const t = Math.min((performance.now() - fadeOutStart) / FADE_OUT, 1);
-          audio.volume = TARGET_VOL * (1 - t);
-          if (t < 1) requestAnimationFrame(fadeOutTick);
-          else {
-            audio.pause();
-            if (bgm && !bgm.paused) bgm.volume = bgmOrigVol;
-          }
-        };
-        requestAnimationFrame(fadeOutTick);
-      }, fadeOutAt);
-      return timer;
-    };
-
-    let fadeTimer: ReturnType<typeof setTimeout> | undefined;
-    audio.addEventListener('loadedmetadata', () => { fadeTimer = scheduleFadeOut(); }, { once: true });
-    audio.addEventListener('ended', () => {
-      if (bgm && !bgm.paused) bgm.volume = bgmOrigVol;
-    }, { once: true });
-
-    // Cleanup: fade out and restore BGM
-    return () => {
-      if (fadeTimer !== undefined) clearTimeout(fadeTimer);
-      audio.volume = 0;
-      audio.pause();
-      if (bgm && !bgm.paused) bgm.volume = bgmOrigVol;
-    };
-  } catch {
-    return () => {};
-  }
+function motivationLine(goalMet: boolean, nextMilestoneDays: number | null): string {
+  if (nextMilestoneDays === 1) return 'One more day to unlock your next reward.';
+  if (goalMet) return "You've hit today's goal — tomorrow's scan keeps the streak alive.";
+  return "Tomorrow's scan keeps your streak alive.";
 }
 
 export default function ScanCelebrationOverlay({
-  streak, protein, todayEggs, goal, todayProtein, isMilestone, playVictory = false, onDismiss,
+  streak, protein, todayProtein, goal, isMilestone, pointsEarned, wallet, playVictory = false, onDismiss,
 }: ScanCelebrationProps) {
+  const [closing, setClosing] = useState(false);
+  const particles = useState(() => makeParticles(14))[0];
 
-  const [visible, setVisible] = useState(true);
-  const [stage,   setStage]   = useState<Stage>('mascot');
-
-  // Play victory sound exactly once on mount when playVictory=true
   useEffect(() => {
     if (!playVictory) return;
     const cleanup = playVictorySound();
+    HapticService.success();
     return cleanup;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // mount-only, intentional
-  const [cracked, setCracked] = useState(false);
-  const particles             = useRef(makeParticles(44)).current;
-  const feathers              = useRef(makeFeathers(18)).current;
-  const msgRef                = useRef(MESSAGES[Math.floor(Math.random() * MESSAGES.length)]).current;
 
-  const displayedStreak  = useCountUpFrom(Math.max(0, streak - 1), streak, 700, 1000);
-  const displayedProtein = useCountUp(protein, 600, 1600);
+  const displayedStreak  = useCountUp(streak, 700, 250);
+  const displayedPoints  = useCountUp(pointsEarned, 600, 550);
 
-  const fc  = fireColor(streak);
-  const fe  = fireEmoji(streak);
-  const pct = Math.min(100, Math.round((todayProtein / goal) * 100));
-  const batchProgress = streak % 7 === 0 && streak > 0 ? 7 : streak % 7;
-  const weekDots      = Array.from({ length: 7 }, (_, i) => i < batchProgress);
-  const goalMet       = todayProtein >= goal;
+  const goalMet = todayProtein >= goal;
 
-  // Newest claimed milestone (for milestone banner)
-  const MILESTONE_DAYS = MILESTONES.map(m => m.days);
-  const isMilestoneHit = isMilestone && MILESTONE_DAYS.includes(streak);
-  const milestoneDef   = isMilestoneHit ? MILESTONES.find(m => m.days === streak) : null;
+  // Next streak milestone (from the real reward table — never fabricated).
+  const nextMilestone = Object.keys(POINTS_PER_STREAK_MILESTONE)
+    .map(Number)
+    .filter(d => d > streak)
+    .sort((a, b) => a - b)[0] ?? null;
+  const nextMilestoneReward = nextMilestone ? POINTS_PER_STREAK_MILESTONE[nextMilestone] : null;
+  const nextSticker = nextMilestone ? MILESTONES.find(m => m.days === nextMilestone) : null;
+  const prevMilestone = nextMilestone
+    ? Math.max(0, ...Object.keys(POINTS_PER_STREAK_MILESTONE).map(Number).filter(d => d <= streak))
+    : streak;
+  const milestoneSpan = nextMilestone ? Math.max(1, nextMilestone - prevMilestone) : 1;
+  const milestonePct  = nextMilestone ? Math.min(100, Math.round(((streak - prevMilestone) / milestoneSpan) * 100)) : 100;
 
-  // Stage sequencing
-  useEffect(() => {
-    const t1 = setTimeout(() => setStage('crack'),   600);
-    const t2 = setTimeout(() => setCracked(true),    900);
-    const t3 = setTimeout(() => setStage('fire'),    1000);
-    const t4 = setTimeout(() => setStage('protein'), 1500);
-    const t5 = setTimeout(() => setStage('message'), 2200);
-    const t6 = setTimeout(() => setStage('progress'),2800);
-    const t7 = setTimeout(() => setStage('done'),    3200);
-    return () => [t1,t2,t3,t4,t5,t6,t7].forEach(clearTimeout);
-  }, []);
+  // Membership — real data from the wallet the scan just updated.
+  const tierProgress = wallet ? calcTierProgress(wallet.lifetimePoints) : null;
+  const currentTier = wallet?.membership ?? MEMBERSHIP_TIERS[0].tier;
+
+  const achievements = [
+    { icon: <TrendingUp size={15} color="#D71920" />, label: `+${protein}g Protein` },
+    { icon: <Sparkles size={15} color="#C9974A" />,    label: `+${pointsEarned} Reward Points` },
+    { icon: <ShieldCheck size={15} color="#16A34A" />, label: 'Streak Protected' },
+  ];
 
   function dismiss() {
-    setVisible(false);
-    setTimeout(onDismiss, 280);
+    setClosing(true);
+    HapticService.selection();
+    setTimeout(onDismiss, 220);
   }
-
-  const cardVisible = stage !== 'mascot';
 
   return (
     <div
+      onClick={dismiss}
       style={{
         position: 'fixed', inset: 0, zIndex: 9998,
-        display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center',
-        background: 'rgba(0,0,0,0.65)',
-        backdropFilter: 'blur(18px)',
-        WebkitBackdropFilter: 'blur(18px)',
-        padding: '12px 16px',
-        animation: visible ? 'cel-fade-in 220ms ease' : 'cel-fade-out 260ms ease forwards',
-        overflowY: 'auto',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(20,16,14,0.55)',
+        backdropFilter: 'blur(14px)',
+        WebkitBackdropFilter: 'blur(14px)',
+        padding: '20px 16px',
+        animation: closing ? 'skmCelFadeOut 220ms ease forwards' : 'skmCelFadeIn 200ms ease',
       }}
     >
-      {/* Particles */}
+      {/* Soft ambient glow behind the card */}
+      <div style={{
+        position: 'absolute', width: 360, height: 360, borderRadius: '50%',
+        background: 'radial-gradient(circle, rgba(215,25,32,0.25) 0%, transparent 70%)',
+        filter: 'blur(20px)', pointerEvents: 'none',
+        animation: 'skmCelGlow 2.4s ease-in-out infinite',
+      }} />
+
+      {/* Confetti — small, premium, not a firehose */}
       {particles.map(p => (
         <div key={p.id} style={{
-          position: 'fixed',
-          left: `${p.x}%`, bottom: '-12px',
-          width: p.size, height: p.size,
-          borderRadius: p.shape === 'circle' ? '50%' : p.shape === 'diamond' ? 3 : 2,
-          background: p.color,
-          transform: p.shape === 'diamond' ? 'rotate(45deg)' : 'none',
-          pointerEvents: 'none',
-          animation: `cel-particle ${p.duration}ms ease-out ${p.delay}ms forwards`,
+          position: 'absolute', left: `${p.x}%`, top: '38%',
+          width: p.size, height: p.size, borderRadius: '50%',
+          background: p.color, pointerEvents: 'none',
+          animation: `skmCelConfetti ${p.duration}ms ease-out ${p.delay}ms forwards`,
           '--drift': `${p.drift}px`,
         } as React.CSSProperties} />
       ))}
 
-      {/* Feathers */}
-      {feathers.map(f => (
-        <div key={f.id} style={{
-          position: 'fixed',
-          left: `${f.x}%`, top: '-20px',
-          fontSize: f.size,
-          pointerEvents: 'none',
-          animation: `cel-feather ${f.duration}ms ease-in ${f.delay}ms forwards`,
-          '--drift': `${f.drift}px`,
-          '--rotate': `${f.rotate}deg`,
-        } as React.CSSProperties}>🪶</div>
-      ))}
-
-      {/* ── STAGE 1: Full-screen mascot drop ── */}
-      <div style={{
-        display: 'flex', flexDirection: 'column', alignItems: 'center',
-        marginBottom: cardVisible ? 0 : 0,
-        animation: stage === 'mascot' ? 'cel-mascot-drop 500ms cubic-bezier(0.34,1.56,0.64,1)' : 'none',
-      }}>
-        {/* Egg mascot */}
-        <div style={{
-          fontSize: cardVisible ? 64 : 96,
-          lineHeight: 1,
-          transition: 'font-size 300ms ease',
-          animation: cracked
-            ? 'cel-crack 400ms cubic-bezier(0.34,1.56,0.64,1)'
-            : stage === 'done'
-            ? 'cel-mascot-float 3s ease-in-out infinite'
-            : stage === 'mascot'
-            ? 'cel-mascot-wave 1.2s ease-in-out infinite'
-            : 'none',
-          filter: stage === 'fire' || stage === 'done'
-            ? `drop-shadow(0 0 28px ${fc}cc) drop-shadow(0 0 60px ${fc}66)`
-            : stage === 'crack'
-            ? 'drop-shadow(0 0 40px rgba(255,215,0,1)) brightness(1.3)'
-            : 'drop-shadow(0 8px 20px rgba(0,0,0,0.4))',
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
           position: 'relative',
-          zIndex: 2,
-          cursor: 'pointer',
-          marginBottom: 0,
-        }} onClick={dismiss}>
-          {cracked ? '🐣' : '🥚'}
-        </div>
+          width: '100%', maxWidth: 420,
+          background: '#FFFFFF',
+          borderRadius: 28,
+          boxShadow: '0 24px 64px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.06)',
+          animation: closing ? 'skmCelCardOut 200ms ease forwards' : 'skmCelCardIn 360ms cubic-bezier(0.22,1,0.36,1)',
+          overflow: 'hidden',
+        }}
+      >
+        {/* Close */}
+        <button onClick={dismiss} aria-label="Close" style={{
+          position: 'absolute', top: 14, right: 14, zIndex: 2,
+          width: 30, height: 30, borderRadius: '50%', border: 'none',
+          background: 'rgba(0,0,0,0.06)', cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <X size={15} color="#8A8580" />
+        </button>
 
-        {/* Golden light burst on crack */}
-        {cracked && (
+        <div style={{ padding: '36px 26px 26px', textAlign: 'center' }}>
+
+          {/* ── Icon + title ── */}
           <div style={{
-            position: 'absolute',
-            width: 200, height: 200,
-            borderRadius: '50%',
-            background: 'radial-gradient(circle, rgba(255,215,0,0.6) 0%, rgba(255,165,0,0.3) 40%, transparent 70%)',
-            animation: 'cel-burst 600ms ease-out forwards',
-            pointerEvents: 'none',
-            zIndex: 1,
-          }} />
-        )}
-
-        {/* Sparkles around mascot */}
-        {stage !== 'mascot' && ['✨','⭐','💫','✨','⭐'].map((s, i) => (
-          <div key={i} style={{
-            position: 'absolute',
-            fontSize: 14 + i * 2,
-            pointerEvents: 'none',
-            animation: `cel-sparkle 1.5s ease-in-out ${i * 200}ms infinite`,
-            top: `${-20 + Math.sin(i * 72 * Math.PI / 180) * 55}px`,
-            left: `${50 + Math.cos(i * 72 * Math.PI / 180) * 55}%`,
-          }}>{s}</div>
-        ))}
-      </div>
-
-      {/* ── Main card ── */}
-      {cardVisible && (
-        <div
-          onClick={e => e.stopPropagation()}
-          style={{
-            width: '100%', maxWidth: 380,
-            background: 'rgba(255,255,255,0.97)',
-            borderRadius: 32,
-            overflow: 'hidden',
-            boxShadow: '0 32px 80px rgba(0,0,0,0.6), 0 0 0 1.5px rgba(255,255,255,0.15)',
-            animation: 'cel-card-in 380ms cubic-bezier(0.34,1.56,0.64,1)',
-            marginTop: 8,
-          }}
-        >
-          {/* ── Hero band ── */}
-          <div style={{
-            background: heroGradient(streak),
-            padding: '22px 20px 20px',
-            textAlign: 'center',
-            position: 'relative', overflow: 'hidden',
+            width: 64, height: 64, borderRadius: '50%', margin: '0 auto 16px',
+            background: 'linear-gradient(135deg,#D71920,#B31217)',
+            boxShadow: '0 10px 26px rgba(215,25,32,0.35)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            animation: 'skmCelIconIn 480ms cubic-bezier(0.22,1,0.36,1) 80ms both',
           }}>
-            {/* Decorative rings */}
-            <div style={{ position: 'absolute', top: -50, right: -50, width: 200, height: 200, borderRadius: '50%', background: 'rgba(255,255,255,0.07)', pointerEvents: 'none' }} />
-            <div style={{ position: 'absolute', bottom: -60, left: -40, width: 160, height: 160, borderRadius: '50%', background: 'rgba(255,255,255,0.05)', pointerEvents: 'none' }} />
+            {isMilestone
+              ? <Flame size={30} color="#fff" strokeWidth={2.2} />
+              : <ShieldCheck size={30} color="#fff" strokeWidth={2.2} />}
+          </div>
 
-            {/* STAGE 2: Fire appears */}
-            {(stage === 'fire' || stage === 'protein' || stage === 'message' || stage === 'progress' || stage === 'done') && (
-              <div style={{
-                fontSize: streak >= 50 ? 36 : 28,
-                marginBottom: 6,
-                animation: 'cel-fire-flicker 0.7s ease-in-out infinite alternate',
-                filter: `drop-shadow(0 0 12px ${fc}cc)`,
-              }}>
-                {fe}
-              </div>
-            )}
+          <h2 style={{ fontSize: 21, fontWeight: 800, color: '#181414', margin: '0 0 4px', letterSpacing: -0.3 }}>
+            Great Job!
+          </h2>
+          <p style={{ fontSize: 13, color: '#8A8580', margin: '0 0 22px', fontWeight: 500 }}>
+            Your healthy habit continues.
+          </p>
 
-            {/* Streak number */}
-            <div style={{
-              animation: 'cel-num-pop 450ms cubic-bezier(0.34,1.56,0.64,1) 1000ms both',
+          {/* ── Streak number ── */}
+          <div style={{ marginBottom: 22, animation: 'skmCelRise 420ms cubic-bezier(0.22,1,0.36,1) 140ms both' }}>
+            <span style={{
+              fontSize: 56, fontWeight: 800, color: '#D71920', lineHeight: 1,
+              letterSpacing: -2, display: 'block', fontVariantNumeric: 'tabular-nums',
             }}>
-              <span style={{
-                fontSize: streak >= 100 ? 58 : 70,
-                fontWeight: 900, color: '#fff', lineHeight: 1,
-                letterSpacing: -2,
-                textShadow: '0 4px 24px rgba(0,0,0,0.35)',
-                display: 'block',
-              }}>
-                {displayedStreak}
-              </span>
-              <span style={{
-                fontSize: 12, fontWeight: 800, color: 'rgba(255,255,255,0.8)',
-                letterSpacing: 2, textTransform: 'uppercase', marginTop: 3, display: 'block',
-              }}>
-                Day Streak
-              </span>
+              {displayedStreak}
+            </span>
+            <span style={{
+              fontSize: 11, fontWeight: 700, color: '#B8B0A8', letterSpacing: 2.5,
+              textTransform: 'uppercase', marginTop: 4, display: 'block',
+            }}>
+              Day Streak
+            </span>
+          </div>
+
+          {/* ── Today's Achievement ── */}
+          <div style={{ marginBottom: 22, textAlign: 'left' }}>
+            <p style={{
+              fontSize: 10, fontWeight: 700, color: '#B8B0A8', textTransform: 'uppercase',
+              letterSpacing: 1, margin: '0 0 10px', textAlign: 'center',
+            }}>
+              Today's Achievement
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {achievements.map((a, i) => (
+                <div key={a.label} style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '10px 14px', borderRadius: 14,
+                  background: '#FAF8F6', border: '1px solid #F0ECE7',
+                  animation: `skmCelSlideUp 380ms cubic-bezier(0.22,1,0.36,1) ${300 + i * 130}ms both`,
+                }}>
+                  <div style={{
+                    width: 26, height: 26, borderRadius: 9, flexShrink: 0,
+                    background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+                  }}>
+                    {a.icon}
+                  </div>
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: '#302A26' }}>{a.label}</span>
+                </div>
+              ))}
             </div>
           </div>
 
-          {/* ── Body ── */}
-          <div style={{ padding: '18px 20px 22px' }}>
-
-            {/* STAGE 3: Protein count-up */}
-            {(stage === 'protein' || stage === 'message' || stage === 'progress' || stage === 'done') && (
-              <div style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-                marginBottom: 16, padding: '14px 0',
-                background: 'linear-gradient(135deg,#FCE8E8,#FFF5F5)',
-                borderRadius: 18,
-                animation: 'cel-num-pop 380ms cubic-bezier(0.34,1.56,0.64,1)',
-              }}>
-                <span style={{ fontSize: 28 }}>💪</span>
-                <div>
-                  <span style={{ fontSize: 32, fontWeight: 900, color: '#D71920', lineHeight: 1 }}>
-                    +{displayedProtein}g
-                  </span>
-                  <p style={{ fontSize: 11, fontWeight: 700, color: '#999', margin: '2px 0 0' }}>Protein Added</p>
-                </div>
-              </div>
-            )}
-
-            {/* STAGE 4: Random motivation */}
-            {(stage === 'message' || stage === 'progress' || stage === 'done') && (
-              <div style={{
-                background: '#FFF7F0',
-                border: '1.5px solid #FFE4CC',
-                borderRadius: 16, padding: '12px 14px', marginBottom: 14,
-                display: 'flex', alignItems: 'center', gap: 12,
-                animation: 'cel-num-pop 340ms cubic-bezier(0.34,1.56,0.64,1)',
-              }}>
-                <span style={{ fontSize: 26, flexShrink: 0 }}>{msgRef.icon}</span>
-                <div>
-                  <p style={{ fontSize: 14, fontWeight: 900, color: '#1A1A1A', margin: 0 }}>{msgRef.line1}</p>
-                  <p style={{ fontSize: 11, color: '#999', margin: '2px 0 0', fontWeight: 600 }}>{msgRef.line2}</p>
-                </div>
-              </div>
-            )}
-
-            {/* STAGE 5: Progress */}
-            {(stage === 'progress' || stage === 'done') && (
-              <>
-                {/* Weekly dots */}
-                <div style={{ marginBottom: 14 }}>
-                  <p style={{ fontSize: 9, fontWeight: 800, color: '#bbb', textTransform: 'uppercase', letterSpacing: 1.2, margin: '0 0 8px', textAlign: 'center' }}>
-                    Weekly Journey
-                  </p>
-                  <div style={{ display: 'flex', justifyContent: 'center', gap: 7 }}>
-                    {weekDots.map((filled, i) => (
-                      <div key={i} style={{
-                        width: 34, height: 34, borderRadius: 11,
-                        background: filled ? `linear-gradient(135deg,${fc},${fc}bb)` : '#F0F0F0',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 17,
-                        boxShadow: filled ? `0 3px 10px ${fc}55` : 'none',
-                        animation: filled ? `cel-dot-in 280ms cubic-bezier(0.34,1.56,0.64,1) ${i * 70}ms both` : 'none',
-                      }}>
-                        {filled ? '🥚' : ''}
-                      </div>
-                    ))}
-                  </div>
-                  <p style={{ fontSize: 11, fontWeight: 700, color: '#999', margin: '7px 0 0', textAlign: 'center' }}>
-                    {batchProgress} / 7 days this week
-                  </p>
-                </div>
-
-                {/* Daily protein bar */}
-                <div style={{ marginBottom: 16 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: '#bbb' }}>Daily Protein Goal</span>
-                    <span style={{ fontSize: 11, fontWeight: 900, color: goalMet ? '#22C55E' : '#D71920' }}>
-                      {todayProtein}g / {goal}g
-                    </span>
-                  </div>
-                  <div style={{ height: 9, background: '#F0F0F0', borderRadius: 6, overflow: 'hidden' }}>
-                    <div style={{
-                      height: '100%', width: `${pct}%`,
-                      background: goalMet ? 'linear-gradient(90deg,#16A34A,#22C55E)' : `linear-gradient(90deg,#D71920,${fc})`,
-                      borderRadius: 6, transition: 'width 900ms ease 200ms',
-                    }} />
-                  </div>
-                  {goalMet && (
-                    <p style={{ fontSize: 11, color: '#22C55E', fontWeight: 800, margin: '5px 0 0', textAlign: 'center' }}>
-                      🎉 Daily goal reached!
-                    </p>
-                  )}
-                </div>
-
-                {/* Eggs count */}
-                <div style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                  marginBottom: 16,
-                  fontSize: 12, fontWeight: 700, color: '#888',
-                }}>
-                  🥚 <span style={{ color: '#D71920', fontWeight: 900 }}>{todayEggs}</span> egg{todayEggs !== 1 ? 's' : ''} scanned today
-                </div>
-              </>
-            )}
-
-            {/* Milestone banner */}
-            {(stage === 'progress' || stage === 'done') && milestoneDef && (
-              <div style={{
-                background: `linear-gradient(135deg,${milestoneDef.color}22,${milestoneDef.color2}18)`,
-                border: `2px solid ${milestoneDef.color}55`,
-                borderRadius: 18, padding: '12px 16px', marginBottom: 16,
-                display: 'flex', alignItems: 'center', gap: 12,
-                animation: 'cel-num-pop 400ms cubic-bezier(0.34,1.56,0.64,1)',
-              }}>
-                <div style={{
-                  width: 44, height: 44, borderRadius: 13, flexShrink: 0,
-                  background: `linear-gradient(135deg,${milestoneDef.color},${milestoneDef.color2})`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 22, boxShadow: `0 4px 14px ${milestoneDef.color}44`,
-                }}>
-                  🎁
-                </div>
-                <div>
-                  <p style={{ fontSize: 12, fontWeight: 900, color: milestoneDef.color, margin: 0 }}>
-                    Reward Ready!
-                  </p>
-                  <p style={{ fontSize: 11, color: '#666', margin: '2px 0 0', fontWeight: 600 }}>
-                    Visit Streaks to claim your {streak}-day sticker
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* ── Continue button — only shown in done stage ── */}
-            {stage === 'done' && (
-              <button
-                onClick={() => { HapticService.selection(); dismiss(); }}
-                style={{
-                  width: '100%', padding: '17px 0', borderRadius: 20,
-                  border: 'none', cursor: 'pointer',
-                  background: `linear-gradient(135deg,#D71920,#B31217)`,
-                  color: '#fff', fontWeight: 900, fontSize: 17, letterSpacing: 0.4,
-                  boxShadow: '0 10px 30px rgba(215,25,32,0.5)',
-                  animation: 'cel-num-pop 350ms cubic-bezier(0.34,1.56,0.64,1)',
-                  position: 'relative', overflow: 'hidden',
-                }}
-              >
-                <span style={{ position: 'relative', zIndex: 1 }}>
-                  {goalMet ? '🎉 Awesome!' : streak >= 7 ? '🔥 Keep Growing' : '🥚 Continue'}
+          {/* ── Next milestone ── */}
+          {nextMilestone && (
+            <div style={{
+              marginBottom: 16, padding: '14px 16px', borderRadius: 16,
+              background: 'linear-gradient(135deg,#FBF6EE,#F5EBD8)',
+              border: '1px solid #E9DAB8',
+              animation: 'skmCelSlideUp 380ms cubic-bezier(0.22,1,0.36,1) 700ms both',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: '#A9782F', textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                  Next Reward
                 </span>
-              </button>
-            )}
-          </div>
+                <span style={{ fontSize: 11, fontWeight: 800, color: '#8A6A24' }}>
+                  {streak} / {nextMilestone}
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 800, color: '#2B2420' }}>{nextMilestone} Day Streak</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#A9782F' }}>
+                  +{nextMilestoneReward} pts{nextSticker ? ' · Sticker' : ''}
+                </span>
+              </div>
+              <div style={{ height: 6, background: 'rgba(169,120,47,0.15)', borderRadius: 8, overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%', width: `${milestonePct}%`, borderRadius: 8,
+                  background: 'linear-gradient(90deg,#C9974A,#A9782F)',
+                  transition: 'width 900ms cubic-bezier(0.22,1,0.36,1) 750ms',
+                }} />
+              </div>
+            </div>
+          )}
+
+          {/* ── Membership ── */}
+          {tierProgress && (
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '10px 14px', borderRadius: 14, marginBottom: 18,
+              background: '#FAF8F6', border: '1px solid #F0ECE7',
+              animation: 'skmCelSlideUp 380ms cubic-bezier(0.22,1,0.36,1) 820ms both',
+            }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#302A26' }}>{currentTier} Member</span>
+              <span style={{ fontSize: 11, fontWeight: 600, color: '#8A8580' }}>
+                {tierProgress.next ? `${tierProgress.pointsToNext} points until ${tierProgress.next.tier}` : 'Top tier reached'}
+              </span>
+            </div>
+          )}
+
+          {/* ── Motivation — one sentence ── */}
+          <p style={{
+            fontSize: 12.5, color: '#8A8580', fontWeight: 500, margin: '0 0 20px',
+            lineHeight: 1.5, animation: 'skmCelFadeUp 380ms ease 900ms both',
+          }}>
+            {motivationLine(goalMet, nextMilestone ? nextMilestone - streak : null)}
+          </p>
+
+          {/* ── Continue ── */}
+          <button
+            onClick={dismiss}
+            style={{
+              width: '100%', padding: '13px 0', borderRadius: 14,
+              border: 'none', cursor: 'pointer',
+              background: 'linear-gradient(135deg,#D71920,#B31217)',
+              color: '#fff', fontWeight: 700, fontSize: 14, letterSpacing: 0.2,
+              boxShadow: '0 6px 18px rgba(215,25,32,0.28)',
+              animation: 'skmCelFadeUp 380ms ease 980ms both',
+            }}
+          >
+            Continue
+          </button>
         </div>
-      )}
+      </div>
 
       <style>{`
-        @keyframes cel-fade-in  { from { opacity: 0; } to { opacity: 1; } }
-        @keyframes cel-fade-out { from { opacity: 1; } to { opacity: 0; } }
+        @keyframes skmCelFadeIn  { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes skmCelFadeOut { from { opacity: 1; } to { opacity: 0; } }
 
-        @keyframes cel-card-in {
-          from { transform: scale(0.80) translateY(50px); opacity: 0; }
+        @keyframes skmCelCardIn {
+          from { transform: scale(0.92) translateY(14px); opacity: 0; }
           to   { transform: scale(1)    translateY(0);    opacity: 1; }
         }
-
-        @keyframes cel-mascot-drop {
-          0%   { transform: translateY(-80px) scale(0.6) rotate(-10deg); opacity: 0; }
-          60%  { transform: translateY(12px)  scale(1.1) rotate(4deg);   opacity: 1; }
-          80%  { transform: translateY(-6px)  scale(0.96) rotate(-2deg); }
-          100% { transform: translateY(0)     scale(1)   rotate(0deg); }
+        @keyframes skmCelCardOut {
+          from { transform: scale(1)    translateY(0);   opacity: 1; }
+          to   { transform: scale(0.96) translateY(8px); opacity: 0; }
         }
 
-        @keyframes cel-mascot-wave {
-          0%,100% { transform: rotate(0deg) scale(1); }
-          25%     { transform: rotate(-12deg) scale(1.05); }
-          75%     { transform: rotate(12deg)  scale(1.05); }
+        @keyframes skmCelIconIn {
+          from { transform: scale(0.5); opacity: 0; }
+          to   { transform: scale(1);   opacity: 1; }
         }
 
-        @keyframes cel-mascot-float {
-          0%,100% { transform: translateY(0) rotate(0deg); }
-          33%     { transform: translateY(-8px) rotate(-3deg); }
-          66%     { transform: translateY(-4px) rotate(3deg); }
+        @keyframes skmCelRise {
+          from { transform: translateY(10px); opacity: 0; }
+          to   { transform: translateY(0);    opacity: 1; }
         }
 
-        @keyframes cel-crack {
-          0%   { transform: scale(1)    rotate(0deg); filter: brightness(1); }
-          20%  { transform: scale(0.9)  rotate(-6deg); filter: brightness(2) drop-shadow(0 0 40px gold); }
-          50%  { transform: scale(1.3)  rotate(6deg);  filter: brightness(2.5) drop-shadow(0 0 60px gold); }
-          70%  { transform: scale(0.95) rotate(-3deg); filter: brightness(1.5); }
-          100% { transform: scale(1)    rotate(0deg); filter: brightness(1); }
+        @keyframes skmCelSlideUp {
+          from { transform: translateY(12px); opacity: 0; }
+          to   { transform: translateY(0);    opacity: 1; }
         }
 
-        @keyframes cel-burst {
-          0%   { transform: scale(0); opacity: 1; }
-          100% { transform: scale(4); opacity: 0; }
+        @keyframes skmCelFadeUp {
+          from { transform: translateY(6px); opacity: 0; }
+          to   { transform: translateY(0);   opacity: 1; }
         }
 
-        @keyframes cel-sparkle {
-          0%,100% { transform: scale(0.7) rotate(0deg);   opacity: 0.4; }
-          50%     { transform: scale(1.3) rotate(180deg);  opacity: 1; }
+        @keyframes skmCelGlow {
+          0%, 100% { opacity: 0.6; transform: scale(1); }
+          50%      { opacity: 1;   transform: scale(1.08); }
         }
 
-        @keyframes cel-fire-flicker {
-          from { transform: scale(1)    rotate(-3deg) translateY(0); }
-          to   { transform: scale(1.1)  rotate(3deg)  translateY(-3px); }
-        }
-
-        @keyframes cel-num-pop {
-          from { transform: scale(0.55) translateY(16px); opacity: 0; }
-          to   { transform: scale(1)    translateY(0);    opacity: 1; }
-        }
-
-        @keyframes cel-dot-in {
-          from { transform: scale(0) rotate(-30deg); opacity: 0; }
-          to   { transform: scale(1) rotate(0deg);   opacity: 1; }
-        }
-
-        @keyframes cel-particle {
-          0%   { transform: translateY(0) translateX(0) scale(1) rotate(0deg);   opacity: 1; }
-          100% { transform: translateY(-480px) translateX(var(--drift)) scale(0.2) rotate(360deg); opacity: 0; }
-        }
-
-        @keyframes cel-feather {
-          0%   { transform: translateY(0) translateX(0) rotate(0deg);   opacity: 0.9; }
-          100% { transform: translateY(110vh) translateX(var(--drift)) rotate(var(--rotate)); opacity: 0; }
+        @keyframes skmCelConfetti {
+          0%   { transform: translateY(0) translateX(0) scale(1); opacity: 1; }
+          100% { transform: translateY(-160px) translateX(var(--drift)) scale(0.4); opacity: 0; }
         }
       `}</style>
     </div>

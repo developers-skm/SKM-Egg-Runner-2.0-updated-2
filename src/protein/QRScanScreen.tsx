@@ -28,7 +28,7 @@ import {
   notifyDuplicateEgg, notifyStreakMilestone, notifyProteinMilestone,
 } from '../services/notifications/notificationService';
 import { recordStreakDay } from '../services/protein/eggStreakService';
-import { awardScanPoints } from '../services/protein/rewardWalletService';
+import { awardScanPoints, type RewardWallet } from '../services/protein/rewardWalletService';
 import ScanCelebrationOverlay from './ScanCelebrationOverlay';
 
 type Phase = 'idle' | 'opening' | 'scanning' | 'processing' | 'success' | 'duplicate' | 'consumed_other' | 'error';
@@ -46,6 +46,8 @@ interface ScanResult {
   todayEggs: number;
   todayProtein: number;
   goal: number;
+  pointsEarned: number;
+  wallet: RewardWallet | null;
 }
 
 const QR_ELEMENT_ID = 'protein-qr-reader';
@@ -270,16 +272,17 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
       // Record this day in streak history subcollection for calendar view
       recordStreakDay(user.uid).catch(() => {});
 
-      // SKM Rewards Club — award loyalty points for this scan (additive, non-blocking)
-      awardScanPoints(user.uid, streakInfo.currentStreak).catch(() => {});
+      // SKM Rewards Club — award loyalty points for this scan. Awaited (in
+      // parallel with the reads below) so the celebration UI can show the
+      // real points/membership numbers instead of guessing them.
+      const [ts, stg, scanPoints] = await Promise.all([
+        getTodayStats(user.uid),
+        getTrackerSettings(user.uid),
+        awardScanPoints(user.uid, streakInfo.currentStreak).catch(() => null),
+      ]);
 
       // Play chick chirp — only on genuine success, never on error/duplicate
       playChickSuccess();
-
-      const [ts, stg] = await Promise.all([
-        getTodayStats(user.uid),
-        getTrackerSettings(user.uid),
-      ]);
 
       if (!mountedRef.current) return;
 
@@ -301,6 +304,8 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
         todayEggs:    ts?.totalEggs ?? 0,
         todayProtein,
         goal:         todayGoal,
+        pointsEarned: scanPoints?.pointsEarned ?? PROTEIN_PER_EGG,
+        wallet:       scanPoints?.wallet ?? null,
       });
       setPhase('success');
 
@@ -867,6 +872,8 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
           goal={result.goal}
           todayProtein={result.todayProtein}
           isMilestone={result.isMilestone}
+          pointsEarned={result.pointsEarned}
+          wallet={result.wallet}
           playVictory={true}
           onDismiss={onScanSuccess}
         />

@@ -98,12 +98,19 @@ export async function addPoints(
   return { ...before, currentPoints: newCurrent, lifetimePoints: newLifetime, membership: newTier };
 }
 
+export interface ScanPointsResult {
+  pointsEarned: number; // POINTS_PER_SCAN + any streak bonus
+  wallet:       RewardWallet;
+  tierChanged:  boolean;
+}
+
 /**
  * Awards points for a genuinely new egg scan, plus a streak-milestone bonus if the
- * post-scan streak just hit a milestone threshold. Fires notifications additively —
- * safe to call fire-and-forget from QRScanScreen.tsx, mirroring recordStreakDay().
+ * post-scan streak just hit a milestone threshold. Fires notifications additively.
+ * Returns the resulting wallet so callers (e.g. the post-scan celebration UI) can
+ * show real point/membership numbers instead of estimating them.
  */
-export async function awardScanPoints(uid: string, currentStreak: number): Promise<void> {
+export async function awardScanPoints(uid: string, currentStreak: number): Promise<ScanPointsResult> {
   const before = await getRewardWallet(uid);
 
   let wallet = await addPoints(uid, POINTS_PER_SCAN, 'scan', 'Egg scan');
@@ -113,17 +120,21 @@ export async function awardScanPoints(uid: string, currentStreak: number): Promi
     wallet = await addPoints(uid, streakBonus, 'streak_milestone', `${currentStreak}-day streak bonus`);
   }
 
-  notifyRewardPointsEarned(uid, POINTS_PER_SCAN + (streakBonus ?? 0), wallet.currentPoints).catch(() => {});
+  const pointsEarned = POINTS_PER_SCAN + (streakBonus ?? 0);
+  notifyRewardPointsEarned(uid, pointsEarned, wallet.currentPoints).catch(() => {});
 
-  if (wallet.membership !== before.membership) {
+  const tierChanged = wallet.membership !== before.membership;
+  if (tierChanged) {
     notifyMembershipTierUp(uid, wallet.membership).catch(() => {});
-    // Membership Upgrade — best-effort only. This function is invoked
-    // fire-and-forget from QRScanScreen.tsx with no direct tie to a user
-    // gesture, so on Android Chrome navigator.vibrate() may silently no-op
-    // here if the page's sticky user-activation window has already lapsed.
-    // HapticService.fire() logs the outcome under Developer Mode.
+    // Membership Upgrade — best-effort only. This function may be invoked
+    // fire-and-forget with no direct tie to a user gesture, so on Android
+    // Chrome navigator.vibrate() may silently no-op here if the page's
+    // sticky user-activation window has already lapsed. HapticService.fire()
+    // logs the outcome under Developer Mode.
     HapticService.heavy();
   }
+
+  return { pointsEarned, wallet, tierChanged };
 }
 
 /** Awards a bonus for claiming a milestone sticker — call alongside claimMilestone(). */
