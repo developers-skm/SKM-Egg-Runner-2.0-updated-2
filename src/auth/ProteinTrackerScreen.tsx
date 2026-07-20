@@ -20,9 +20,22 @@ interface ProteinTrackerScreenProps {
   onPlayGame?: () => void;
 }
 
+// ── Shared warm-neutral tokens (same values as RewardsClubScreen.tsx's PALETTE) ──
+const T = {
+  red:      '#B42318',
+  redDeep:  '#7A1F17',
+  redSoft:  '#FBE7E4',
+  ink:      '#241A17',
+  inkSoft:  '#74645E',
+  inkMuted: '#A79C97',
+  surface:  '#FFFFFF',
+  cream:    '#F8F6F2',
+  border:   '#E9DED8',
+};
+
 function FlameNavIcon({ active }: { active: boolean }) {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill={active ? '#D71920' : '#bbb'} stroke="none">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill={active ? T.red : T.inkMuted} stroke="none">
       <path d="M12 2C12 2 8 7 8 12a4 4 0 008 0c0-2.5-1.5-5-4-10zM8.5 18.5A5.5 5.5 0 0112 8c0 3 1 5.5 3.5 7A4 4 0 018.5 18.5z"/>
     </svg>
   );
@@ -32,11 +45,11 @@ function FlameNavIcon({ active }: { active: boolean }) {
 // via the avatar button in the top app bar instead (see the top-right button
 // below that already sets tab to 'profile').
 const PRIMARY_NAV: { key: Tab; label: string; icon: (a: boolean) => React.ReactNode }[] = [
-  { key: 'dashboard', label: 'Home',    icon: (a) => <HomeIcon      size={20} color={a ? '#D71920' : '#bbb'} /> },
-  { key: 'scan',      label: 'Scan',    icon: (a) => <CameraIcon    size={20} color={a ? '#D71920' : '#bbb'} /> },
+  { key: 'dashboard', label: 'Home',    icon: (a) => <HomeIcon      size={20} color={a ? T.red : T.inkMuted} /> },
+  { key: 'scan',      label: 'Scan',    icon: (a) => <CameraIcon    size={20} color={a ? T.red : T.inkMuted} /> },
   { key: 'streaks',   label: 'Streaks', icon: (a) => <FlameNavIcon  active={a} /> },
-  { key: 'stats',     label: 'Stats',   icon: (a) => <AnalyticsIcon size={20} color={a ? '#D71920' : '#bbb'} /> },
-  { key: 'rewards',   label: 'Rewards', icon: (a) => <GiftIcon      size={20} color={a ? '#D71920' : '#bbb'} /> },
+  { key: 'stats',     label: 'Stats',   icon: (a) => <AnalyticsIcon size={20} color={a ? T.red : T.inkMuted} /> },
+  { key: 'rewards',   label: 'Rewards', icon: (a) => <GiftIcon      size={20} color={a ? T.red : T.inkMuted} /> },
 ];
 
 export default function ProteinTrackerScreen({ onBack, onPlayGame }: ProteinTrackerScreenProps) {
@@ -74,51 +87,57 @@ export default function ProteinTrackerScreen({ onBack, onPlayGame }: ProteinTrac
   return (
     <div style={{
       position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column',
-      background: '#F5F5F5',
+      background: T.cream,
       fontFamily: 'system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
     }}>
 
       {/* ── Top App Bar ── */}
-      <div style={{ flexShrink: 0, background: '#fff', borderBottom: '1px solid #F0F0F0', boxShadow: '0 1px 8px rgba(0,0,0,0.06)' }}>
+      <div style={{ flexShrink: 0, background: T.surface, borderBottom: `1px solid ${T.border}` }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px' }}>
 
           {/* Left: back arrow + mascot + title */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <button
               onClick={onBack}
+              aria-label="Go back"
               style={{
-                width: 32, height: 32, borderRadius: 9,
-                background: '#F5F5F5', border: 'none',
+                width: 32, height: 32, borderRadius: '50%',
+                background: T.cream, border: 'none',
                 cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                flexShrink: 0,
+                flexShrink: 0, transition: 'background 150ms ease',
               }}
-              onPointerDown={e => (e.currentTarget.style.background = '#EBEBEB')}
-              onPointerUp={e   => (e.currentTarget.style.background = '#F5F5F5')}
-              onPointerLeave={e => (e.currentTarget.style.background = '#F5F5F5')}
+              onPointerDown={e => (e.currentTarget.style.background = T.border)}
+              onPointerUp={e   => (e.currentTarget.style.background = T.cream)}
+              onPointerLeave={e => (e.currentTarget.style.background = T.cream)}
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1A1A1A" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={T.ink} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M19 12H5M12 5l-7 7 7 7"/>
               </svg>
             </button>
             <img src="/egg mus_Image_v5vrg3v5vrg3v5vr-removebg-preview.png" alt="SKM"
-              style={{ width: 26, height: 26, objectFit: 'contain', filter: 'drop-shadow(0 2px 4px rgba(215,25,32,0.3))' }} />
-            <span style={{ fontWeight: 900, fontSize: 14, color: '#D71920' }}>SKM</span>
-            <span style={{ fontWeight: 900, fontSize: 14, color: '#1A1A1A' }}>Protein</span>
+              style={{ width: 24, height: 24, objectFit: 'contain' }} />
+            <span style={{ fontWeight: 800, fontSize: 14.5, color: T.red, letterSpacing: 0.1 }}>SKM<span style={{ color: T.ink, fontWeight: 700 }}> Protein</span></span>
           </div>
 
           {/* Right: notification + scan + avatar */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <NotificationBell size={18} />
-            <button onClick={() => setTab('scan')} style={{
-              display: 'flex', alignItems: 'center', gap: 5, padding: '6px 11px', borderRadius: 11,
-              background: tab === 'scan' ? '#FCE8E8' : '#F5F5F5', border: 'none', cursor: 'pointer',
-            }}>
-              <CameraIcon size={15} color="#D71920" />
-              <span style={{ fontSize: 11, fontWeight: 800, color: '#D71920' }}>Scan</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <NotificationBell size={17} color={T.ink} />
+            <button
+              onClick={() => setTab('scan')}
+              aria-label="Scan"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', borderRadius: 20,
+                background: tab === 'scan' ? T.redSoft : 'transparent',
+                border: `1px solid ${tab === 'scan' ? 'transparent' : T.border}`,
+                cursor: 'pointer', transition: 'background 150ms ease',
+              }}
+            >
+              <CameraIcon size={14} color={T.red} />
+              <span style={{ fontSize: 11, fontWeight: 700, color: T.red }}>Scan</span>
             </button>
-            <button onClick={() => setTab('profile')} style={{
+            <button onClick={() => setTab('profile')} aria-label="Profile" style={{
               width: 32, height: 32, borderRadius: '50%', overflow: 'hidden',
-              border: tab === 'profile' ? '2px solid #D71920' : '2px solid transparent',
+              border: tab === 'profile' ? `2px solid ${T.red}` : `1px solid ${T.border}`,
               background: 'none', cursor: 'pointer', padding: 0, flexShrink: 0,
             }}>
               {typedUser.photoURL && !avatarBroken ? (
@@ -130,8 +149,8 @@ export default function ProteinTrackerScreen({ onBack, onPlayGame }: ProteinTrac
                   style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                 />
               ) : (
-                <div style={{ width: '100%', height: '100%', background: '#FCE8E8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <span style={{ fontSize: 12, fontWeight: 900, color: '#D71920' }}>{(typedUser.displayName ?? 'U')[0].toUpperCase()}</span>
+                <div style={{ width: '100%', height: '100%', background: T.redSoft, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: T.red }}>{(typedUser.displayName ?? 'U')[0].toUpperCase()}</span>
                 </div>
               )}
             </button>
@@ -191,9 +210,8 @@ export default function ProteinTrackerScreen({ onBack, onPlayGame }: ProteinTrac
 
       {/* ── Bottom Navigation ── */}
       <div style={{
-        flexShrink: 0, background: '#fff',
-        borderTop: '1px solid #F0F0F0',
-        boxShadow: '0 -2px 14px rgba(0,0,0,0.07)',
+        flexShrink: 0, background: T.surface,
+        borderTop: `1px solid ${T.border}`,
         paddingBottom: 'env(safe-area-inset-bottom, 0px)',
       }}>
         <div style={{ display: 'flex' }}>
@@ -203,25 +221,26 @@ export default function ProteinTrackerScreen({ onBack, onPlayGame }: ProteinTrac
               <button
                 key={item.key}
                 onClick={() => setTab(item.key)}
+                aria-label={item.label}
+                aria-current={active ? 'page' : undefined}
                 style={{
-                  flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
-                  justifyContent: 'center', padding: '9px 0 7px', gap: 2,
+                  flex: 1, minHeight: 52, display: 'flex', flexDirection: 'column', alignItems: 'center',
+                  justifyContent: 'center', padding: '8px 0 7px', gap: 3,
                   background: 'none', border: 'none', cursor: 'pointer', outline: 'none',
                 }}
-                onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.92)')}
+                onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.94)')}
                 onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
                 onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
               >
                 <div style={{
-                  width: 38, height: 27, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: active ? '#FCE8E8' : 'transparent', transition: 'all 150ms ease',
+                  width: 40, height: 28, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: active ? T.redSoft : 'transparent', transition: 'background 150ms ease',
                 }}>
                   {item.icon(active)}
                 </div>
-                <span style={{ fontSize: 8.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.4, color: active ? '#D71920' : '#bbb', transition: 'color 150ms ease' }}>
+                <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.2, color: active ? T.red : T.inkMuted, transition: 'color 150ms ease' }}>
                   {item.label}
                 </span>
-                {active && <div style={{ width: 4, height: 4, borderRadius: '50%', background: '#D71920' }} />}
               </button>
             );
           })}

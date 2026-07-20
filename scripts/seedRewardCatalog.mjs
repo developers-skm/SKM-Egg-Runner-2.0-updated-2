@@ -20,6 +20,10 @@
  *                                            highest-reached game stage to meet/exceed this,
  *                                            in addition to pointsCost.
  *   requiredStageLabel: string (optional) — display label, e.g. "Stage 2", "Champion Stage"
+ *   requiredEggScans:   number (optional) — Smart Reward Requirement: lifetime SKM egg-scan
+ *                                            count the player must reach (read from
+ *                                            users/{uid}.lifetimeConsumption), in addition
+ *                                            to pointsCost and any requiredStage.
  *
  * pointsCost is set at 10 points per ₹1 of discount as the default conversion rate.
  * Admins can edit any field directly in Firestore afterwards — this script only
@@ -54,11 +58,11 @@ const POINTS_PER_RUPEE_DISCOUNT = 10;
 
 // ── Catalog data ───────────────────────────────────────────────
 const CATALOG = [
-  // SKM BEST FRESH
-  { slug: 'fresh-6',  range: 'SKM Best Fresh', productName: 'Fresh 6',  mrp: 84,  discountAmount: 10, minimumPurchase: 100 },
-  { slug: 'fresh-12', range: 'SKM Best Fresh', productName: 'Fresh 12', mrp: 165, discountAmount: 15, minimumPurchase: 200, requiredStage: 'CHICK', requiredStageLabel: 'Stage 2' },
+  // SKM BEST FRESH — Smart Reward Requirements: points + egg scans + game stage
+  { slug: 'fresh-6',  range: 'SKM Best Fresh', productName: 'Fresh 6',  mrp: 84,  discountAmount: 10, minimumPurchase: 100, requiredEggScans: 20, requiredStage: 'CHICK', requiredStageLabel: 'Stage 2' },
+  { slug: 'fresh-12', range: 'SKM Best Fresh', productName: 'Fresh 12', mrp: 165, discountAmount: 20, minimumPurchase: 200, requiredEggScans: 40, requiredStage: 'ADULT', requiredStageLabel: 'Stage 3' },
   { slug: 'fresh-15', range: 'SKM Best Fresh', productName: 'Fresh 15', mrp: 204, discountAmount: 20, minimumPurchase: 250 },
-  { slug: 'fresh-30', range: 'SKM Best Fresh', productName: 'Fresh 30', mrp: 405, discountAmount: 40, minimumPurchase: 400, requiredStage: 'ADULT', requiredStageLabel: 'Stage 4' },
+  { slug: 'fresh-30', range: 'SKM Best Fresh', productName: 'Fresh 30', mrp: 405, discountAmount: 40, minimumPurchase: 400, requiredEggScans: 60, requiredStage: 'CHICK', requiredStageLabel: 'Stage 2' },
 
   // SKM BEST PLUS
   { slug: 'plus-6',   range: 'SKM Best Plus', productName: 'Plus 6',  mrp: 96,  discountAmount: 10, minimumPurchase: 100 },
@@ -69,7 +73,7 @@ const CATALOG = [
   // SKM BEST BROWN
   { slug: 'brown-6',  range: 'SKM Best Brown', productName: 'Brown 6',  mrp: 105, discountAmount: 10, minimumPurchase: 100 },
   { slug: 'brown-12', range: 'SKM Best Brown', productName: 'Brown 12', mrp: 207, discountAmount: 20, minimumPurchase: 200, requiredStage: 'ADULT', requiredStageLabel: 'Stage 4' },
-  { slug: 'brown-30', range: 'SKM Best Brown', productName: 'Brown 30', mrp: 510, discountAmount: 50, minimumPurchase: 500, requiredStage: 'STAGE2', requiredStageLabel: 'Champion Stage' },
+  { slug: 'brown-30', range: 'SKM Best Brown', productName: 'Brown 30', mrp: 510, discountAmount: 50, minimumPurchase: 500, pointsCost: 800, requiredEggScans: 100, requiredStage: 'STAGE2', requiredStageLabel: 'Champion Stage' },
 
   // PREMIUM RANGE
   { slug: 'cardio',   range: 'Premium Range', productName: 'Cardio',   mrp: 108, discountAmount: 10, minimumPurchase: 100 },
@@ -84,20 +88,23 @@ async function seed() {
 
   CATALOG.forEach((item, i) => {
     const ref = db.collection('rewardCatalog').doc(item.slug);
+    const pointsCost = item.pointsCost ?? (item.discountAmount * POINTS_PER_RUPEE_DISCOUNT);
     batch.set(ref, {
       range:           item.range,
       productName:     item.productName,
       mrp:             item.mrp,
       discountAmount:  item.discountAmount,
       minimumPurchase: item.minimumPurchase,
-      pointsCost:      item.discountAmount * POINTS_PER_RUPEE_DISCOUNT,
+      pointsCost,
       active:          true,
       sortOrder:       i,
       createdAt:       FieldValue.serverTimestamp(),
       ...(item.requiredStage ? { requiredStage: item.requiredStage, requiredStageLabel: item.requiredStageLabel } : {}),
+      ...(item.requiredEggScans ? { requiredEggScans: item.requiredEggScans } : {}),
     }, { merge: true });
     const gate = item.requiredStage ? `, gate: ${item.requiredStageLabel}` : '';
-    console.log(`  ✅ ${item.slug} — ${item.productName} (₹${item.discountAmount} OFF, ${item.discountAmount * POINTS_PER_RUPEE_DISCOUNT} pts${gate})`);
+    const eggs = item.requiredEggScans ? `, scans: ${item.requiredEggScans}` : '';
+    console.log(`  ✅ ${item.slug} — ${item.productName} (₹${item.discountAmount} OFF, ${pointsCost} pts${eggs}${gate})`);
   });
 
   await batch.commit();

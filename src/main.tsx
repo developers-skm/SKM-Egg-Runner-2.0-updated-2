@@ -15,6 +15,7 @@ import { startRealtimeConfigSync } from './liveConfig.ts';
 import { soundManager } from './audio.ts';
 import { NotificationProvider } from './context/NotificationContext.tsx';
 import { NavigationProvider, useNavigation } from './context/NavigationContext.tsx';
+import type { NavTarget } from './context/NavigationContext.tsx';
 import NotificationDrawer from './components/notifications/NotificationDrawer.tsx';
 import './index.css';
 
@@ -54,9 +55,19 @@ function AppRoot() {
   const { user } = useAuth();
   const [profileStatus, setProfileStatus] = useState<ProfileStatus>('CHECKING');
   const [screen,        setScreen]        = useState<AppScreen>('MODULE_SELECT');
-  const { pendingTarget } = useNavigation();
+  const { pendingTarget, navigateTo } = useNavigation();
   // Track the last UID we checked so re-renders don't re-fire the Firestore read
   const checkedUidRef = useRef<string | null>(null);
+  // True when the current GAME session was entered via Rewards' "Play Game"
+  // (as opposed to the normal Module Select → Egg Runner card path). Drives
+  // where onBackToMenu sends the user once the session ends — Rewards' own
+  // requirement check re-runs automatically because ProteinTrackerScreen
+  // (and RewardsClubScreen inside it) fully remounts on screen change.
+  const gameEntryFromRewardsRef = useRef(false);
+  // One-shot flag consumed by ModuleSelectScreen to auto-run the same
+  // QR-gated game entry as tapping the Egg Runner card, instead of requiring
+  // an extra manual tap after routing here from Rewards.
+  const [autoStartGame, setAutoStartGame] = useState(false);
 
   // ── Smart notification navigation — switch to the destination screen ──────
   // ProteinTrackerScreen (once mounted) reads `pendingTarget` itself to pick
@@ -67,6 +78,12 @@ function AppRoot() {
       setScreen('PROTEIN_TRACKER');
     }
   }, [pendingTarget, screen]);
+
+  // Consumed once ModuleSelectScreen has picked it up — don't re-trigger if
+  // the user later navigates back to MODULE_SELECT normally (e.g. via Home).
+  useEffect(() => {
+    if (autoStartGame && screen !== 'MODULE_SELECT') setAutoStartGame(false);
+  }, [autoStartGame, screen]);
 
   useEffect(() => {
     // user === undefined  → Firebase hasn't resolved yet (initial load)
@@ -194,6 +211,7 @@ function AppRoot() {
           window.history.replaceState(null, '', '/codes');
           setScreen('QR_MANAGEMENT');
         }}
+        autoStartGame={autoStartGame}
       />
     );
   }
@@ -203,7 +221,13 @@ function AppRoot() {
     return (
       <ProteinTrackerScreen
         onBack={() => setScreen('MODULE_SELECT')}
-        onPlayGame={() => setScreen('GAME')}
+        onPlayGame={() => {
+          // Reuse the existing QR-gated game entry (Module Select's QR modal)
+          // instead of jumping straight into the game — never bypass validation.
+          gameEntryFromRewardsRef.current = true;
+          setAutoStartGame(true);
+          setScreen('MODULE_SELECT');
+        }}
       />
     );
   }
@@ -221,7 +245,23 @@ function AppRoot() {
   }
 
   // ── Game ──────────────────────────────────────────────────────────────────
-  return <App onBackToMenu={() => setScreen('MODULE_SELECT')} />;
+  return (
+    <App
+      onBackToMenu={() => {
+        if (gameEntryFromRewardsRef.current) {
+          gameEntryFromRewardsRef.current = false;
+          // Land back on Rewards specifically — its own load() re-runs on
+          // remount, so points/stage/coupons re-check automatically with no
+          // manual refresh needed.
+          const target: NavTarget = { screen: 'PROTEIN_TRACKER', tab: 'rewards' };
+          navigateTo(target);
+          setScreen('PROTEIN_TRACKER');
+        } else {
+          setScreen('MODULE_SELECT');
+        }
+      }}
+    />
+  );
 }
 
 function OnlineGate() {

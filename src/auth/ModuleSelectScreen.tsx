@@ -10,6 +10,8 @@ interface ModuleSelectScreenProps {
   onSelectGame:    () => void;
   onSelectTracker: () => void;
   onSelectQR?:     () => void;
+  /** When true, immediately runs the same QR-gated game entry as tapping the Egg Runner card — used when Rewards' "Play Game" routes here so it goes through the existing QR validation flow instead of skipping it. Consumed once (caller clears it after passing it down). */
+  autoStartGame?:  boolean;
 }
 
 const LAST_MODULE_KEY  = 'skm_last_module';
@@ -527,7 +529,7 @@ function QRAccessModal({
 const TAP_REQUIRED = 12;
 const TAP_INTERVAL = 1500;
 
-export default function ModuleSelectScreen({ onSelectGame, onSelectTracker, onSelectQR }: ModuleSelectScreenProps) {
+export default function ModuleSelectScreen({ onSelectGame, onSelectTracker, onSelectQR, autoStartGame }: ModuleSelectScreenProps) {
   const [visible,      setVisible]      = useState(false);
   const [pressing,     setPressing]     = useState<'game' | 'tracker' | null>(null);
   const [showQRModal,  setShowQRModal]  = useState(false);
@@ -582,6 +584,18 @@ export default function ModuleSelectScreen({ onSelectGame, onSelectTracker, onSe
   };
 
   const handleQRCancel = () => setShowQRModal(false);
+
+  // Rewards' "Play Game" lands here with autoStartGame — run the exact same
+  // QR-gated entry as tapping the Egg Runner card, once, instead of requiring
+  // an extra manual tap. Never bypasses handleSelectGame's QR modal / dev-mode logic.
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (autoStartGame && !autoStartedRef.current) {
+      autoStartedRef.current = true;
+      handleSelectGame();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStartGame]);
 
   return (
     <>

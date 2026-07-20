@@ -14,20 +14,29 @@ import {
   getRecentRewardTransactions, type RewardTransaction,
 } from '../services/protein/rewardTransactionService';
 import {
-  getRewardCatalog, redeemReward, getUserCoupons, markCouponUsed, meetsStageRequirement,
-  type RewardCatalogItem, type RewardCoupon, type CouponStatus,
+  getRewardCatalog, redeemReward, getUserCoupons, markCouponUsed,
+  buildRequirementProgress, allRequirementsMet, overallRequirementPct,
+  type RewardCatalogItem, type RewardCoupon, type CouponStatus, type RequirementProgress,
 } from '../services/protein/rewardCouponService';
-import { getTodayStats } from '../services/protein/proteinTrackerService';
+import { getTodayStats, getLifetimeEggScanCount, getStreakInfo } from '../services/protein/proteinTrackerService';
 import { getActivePromoEvent, type PromoEvent } from '../services/protein/promoEventService';
+import {
+  getActiveCampaign, getUpcomingCampaign, checkAndRotateCampaign, getCampaignHistory,
+  buildCampaignProgress, campaignCompletionPct, campaignTimeRemainingMs,
+  type RewardCampaign, type CampaignHistoryEntry, type ObjectiveProgress,
+} from '../services/protein/rewardCampaignService';
+import { notifyCampaignStarted, notifyCampaignEndingSoon, notifyCampaignCompleted } from '../services/notifications/notificationService';
 import { MEMBERSHIP_TIERS, POINTS_PER_SCAN, type MembershipTier } from '../constants/rewards';
 import { useNavigation, type NavTarget } from '../context/NavigationContext';
 import HighlightCard from './HighlightCard';
+import RewardsTabSwitcher from './rewards/RewardsTabSwitcher';
+import StatusBadge from './rewards/StatusBadge';
+import PointsProgressBar from './rewards/PointsProgressBar';
+import RewardProgressRow from './rewards/RewardProgressRow';
+import MembershipTierCard from './rewards/MembershipTierCard';
 import { HapticService } from '../services/audio/hapticService';
 import { getGameStats, type GameStage } from '../services/game/gameStatsService';
 
-const STAGE_DISPLAY: Record<GameStage, string> = {
-  EGG: 'Stage 1', CHICK: 'Stage 2', ADULT: 'Stage 3', STAGE2: 'Stage 4',
-};
 
 interface RewardsClubScreenProps {
   user: User;
@@ -49,18 +58,23 @@ const HUB_TABS: { key: HubTab; label: string }[] = [
   { key: 'history',  label: 'History' },
 ];
 
-// ── Premium warm palette (brief: cream, warm white, soft gold, eggshell, SKM red as accent) ──
+// ── Premium warm-neutral palette — deep burgundy/refined red as primary,
+// warm gold reserved for reward accents only, generous off-white surfaces.
+// Same key names as before so every existing PALETTE.x usage in this file
+// picks up the new values automatically. ──
 const PALETTE = {
-  cream:       '#FBF6EE',
-  eggshell:    '#F6EEE0',
-  warmWhite:   '#FFFDF9',
-  gold:        '#C9974A',
-  goldDeep:    '#A9782F',
-  lightOrange: '#F4A259',
-  ink:         '#2B2420',
-  inkSoft:     '#7A6F60',
-  red:         '#C4290D',
-  redDeep:     '#951F0A',
+  cream:       '#F8F6F2', // page background
+  eggshell:    '#FFF8F3', // warm surface (secondary cards, chips)
+  warmWhite:   '#FFFFFF', // primary surface
+  gold:        '#C98A2E', // reward gold accent
+  goldDeep:    '#A6721F',
+  lightOrange: '#E86A33', // accent (used sparingly — CTAs/highlights, not backgrounds)
+  ink:         '#241A17', // text primary
+  inkSoft:     '#74645E', // text secondary
+  red:         '#B42318', // primary
+  redDeep:     '#7A1F17', // primary dark
+  border:      '#E9DED8',
+  success:     '#2E7D5B',
 };
 
 // ── Egg-range visual identity (icon-based product art — no stock photos in repo) ──
@@ -120,6 +134,17 @@ function formatCountdown(ms: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+/** Breaks a countdown into Days/Hours/Minutes/Seconds for the large digit-box display. */
+function splitCountdownParts(ms: number): { days: number; hours: number; minutes: number; seconds: number } {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  return {
+    days:    Math.floor(totalSec / 86400),
+    hours:   Math.floor((totalSec % 86400) / 3600),
+    minutes: Math.floor((totalSec % 3600) / 60),
+    seconds: totalSec % 60,
+  };
+}
+
 export default function RewardsClubScreen({ user, onBack, onScanQR, onPlayGame, navTarget }: RewardsClubScreenProps) {
   const { consumeTarget } = useNavigation();
   const [loading, setLoading] = useState(true);
@@ -134,6 +159,11 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, onPlayGame, 
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
   const [couponFilter, setCouponFilter] = useState<CouponFilterTab>('available');
   const [highestStage, setHighestStage] = useState<GameStage>('EGG');
+  const [lifetimeEggScans, setLifetimeEggScans] = useState(0);
+  const [currentProteinStreak, setCurrentProteinStreak] = useState(0);
+  const [activeCampaign, setActiveCampaign] = useState<RewardCampaign | null>(null);
+  const [upcomingCampaign, setUpcomingCampaign] = useState<RewardCampaign | null>(null);
+  const [campaignHistory, setCampaignHistory] = useState<CampaignHistoryEntry[]>([]);
 
   const [confirmItem, setConfirmItem] = useState<RewardCatalogItem | null>(null);
   const [redeeming, setRedeeming] = useState(false);
@@ -144,19 +174,64 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, onPlayGame, 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [w, cat, cp, tx, today, gameStats] = await Promise.all([
+      const [w, cat, cp, tx, today, gameStats, eggScans, streak, campaign] = await Promise.all([
         getRewardWallet(user.uid),
         getRewardCatalog(),
         getUserCoupons(user.uid),
         getRecentRewardTransactions(user.uid, 30),
         getTodayStats(user.uid),
         getGameStats(user.uid),
+        getLifetimeEggScanCount(user.uid),
+        getStreakInfo(user.uid),
+        getActiveCampaign(),
       ]);
       setWallet(w); setCatalog(cat); setCoupons(cp); setTransactions(tx);
       setTodayEggs(today?.totalEggs ?? 0);
       setTodayProtein(today?.totalProtein ?? 0);
       setTodayGoal(today?.goal ?? 0);
       setHighestStage(gameStats.highestStage);
+      setLifetimeEggScans(eggScans);
+      setCurrentProteinStreak(streak.currentStreak);
+
+      // ── Seasonal campaign rotation — lazy, client-side, mirrors coupon expiry ──
+      let effectiveCampaign = campaign;
+      if (campaign) {
+        const progressCtx = {
+          lifetimeEggScans: eggScans, currentPoints: w.currentPoints, highestStage: gameStats.highestStage,
+          currentProteinStreak: streak.currentStreak, lifetimeFoodLogs: eggScans,
+        };
+        const progress = buildCampaignProgress(campaign, progressCtx);
+        const pct = campaignCompletionPct(progress);
+        const remainingMs = campaignTimeRemainingMs(campaign);
+
+        if (remainingMs <= 0) {
+          const result = await checkAndRotateCampaign(user.uid, campaign, {
+            completionPct: pct,
+            couponsEarned: cp.length,
+            couponsRedeemed: cp.filter(c => c.status === 'used').length,
+            eggsScanned: eggScans,
+            proteinEarned: today?.totalProtein ?? 0,
+            highestStageReached: gameStats.highestStage,
+          });
+          effectiveCampaign = result.campaign;
+          if (result.rotated) {
+            if (pct >= 100) notifyCampaignCompleted(user.uid, campaign.name, campaign.id).catch(() => {});
+            if (effectiveCampaign) notifyCampaignStarted(user.uid, effectiveCampaign.name, effectiveCampaign.id).catch(() => {});
+          }
+        } else {
+          const daysLeft = Math.ceil(remainingMs / (24 * 60 * 60 * 1000));
+          if (daysLeft <= 3) {
+            notifyCampaignEndingSoon(user.uid, campaign.name, campaign.id, daysLeft).catch(() => {});
+            setUpcomingCampaign(await getUpcomingCampaign(campaign.endAt));
+          } else {
+            setUpcomingCampaign(null);
+          }
+        }
+      }
+      setActiveCampaign(effectiveCampaign);
+
+      const history = await getCampaignHistory(user.uid);
+      setCampaignHistory(history);
     } catch (e) { console.error('[RewardsClub]', e); }
     finally { setLoading(false); }
   }, [user.uid]);
@@ -180,19 +255,20 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, onPlayGame, 
 
   const highlightMembershipCard = navTarget?.entityId === 'membership-card';
   const highlightRewardBalance  = navTarget?.entityId === 'reward-balance';
+  const highlightCampaignBanner = navTarget?.entityId === 'campaign-banner';
   const highlightCouponId       = navTarget?.section === 'coupons' ? navTarget.entityId : undefined;
   const highlightMostRecentRedeem = navTarget?.section === 'history';
 
   useEffect(() => {
-    if (highlightMembershipCard || highlightRewardBalance || highlightCouponId || highlightMostRecentRedeem) consumeTarget();
-  }, [highlightMembershipCard, highlightRewardBalance, highlightCouponId, highlightMostRecentRedeem, consumeTarget]);
+    if (highlightMembershipCard || highlightRewardBalance || highlightCampaignBanner || highlightCouponId || highlightMostRecentRedeem) consumeTarget();
+  }, [highlightMembershipCard, highlightRewardBalance, highlightCampaignBanner, highlightCouponId, highlightMostRecentRedeem, consumeTarget]);
 
   const handleRedeem = async () => {
     if (!confirmItem || !wallet) return;
     setRedeeming(true); setRedeemErr('');
     HapticService.selection(); // major button press — Redeem confirm
     try {
-      const coupon = await redeemReward(user.uid, confirmItem, highestStage);
+      const coupon = await redeemReward(user.uid, confirmItem, highestStage, lifetimeEggScans);
       setConfirmItem(null);
       setSuccessCoupon(coupon);
       HapticService.success(); // Coupon Unlocked / Reward Redeemed
@@ -276,49 +352,41 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, onPlayGame, 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: PALETTE.cream }}>
 
-      {/* ── Fixed header ── */}
+      {/* ── Fixed header (compact, warm-neutral) ── */}
       <div style={{
-        background: `linear-gradient(160deg, ${PALETTE.red} 0%, ${PALETTE.redDeep} 60%, #6E1808 100%)`,
-        padding: '14px 16px 0', flexShrink: 0, position: 'relative', overflow: 'hidden',
+        background: PALETTE.warmWhite, borderBottom: `1px solid ${PALETTE.border}`,
+        padding: '12px 16px 12px', flexShrink: 0,
       }}>
-        <div style={{ position: 'absolute', top: -50, right: -50, width: 180, height: 180, borderRadius: '50%', background: 'rgba(255,255,255,0.05)', pointerEvents: 'none' }} />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <button onClick={onBack} style={{
-              width: 32, height: 32, borderRadius: 10, background: 'rgba(255,255,255,0.15)', border: 'none',
+            <button onClick={onBack} aria-label="Go back" style={{
+              width: 32, height: 32, borderRadius: '50%', background: PALETTE.cream, border: 'none',
               cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
             }}>
-              <ChevronLeft size={17} color="#fff" />
+              <ChevronLeft size={17} color={PALETTE.ink} />
             </button>
-            <h2 style={{ fontSize: 15, fontWeight: 900, color: '#fff', margin: 0, letterSpacing: 0.2 }}>SKM Rewards Club</h2>
+            <h2 style={{ fontSize: 16, fontWeight: 800, color: PALETTE.ink, margin: 0, letterSpacing: 0.1 }}>Rewards Club</h2>
           </div>
 
           <div style={{
-            display: 'flex', alignItems: 'center', gap: 5, background: 'rgba(255,255,255,0.16)',
-            borderRadius: 18, padding: '5px 11px 5px 8px',
+            display: 'flex', alignItems: 'center', gap: 5, background: PALETTE.eggshell,
+            borderRadius: 18, padding: '5px 11px 5px 8px', border: `1px solid ${PALETTE.border}`,
           }}>
-            <Coins size={12} color="#FFD97A" />
+            <Coins size={12} color={PALETTE.gold} />
             <RewardPointPill points={wallet.currentPoints} />
           </div>
         </div>
 
-        {/* ── Segmented tab bar ── */}
-        <div style={{ display: 'flex', gap: 4, background: 'rgba(0,0,0,0.18)', borderRadius: 13, padding: 4 }}>
-          {HUB_TABS.map(t => {
-            const active = tab === t.key;
-            return (
-              <button key={t.key} onClick={() => setTab(t.key)} style={{
-                flex: 1, padding: '8px 0', borderRadius: 10, border: 'none', cursor: 'pointer',
-                background: active ? PALETTE.warmWhite : 'transparent',
-                color: active ? PALETTE.red : 'rgba(255,255,255,0.75)',
-                fontWeight: 800, fontSize: 11.5, transition: 'all 150ms ease',
-              }}>
-                {t.label}
-              </button>
-            );
-          })}
-        </div>
-        <div style={{ height: 12 }} />
+        {/* ── Segmented tab bar (sliding indicator) ── */}
+        <RewardsTabSwitcher<HubTab>
+          items={HUB_TABS}
+          active={tab}
+          onChange={setTab}
+          trackColor={PALETTE.cream}
+          activeSurface={PALETTE.redDeep}
+          activeText="#fff"
+          inactiveText={PALETTE.inkSoft}
+        />
       </div>
 
       {/* ── Tab content ── */}
@@ -356,7 +424,13 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, onPlayGame, 
             onCategoryChange={setCategoryFilter}
             wallet={wallet}
             highestStage={highestStage}
+            lifetimeEggScans={lifetimeEggScans}
+            currentProteinStreak={currentProteinStreak}
+            coupons={coupons}
+            activeCampaign={activeCampaign}
             onSelect={item => { setRedeemErr(''); setConfirmItem(item); }}
+            onScanQR={onScanQR}
+            onPlayGame={onPlayGame}
           />
         )}
 
@@ -371,7 +445,7 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, onPlayGame, 
         )}
 
         {tab === 'history' && (
-          <HistoryTab transactions={transactions} highlightMostRecentRedeem={navTarget?.section === 'history'} />
+          <HistoryTab transactions={transactions} campaignHistory={campaignHistory} highlightMostRecentRedeem={navTarget?.section === 'history'} />
         )}
       </div>
 
@@ -381,11 +455,13 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, onPlayGame, 
           item={confirmItem}
           currentPoints={wallet.currentPoints}
           highestStage={highestStage}
+          lifetimeEggScans={lifetimeEggScans}
           saving={redeeming}
           error={redeemErr}
           onConfirm={handleRedeem}
           onCancel={() => setConfirmItem(null)}
           onPlayGame={onPlayGame}
+          onScanQR={onScanQR}
         />
       )}
 
@@ -406,13 +482,18 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, onPlayGame, 
       <style>{`
         @keyframes hiFadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes popIn { from { opacity: 0; transform: scale(0.5); } to { opacity: 1; transform: scale(1); } }
+        @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes glowPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(201,151,74,0.45); } 50% { box-shadow: 0 0 0 7px rgba(201,151,74,0); } }
         @keyframes cardRise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes journeyLine { from { transform: scaleX(0); } to { transform: scaleX(1); } }
         @keyframes badgePulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.06); } }
         @keyframes couponUnlock { 0% { transform: scale(0.9) rotate(-1deg); opacity: 0; } 60% { transform: scale(1.02) rotate(0.5deg); opacity: 1; } 100% { transform: scale(1) rotate(0); } }
-        .rc-product-card { transition: transform 200ms ease, box-shadow 200ms ease; }
-        .rc-product-card:hover { transform: translateY(-3px) scale(1.015); box-shadow: 0 10px 24px rgba(0,0,0,0.1); }
+        @keyframes livePulseDot { 0%,100% { box-shadow: 0 0 0 0 rgba(74,222,128,0.55); } 50% { box-shadow: 0 0 0 6px rgba(74,222,128,0); } }
+        .rc-hero-btn { transition: transform 220ms ease, box-shadow 220ms ease; }
+        .rc-hero-btn:hover { transform: scale(1.02); }
+        .rc-hero-btn:active { transform: scale(0.98); }
+        .rc-product-card { transition: transform 300ms ease, box-shadow 300ms ease; }
+        .rc-product-card:hover { transform: translateY(-3px) scale(1.02); box-shadow: 0 12px 26px rgba(0,0,0,0.12); }
         .rc-coupon-card { transition: transform 200ms ease, box-shadow 200ms ease; }
         .rc-coupon-card:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.08); }
         .rc-btn-ripple { position: relative; overflow: hidden; }
@@ -422,6 +503,17 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, onPlayGame, 
         }
         @keyframes rcRipple { from { opacity: 1; } to { opacity: 0; } }
         .rc-carousel::-webkit-scrollbar { display: none; }
+        .rc-product-grid {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 14px;
+        }
+        @media (min-width: 640px) {
+          .rc-product-grid { grid-template-columns: repeat(3, 1fr); gap: 16px; }
+        }
+        @media (min-width: 1024px) {
+          .rc-product-grid { grid-template-columns: repeat(4, 1fr); gap: 18px; }
+        }
       `}</style>
     </div>
   );
@@ -430,7 +522,7 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, onPlayGame, 
 function RewardPointPill({ points }: { points: number }) {
   const animated = useCountUp(points);
   return (
-    <span style={{ fontSize: 12.5, fontWeight: 900, color: '#fff' }}>{animated} <span style={{ fontSize: 9.5, fontWeight: 700, color: 'rgba(255,255,255,0.8)' }}>pts</span></span>
+    <span style={{ fontSize: 12.5, fontWeight: 900, color: PALETTE.ink }}>{animated} <span style={{ fontSize: 9.5, fontWeight: 700, color: PALETTE.inkSoft }}>pts</span></span>
   );
 }
 
@@ -515,87 +607,34 @@ function HeroCard({ wallet, nextReward, onScanQR, highlight }: {
   const remaining = nextReward ? Math.max(0, nextReward.pointsCost - wallet.currentPoints) : 0;
   const unlocked = nextReward ? wallet.currentPoints >= nextReward.pointsCost : false;
   const eggsRemaining = Math.ceil(remaining / POINTS_PER_SCAN);
+  const tierAccent = TIER_ICON_COLOR[wallet.membership] ?? PALETTE.gold;
 
   return (
-    <HighlightCard active={!!highlight} glowColor="#FFE9A8" style={{
-      position: 'relative', overflow: 'hidden', padding: '14px 16px 13px',
-      background: `linear-gradient(135deg, ${PALETTE.redDeep} 0%, ${PALETTE.red} 45%, ${PALETTE.lightOrange} 130%)`,
-      animation: 'hiFadeIn 400ms ease',
-      boxShadow: '0 10px 24px rgba(196,41,13,0.26)',
-    }}>
-      <div style={{ position: 'absolute', top: -46, right: -36, width: 150, height: 150, borderRadius: '50%', background: 'rgba(255,255,255,0.08)', pointerEvents: 'none' }} />
-
-      {/* Row 1: tier + balance, side by side for density */}
-      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', position: 'relative' }}>
-        <div>
-          <div style={{
-            display: 'inline-flex', alignItems: 'center', gap: 5,
-            background: 'rgba(255,255,255,0.18)', borderRadius: 20, padding: '4px 10px 4px 7px', marginBottom: 7,
-          }}>
-            <Crown size={11} color="#FFE9A8" />
-            <span style={{ fontSize: 10, fontWeight: 800, color: '#fff', letterSpacing: 0.2 }}>{wallet.membership} Member</span>
-          </div>
-          <p style={{ fontSize: 30, fontWeight: 900, color: '#fff', margin: 0, lineHeight: 1, letterSpacing: -1 }}>
-            {animatedPoints}<span style={{ fontSize: 12, fontWeight: 700, color: 'rgba(255,255,255,0.75)', marginLeft: 5 }}>Reward Points</span>
-          </p>
-        </div>
-        <ShieldCheck size={16} color="rgba(255,255,255,0.6)" />
-      </div>
-
-      {/* Row 2: Next reward — coupon + product, single dense line */}
-      {nextReward && (
-        <div style={{ marginTop: 10, position: 'relative' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: 0.6 }}>
-              <Gift size={10} color="#FFE9A8" /> Next Reward
-            </span>
-            <span style={{ fontSize: 10, fontWeight: 800, color: '#FFE9A8' }}>
-              {unlocked ? 'Ready to redeem!' : `${remaining} pts to go`}
-            </span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, marginBottom: 7 }}>
-            <span style={{ fontSize: 17, fontWeight: 900, color: '#fff' }}>₹{nextReward.discountAmount} OFF</span>
-            <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.8)' }}>{nextReward.productName}</span>
-          </div>
-
-          {/* Progress bar */}
-          <div style={{ height: 7, background: 'rgba(0,0,0,0.22)', borderRadius: 12, overflow: 'hidden' }}>
-            <div style={{
-              height: '100%', width: `${pct}%`, borderRadius: 12, transition: 'width 700ms cubic-bezier(0.34,1.56,0.4,1)',
-              background: 'linear-gradient(90deg,#FFE9A8,#FFB020)', position: 'relative', overflow: 'hidden',
-            }}>
-              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '45%', background: 'rgba(255,255,255,0.35)' }} />
-            </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 5 }}>
-            <p style={{ fontSize: 9, fontWeight: 700, color: 'rgba(255,255,255,0.65)', margin: 0 }}>
-              {wallet.currentPoints} / {nextReward.pointsCost} Points
-            </p>
-            {!unlocked && eggsRemaining > 0 && (
-              <p style={{ fontSize: 9, fontWeight: 800, color: '#FFE9A8', margin: 0 }}>
-                ≈ Scan {eggsRemaining} More Egg{eggsRemaining === 1 ? '' : 's'}
-              </p>
-            )}
-          </div>
-        </div>
+    <HighlightCard active={!!highlight} glowColor={PALETTE.gold} style={{ borderRadius: 18 }}>
+      <MembershipTierCard
+        tierIcon={<Award size={17} color={tierAccent} />}
+        tierLabel={wallet.membership}
+        tierAccent={tierAccent}
+        tierAccentSoft={`${tierAccent}1A`}
+        brandAccent={PALETTE.red}
+        points={animatedPoints}
+        nextRewardLabel={nextReward ? `Next reward: ₹${nextReward.discountAmount} OFF ${nextReward.productName}` : undefined}
+        remainingLabel={nextReward ? (unlocked ? 'Ready to redeem!' : `${remaining} pts to go`) : undefined}
+        pct={pct}
+        ctaLabel={nextReward ? `Scan Eggs to Unlock ₹${nextReward.discountAmount} OFF` : 'Scan Eggs to Earn Points'}
+        ctaIcon={<QrCode size={14} color="#fff" />}
+        onCta={onScanQR}
+        surface={PALETTE.warmWhite}
+        border={PALETTE.border}
+        textPrimary={PALETTE.ink}
+        textSecondary={PALETTE.inkSoft}
+        trackColor={PALETTE.eggshell}
+      />
+      {nextReward && !unlocked && eggsRemaining > 0 && (
+        <p style={{ fontSize: 10.5, fontWeight: 600, color: PALETTE.inkSoft, margin: '8px 2px 0' }}>
+          ≈ Scan {eggsRemaining} more egg{eggsRemaining === 1 ? '' : 's'} · {wallet.currentPoints} / {nextReward.pointsCost} points
+        </p>
       )}
-
-      {/* Row 3: motivational CTA */}
-      <button
-        className="rc-btn-ripple"
-        onClick={onScanQR}
-        disabled={!onScanQR}
-        style={{
-          marginTop: 12, width: '100%', padding: '11px 0', borderRadius: 14, border: 'none',
-          background: PALETTE.warmWhite, color: PALETTE.red, fontWeight: 900, fontSize: 12, position: 'relative',
-          cursor: onScanQR ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-          boxShadow: '0 6px 16px rgba(0,0,0,0.16)',
-        }}
-      >
-        <QrCode size={14} color={PALETTE.red} />
-        {nextReward ? `Scan Eggs to Unlock ₹${nextReward.discountAmount} OFF` : 'Scan Eggs to Earn Points'}
-        <ArrowRight size={13} color={PALETTE.red} />
-      </button>
     </HighlightCard>
   );
 }
@@ -1076,7 +1115,7 @@ function PromoEventCard({ event, onScanQR }: { event: PromoEvent; onScanQR?: () 
     <div style={{ marginTop: 12, animation: 'hiFadeIn 700ms ease' }}>
       <div style={{
         borderRadius: 18, padding: '13px 15px', position: 'relative', overflow: 'hidden',
-        background: `linear-gradient(135deg, #7C3AED, #5B21B6)`,
+        background: `linear-gradient(135deg, ${PALETTE.red}, ${PALETTE.redDeep})`,
       }}>
         <div style={{ position: 'absolute', top: -20, right: -16, width: 80, height: 80, borderRadius: '50%', background: 'rgba(255,255,255,0.1)' }} />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
@@ -1102,12 +1141,12 @@ function PromoEventCard({ event, onScanQR }: { event: PromoEvent; onScanQR?: () 
           disabled={!onScanQR}
           style={{
             marginTop: 11, width: '100%', padding: '9px 0', borderRadius: 12, border: 'none',
-            background: 'rgba(255,255,255,0.92)', color: '#5B21B6', fontWeight: 900, fontSize: 11.5,
+            background: 'rgba(255,255,255,0.92)', color: PALETTE.red, fontWeight: 900, fontSize: 11.5,
             cursor: onScanQR ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
             position: 'relative',
           }}
         >
-          <QrCode size={12} color="#5B21B6" /> {event.ctaText}
+          <QrCode size={12} color={PALETTE.red} /> {event.ctaText}
         </button>
       </div>
     </div>
@@ -1245,15 +1284,25 @@ function WelcomeEmptyState({ onScanQR }: { onScanQR?: () => void }) {
 // sortOrder) — no schema changes.
 // ─────────────────────────────────────────────────────────────
 
-interface CatalogSection { key: string; title: string; icon: React.ReactNode; items: RewardCatalogItem[] }
+interface CatalogSection { key: string; title: string; subtitle?: string; icon: React.ReactNode; items: RewardCatalogItem[] }
 
-function buildCatalogSections(catalog: RewardCatalogItem[]): CatalogSection[] {
+// "Almost ready" = not yet claimable but the player has cleared at least 70%
+// of the combined requirement progress — surfaced first to motivate the final push.
+const ALMOST_READY_THRESHOLD = 70;
+
+function buildCatalogSections(catalog: RewardCatalogItem[], ctxFor: (item: RewardCatalogItem) => { current: number; target: number }[] | null, pctFor: (item: RewardCatalogItem) => number, metFor: (item: RewardCatalogItem) => boolean): CatalogSection[] {
   if (catalog.length === 0) return [];
   const byRange = (range: string) => catalog.filter(c => c.range === range);
   const sections: CatalogSection[] = [];
 
+  const almostReady = catalog.filter(c => !metFor(c) && pctFor(c) >= ALMOST_READY_THRESHOLD);
+  if (almostReady.length > 0) sections.push({ key: 'almost', title: 'Almost Ready', icon: <Flame size={14} color={PALETTE.red} />, items: almostReady });
+
   const featured = [...catalog].sort((a, b) => b.discountAmount - a.discountAmount).slice(0, 6);
-  if (featured.length > 0) sections.push({ key: 'featured', title: 'Featured Rewards', icon: <Flame size={14} color={PALETTE.red} />, items: featured });
+  if (featured.length > 0) sections.push({
+    key: 'featured', title: '🔥 Featured Rewards', subtitle: 'Limited-time rewards for this campaign.',
+    icon: null, items: featured,
+  });
 
   const fresh = byRange('SKM Best Fresh');
   if (fresh.length > 0) sections.push({ key: 'fresh', title: 'Fresh Eggs', icon: <Egg size={14} color={PALETTE.gold} />, items: fresh });
@@ -1270,22 +1319,130 @@ function buildCatalogSections(catalog: RewardCatalogItem[]): CatalogSection[] {
   return sections;
 }
 
-function RewardsTab({ catalog, categories, categoryFilter, onCategoryChange, wallet, highestStage, onSelect }: {
+type RewardFilterTab = 'all' | 'almost' | 'available' | 'locked' | 'claimed';
+
+const REWARD_FILTER_TABS: { key: RewardFilterTab; label: string }[] = [
+  { key: 'all',       label: 'All' },
+  { key: 'almost',    label: 'Almost Ready' },
+  { key: 'available', label: 'Available' },
+  { key: 'locked',    label: 'Locked' },
+];
+
+function RewardsTab({ catalog, categories, categoryFilter, onCategoryChange, wallet, highestStage, lifetimeEggScans, currentProteinStreak, coupons, activeCampaign, onSelect, onScanQR, onPlayGame }: {
   catalog: RewardCatalogItem[];
   categories: string[];
   categoryFilter: string;
   onCategoryChange: (c: string) => void;
   wallet: RewardWallet;
   highestStage: GameStage;
+  lifetimeEggScans: number;
+  currentProteinStreak: number;
+  coupons: RewardCoupon[];
+  activeCampaign: RewardCampaign | null;
   onSelect: (item: RewardCatalogItem) => void;
+  onScanQR?: () => void;
+  onPlayGame?: () => void;
 }) {
-  const sections = useMemo(() => buildCatalogSections(catalog), [catalog]);
+  const [rewardFilter, setRewardFilter] = useState<RewardFilterTab>('all');
+  const heroSentinelRef = useRef<HTMLDivElement>(null);
+  const cardsAnchorRef = useRef<HTMLDivElement>(null);
+  const [heroVisible, setHeroVisible] = useState(true);
+  const scrollToCards = useCallback(() => {
+    cardsAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
+  // Sticky bar shows only once the hero has scrolled out of view — single
+  // IntersectionObserver, no scroll-event polling, no extra re-render sources.
+  useEffect(() => {
+    if (!activeCampaign) return;
+    const el = heroSentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(([entry]) => setHeroVisible(entry.isIntersecting), { threshold: 0 });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [activeCampaign]);
+
+  const ctx = useMemo(() => ({ currentPoints: wallet.currentPoints, highestStage, lifetimeEggScans }), [wallet.currentPoints, highestStage, lifetimeEggScans]);
+  const reqsFor = useCallback((item: RewardCatalogItem) => buildRequirementProgress(item, ctx), [ctx]);
+  const metFor = useCallback((item: RewardCatalogItem) => allRequirementsMet(reqsFor(item)), [reqsFor]);
+  const pctFor = useCallback((item: RewardCatalogItem) => overallRequirementPct(reqsFor(item)), [reqsFor]);
+
+  const filteredCatalog = useMemo(() => {
+    switch (rewardFilter) {
+      case 'available': return catalog.filter(c => metFor(c));
+      case 'almost':    return catalog.filter(c => !metFor(c) && pctFor(c) >= ALMOST_READY_THRESHOLD);
+      case 'locked':    return catalog.filter(c => !metFor(c) && pctFor(c) < ALMOST_READY_THRESHOLD);
+      default:          return catalog;
+    }
+  }, [catalog, rewardFilter, metFor, pctFor]);
+
+  const sections = useMemo(() => buildCatalogSections(filteredCatalog, () => null, pctFor, metFor), [filteredCatalog, pctFor, metFor]);
+
+  const renderCard = (item: RewardCatalogItem, i: number) => (
+    <ProductCard
+      key={item.id} item={item} index={i}
+      requirements={reqsFor(item)}
+      onSelect={() => onSelect(item)}
+      onScanQR={onScanQR}
+      onPlayGame={onPlayGame}
+    />
+  );
 
   return (
     <>
+      {/* Sticky compact countdown — fades in once the full hero scrolls out */}
+      {activeCampaign && !heroVisible && (
+        <StickyCampaignBar
+          campaign={activeCampaign}
+          wallet={wallet}
+          lifetimeEggScans={lifetimeEggScans}
+          highestStage={highestStage}
+          currentProteinStreak={currentProteinStreak}
+          onPlayGame={onPlayGame}
+          onScanQR={onScanQR}
+        />
+      )}
+
+      {/* Campaign Hero — first thing the user sees, before any reward card */}
+      <div ref={heroSentinelRef}>
+        {activeCampaign && (
+          <CampaignHero
+            campaign={activeCampaign}
+            wallet={wallet}
+            lifetimeEggScans={lifetimeEggScans}
+            highestStage={highestStage}
+            currentProteinStreak={currentProteinStreak}
+            coupons={coupons}
+            onPlayGame={onPlayGame}
+            onScanQR={onScanQR}
+            onViewRewards={scrollToCards}
+          />
+        )}
+      </div>
+
+      {/* Status filters — reward cards begin here; CampaignHero always renders above this point */}
+      <div ref={cardsAnchorRef} style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2 }}>
+        {REWARD_FILTER_TABS.map(f => {
+          const active = rewardFilter === f.key;
+          return (
+            <button key={f.key} onClick={() => setRewardFilter(f.key)} style={{
+              flexShrink: 0, padding: '7px 14px', borderRadius: 20, cursor: 'pointer',
+              border: active ? 'none' : `1px solid ${PALETTE.eggshell}`,
+              background: active ? `linear-gradient(135deg, ${PALETTE.red}, ${PALETTE.redDeep})` : PALETTE.warmWhite,
+              color: active ? '#fff' : PALETTE.inkSoft,
+              fontWeight: 800, fontSize: 11.5, whiteSpace: 'nowrap',
+              boxShadow: active ? '0 4px 12px rgba(196,41,13,0.25)' : '0 1px 4px rgba(0,0,0,0.04)',
+              transition: 'all 180ms ease',
+            }}>
+              {f.label}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Category pills */}
       {categories.length > 1 && (
-        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2 }}>
+        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2, marginTop: 8 }}>
           {categories.map(cat => {
             const active = categoryFilter === cat;
             return (
@@ -1295,7 +1452,7 @@ function RewardsTab({ catalog, categories, categoryFilter, onCategoryChange, wal
                 background: active ? `linear-gradient(135deg, ${PALETTE.red}, ${PALETTE.redDeep})` : PALETTE.warmWhite,
                 color: active ? '#fff' : PALETTE.inkSoft,
                 fontWeight: 800, fontSize: 12, whiteSpace: 'nowrap',
-                boxShadow: active ? '0 4px 12px rgba(196,41,13,0.25)' : '0 1px 4px rgba(0,0,0,0.04)',
+                boxShadow: active ? '0 4px 12px rgba(180,35,24,0.3)' : '0 1px 4px rgba(0,0,0,0.04)',
                 transition: 'all 180ms ease',
               }}>
                 {cat}
@@ -1305,38 +1462,29 @@ function RewardsTab({ catalog, categories, categoryFilter, onCategoryChange, wal
         </div>
       )}
 
-      {catalog.length === 0 ? (
-        <RewardsEmptyState />
+      {filteredCatalog.length === 0 ? (
+        <RewardsEmptyState filter={rewardFilter} />
       ) : categoryFilter !== 'All' ? (
-        // Filtered by category — flat grid (sections don't make sense once filtered)
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginTop: 4 }}>
-          {catalog.map((item, i) => (
-            <ProductCard
-              key={item.id} item={item} index={i}
-              affordable={wallet.currentPoints >= item.pointsCost && meetsStageRequirement(item, highestStage)}
-              stageLocked={!meetsStageRequirement(item, highestStage)}
-              onSelect={() => onSelect(item)}
-            />
-          ))}
+        // Filtered by category — flat responsive storefront grid
+        <div className="rc-product-grid" style={{ marginTop: 12 }}>
+          {catalog.filter(c => c.range === categoryFilter && filteredCatalog.includes(c)).map(renderCard)}
         </div>
       ) : (
-        // Unfiltered — premium sectioned storefront, horizontally scrollable
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 22, marginTop: 6 }}>
+        // Unfiltered — premium sectioned storefront, each section a responsive product grid
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 26, marginTop: 12 }}>
           {sections.map(section => (
             <div key={section.key}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '0 2px' }}>
-                {section.icon}
-                <p style={{ fontSize: 13, fontWeight: 900, color: PALETTE.ink, margin: 0 }}>{section.title}</p>
+              <div style={{ marginBottom: 12, padding: '0 2px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {section.icon}
+                  <p style={{ fontSize: 14, fontWeight: 900, color: PALETTE.ink, margin: 0 }}>{section.title}</p>
+                </div>
+                {section.subtitle && (
+                  <p style={{ fontSize: 10.5, color: PALETTE.inkSoft, margin: '3px 0 0', fontWeight: 600 }}>{section.subtitle}</p>
+                )}
               </div>
-              <div className="rc-carousel" style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
-                {section.items.map((item, i) => (
-                  <ProductCard
-                    key={item.id} item={item} index={i}
-                    affordable={wallet.currentPoints >= item.pointsCost && meetsStageRequirement(item, highestStage)}
-                    stageLocked={!meetsStageRequirement(item, highestStage)}
-                    onSelect={() => onSelect(item)} compact
-                  />
-                ))}
+              <div className="rc-product-grid">
+                {section.items.map(renderCard)}
               </div>
             </div>
           ))}
@@ -1346,82 +1494,408 @@ function RewardsTab({ catalog, categories, categoryFilter, onCategoryChange, wal
   );
 }
 
-function ProductCard({ item, index, affordable, stageLocked, onSelect, compact }: {
-  item: RewardCatalogItem;
-  index: number;
-  affordable: boolean;
-  stageLocked?: boolean;
-  onSelect: () => void;
-  compact?: boolean;
-}) {
-  const theme = rangeTheme(item.range);
-  return (
-    <button
-      className="rc-product-card rc-btn-ripple"
-      onClick={onSelect}
-      style={{
-        background: PALETTE.warmWhite, borderRadius: 20, overflow: 'hidden', boxShadow: '0 2px 10px rgba(43,36,32,0.06)',
-        border: `1px solid ${PALETTE.eggshell}`, display: 'flex', flexDirection: 'column', textAlign: 'left', padding: 0, cursor: 'pointer',
-        animation: `cardRise 420ms ease both`, animationDelay: `${Math.min(index, 8) * 60}ms`,
-        flexShrink: 0, width: compact ? 152 : undefined,
-      }}
-    >
-      {/* Top accent bar */}
-      <div style={{ height: 3, background: `linear-gradient(90deg, ${theme.color}, ${theme.color2})` }} />
+// ─────────────────────────────────────────────────────────────
+// Campaign Hero — full-width premium countdown banner. First thing on the
+// Rewards tab, before any filter/category/reward card. Large D/H/M/S digit
+// boxes tick every second via useCountdown's single interval; everything
+// else here (progress %, quick stats, urgency copy) is pure derived display
+// — no reward/game/protein calculation happens in this component.
+// ─────────────────────────────────────────────────────────────
 
-      {/* Product art */}
+function CampaignHero({ campaign, wallet, lifetimeEggScans, highestStage, currentProteinStreak, coupons, onPlayGame, onScanQR, onViewRewards }: {
+  campaign: RewardCampaign;
+  wallet: RewardWallet;
+  lifetimeEggScans: number;
+  highestStage: GameStage;
+  currentProteinStreak: number;
+  coupons: RewardCoupon[];
+  onPlayGame?: () => void;
+  onScanQR?: () => void;
+  onViewRewards: () => void;
+}) {
+  const endDate = useMemo(() => campaign.endAt.toDate(), [campaign.endAt]);
+  const remainingMs = useCountdown(endDate);
+  const parts = useMemo(() => splitCountdownParts(remainingMs), [remainingMs]);
+  const progress = useMemo(
+    () => buildCampaignProgress(campaign, {
+      lifetimeEggScans, currentPoints: wallet.currentPoints, highestStage,
+      currentProteinStreak, lifetimeFoodLogs: lifetimeEggScans,
+    }),
+    [campaign, lifetimeEggScans, wallet.currentPoints, highestStage, currentProteinStreak],
+  );
+  const pct = campaignCompletionPct(progress);
+  const claimedCount = coupons.filter(c => c.status !== 'expired').length;
+  const allMet = progress.every(p => p.met);
+  const nextObjective = progress.find(p => !p.met);
+
+  const nextLabel = !nextObjective ? null
+    : nextObjective.kind === 'eggScans' ? `Scan ${nextObjective.target - nextObjective.current} Eggs`
+    : nextObjective.kind === 'stage' ? `Reach ${nextObjective.targetLabel}`
+    : nextObjective.kind === 'points' ? `Earn ${nextObjective.target - nextObjective.current} Points`
+    : nextObjective.kind === 'proteinStreak' ? `Streak ${nextObjective.target - nextObjective.current} More Days`
+    : `Log ${nextObjective.target - nextObjective.current} More Meals`;
+
+  // ── End-of-campaign transition — timer hit zero, rotation hasn't landed yet ──
+  if (remainingMs <= 0) {
+    return (
       <div style={{
-        height: compact ? 96 : 128, background: `linear-gradient(150deg, ${theme.color} 0%, ${theme.color2} 65%, ${theme.color2} 100%)`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden',
+        marginBottom: 18, borderRadius: 20, padding: '28px 22px', textAlign: 'center', position: 'relative', overflow: 'hidden',
+        background: PALETTE.warmWhite, border: `1px solid ${PALETTE.border}`,
+        boxShadow: '0 2px 10px rgba(36,26,23,0.05)',
       }}>
-        <div style={{ position: 'absolute', top: -24, right: -24, width: 100, height: 100, borderRadius: '50%', background: 'rgba(255,255,255,0.12)' }} />
-        {/* diagonal light sweep */}
-        <div style={{ position: 'absolute', top: -30, left: -20, width: '140%', height: 60, background: 'rgba(255,255,255,0.1)', transform: 'rotate(-10deg)', pointerEvents: 'none' }} />
-        <Egg size={compact ? 36 : 50} color="rgba(255,255,255,0.97)" strokeWidth={1.4} style={{ filter: 'drop-shadow(0 6px 10px rgba(0,0,0,0.25))' }} />
-        <span style={{
-          position: 'absolute', top: 8, left: 8, fontSize: 8.5, fontWeight: 800, color: '#fff',
-          background: 'rgba(0,0,0,0.28)', borderRadius: 8, padding: '3px 7px', textTransform: 'uppercase', letterSpacing: 0.4,
-        }}>
-          {theme.label}
+        <div style={{
+          width: 32, height: 32, borderRadius: '50%', margin: '0 auto 10px',
+          border: `3px solid ${PALETTE.border}`, borderTopColor: PALETTE.red,
+          animation: 'spin 0.9s linear infinite',
+        }} />
+        <p style={{ fontSize: 15, fontWeight: 800, color: PALETTE.ink, margin: '0 0 4px' }}>Campaign Completed</p>
+        <p style={{ fontSize: 12, color: PALETTE.inkSoft, margin: 0, fontWeight: 500 }}>Preparing new rewards…</p>
+      </div>
+    );
+  }
+
+  // Task cards — fixed 4-slot layout matching the brief exactly (eggs / stage / points / coupons).
+  const eggObj = progress.find(p => p.kind === 'eggScans');
+  const stageObj = progress.find(p => p.kind === 'stage');
+  const pointsObj = progress.find(p => p.kind === 'points');
+
+  const countdownChips: { value: string; label: string }[] = [
+    { value: String(parts.days), label: 'D' },
+    { value: String(parts.hours).padStart(2, '0'), label: 'H' },
+    { value: String(parts.minutes).padStart(2, '0'), label: 'M' },
+    { value: String(parts.seconds).padStart(2, '0'), label: 'S' },
+  ];
+
+  return (
+    <div style={{
+      marginBottom: 18, position: 'relative', overflow: 'hidden', borderRadius: 20, padding: '18px',
+      background: PALETTE.warmWhite, border: `1px solid ${PALETTE.border}`,
+      boxShadow: '0 2px 12px rgba(36,26,23,0.06)',
+      animation: 'hiFadeIn 400ms ease',
+    }}>
+      {/* Header row: title + live badge */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+          <span style={{ fontSize: 17, flexShrink: 0 }}>{campaign.icon}</span>
+          <p style={{ fontSize: 15.5, fontWeight: 800, color: PALETTE.ink, margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{campaign.name}</p>
+        </div>
+        <StatusBadge label="LIVE" bg="#EAF6EF" color={PALETTE.success} pulseDot={PALETTE.success} size="sm" />
+      </div>
+      <p style={{ fontSize: 12, color: PALETTE.inkSoft, margin: '2px 0 14px', fontWeight: 500 }}>
+        Complete challenges before the campaign ends.
+      </p>
+
+      {/* Countdown — compact panel, "Ends in" + chip row */}
+      <div style={{
+        background: PALETTE.eggshell, borderRadius: 14, padding: '10px 12px', marginBottom: 14,
+        display: 'flex', alignItems: 'center', gap: 10,
+      }}>
+        <span style={{ fontSize: 10.5, fontWeight: 700, color: PALETTE.inkSoft, flexShrink: 0 }}>Ends in</span>
+        <div style={{ display: 'flex', gap: 5, flex: 1 }}>
+          {countdownChips.map(c => (
+            <div key={c.label} style={{
+              flex: 1, display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 2,
+              background: PALETTE.warmWhite, borderRadius: 9, padding: '5px 0', border: `1px solid ${PALETTE.border}`,
+            }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: PALETTE.ink, fontVariantNumeric: 'tabular-nums' }}>{c.value}</span>
+              <span style={{ fontSize: 8.5, fontWeight: 700, color: PALETTE.red }}>{c.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Progress — one bar, inline % + Next: label */}
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <span style={{ fontSize: 10.5, fontWeight: 700, color: PALETTE.inkSoft, textTransform: 'uppercase', letterSpacing: 0.4 }}>Campaign Progress</span>
+          <span style={{ fontSize: 14, fontWeight: 800, color: PALETTE.red }}>{pct}%</span>
+        </div>
+        <PointsProgressBar pct={pct} trackColor={PALETTE.eggshell} fillColor={PALETTE.gold} height={7} />
+        {nextLabel && (
+          <p style={{ fontSize: 11, fontWeight: 600, color: PALETTE.inkSoft, margin: '8px 0 0' }}>
+            Next: <span style={{ color: PALETTE.red, fontWeight: 800 }}>{nextLabel}</span>
+          </p>
+        )}
+      </div>
+
+      {/* Requirement rows */}
+      {eggObj && (
+        <RewardProgressRow
+          icon={<Egg size={15} color={PALETTE.gold} />} label="Egg Scans" met={eggObj.met}
+          valueLabel={`${eggObj.current} / ${eggObj.target}`}
+          pct={eggObj.target > 0 ? Math.round((eggObj.current / eggObj.target) * 100) : 100}
+          trackColor={PALETTE.eggshell} fillColor={PALETTE.red} metColor={PALETTE.success}
+          labelColor={PALETTE.ink}
+        />
+      )}
+      {stageObj && (
+        <RewardProgressRow
+          icon={<Gem size={15} color="#7C3AED" />} label={stageObj.label} met={stageObj.met}
+          valueLabel={stageObj.currentLabel ?? `${stageObj.current} / ${stageObj.target}`}
+          pct={stageObj.target > 0 ? Math.round((stageObj.current / stageObj.target) * 100) : 100}
+          trackColor={PALETTE.eggshell} fillColor={PALETTE.red} metColor={PALETTE.success}
+          labelColor={PALETTE.ink}
+        />
+      )}
+      {pointsObj && (
+        <RewardProgressRow
+          icon={<Zap size={15} color={PALETTE.gold} />} label="Reward Points" met={pointsObj.met}
+          valueLabel={`${pointsObj.current} / ${pointsObj.target}`}
+          pct={pointsObj.target > 0 ? Math.round((pointsObj.current / pointsObj.target) * 100) : 100}
+          trackColor={PALETTE.eggshell} fillColor={PALETTE.red} metColor={PALETTE.success}
+          labelColor={PALETTE.ink}
+        />
+      )}
+
+      {/* Completion / claimed summary */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '2px 0 14px' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: PALETTE.inkSoft }}>{pct}% complete</span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: PALETTE.inkSoft }}>
+          <Gift size={11} color={PALETTE.gold} style={{ verticalAlign: -2, marginRight: 4 }} />
+          {claimedCount} coupon{claimedCount === 1 ? '' : 's'} earned
         </span>
       </div>
 
-      <div style={{ padding: compact ? '10px 11px 12px' : '13px 13px 15px', display: 'flex', flexDirection: 'column', flex: 1 }}>
-        <p style={{ fontSize: compact ? 11 : 12, fontWeight: 800, color: PALETTE.ink, margin: 0, lineHeight: 1.3 }}>{item.productName}</p>
-        <p style={{ fontSize: compact ? 9 : 10, color: PALETTE.inkSoft, margin: compact ? '2px 0 8px' : '3px 0 10px', fontWeight: 600, textDecoration: 'line-through' }}>MRP ₹{item.mrp}</p>
-
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: compact ? 6 : 8 }}>
-          <span style={{ fontSize: compact ? 15 : 17, fontWeight: 900, color: PALETTE.red }}>₹{item.discountAmount}</span>
-          <span style={{ fontSize: 10, fontWeight: 700, color: PALETTE.inkSoft }}>OFF</span>
-        </div>
-
-        {item.requiredStageLabel && (
-          <p style={{ fontSize: 9.5, fontWeight: 700, color: stageLocked ? PALETTE.goldDeep : '#16A34A', margin: compact ? '0 0 8px' : '0 0 10px' }}>
-            {stageLocked ? '🎮 ' : '✅ '}{item.requiredStageLabel}
-          </p>
-        )}
-
-        <div
+      {/* Buttons — single row, balanced split */}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          className="rc-btn-ripple rc-hero-btn"
+          onClick={allMet ? undefined : nextObjective?.kind === 'stage' ? onPlayGame : onScanQR}
+          disabled={allMet ? true : !(nextObjective?.kind === 'stage' ? onPlayGame : onScanQR)}
           style={{
-            marginTop: 'auto', padding: compact ? '8px 0' : '9px 0', borderRadius: 12, border: affordable ? 'none' : `1.5px solid ${PALETTE.eggshell}`,
-            background: affordable ? `linear-gradient(135deg, ${PALETTE.red}, ${PALETTE.redDeep})` : PALETTE.warmWhite,
-            color: affordable ? '#fff' : PALETTE.inkSoft,
-            fontWeight: 800, fontSize: compact ? 10 : 11,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+            flex: 2, padding: '12px 0', borderRadius: 13, border: 'none',
+            background: PALETTE.red,
+            color: '#fff', fontWeight: 800, fontSize: 12.5, cursor: allMet ? 'default' : 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
           }}
         >
-          {affordable ? <Zap size={11} color="#fff" /> : <Lock size={10} color={PALETTE.inkSoft} />}
-          {item.pointsCost} pts
-        </div>
+          {allMet ? <><Gift size={14} color="#fff" /> Claim Rewards</> : nextObjective?.kind === 'stage' ? <><Gem size={14} color="#fff" /> Continue Progress</> : <><QrCode size={14} color="#fff" /> Scan Eggs Now</>}
+        </button>
+        <button
+          className="rc-hero-btn"
+          onClick={onViewRewards}
+          style={{
+            flex: 1, padding: '12px 0', borderRadius: 13,
+            border: `1.5px solid ${PALETTE.border}`, background: PALETTE.warmWhite, color: PALETTE.ink,
+            fontWeight: 700, fontSize: 12, cursor: 'pointer',
+          }}
+        >
+          Rewards
+        </button>
       </div>
-    </button>
+    </div>
   );
 }
 
-function RewardsEmptyState() {
+// ─────────────────────────────────────────────────────────────
+// Sticky compact countdown — appears once CampaignHero scrolls out of view
+// (driven by an IntersectionObserver in RewardsTab, not a scroll listener).
+// Same single useCountdown timer pattern, minimal footprint.
+// ─────────────────────────────────────────────────────────────
+
+function StickyCampaignBar({ campaign, wallet, lifetimeEggScans, highestStage, currentProteinStreak, onPlayGame, onScanQR }: {
+  campaign: RewardCampaign;
+  wallet: RewardWallet;
+  lifetimeEggScans: number;
+  highestStage: GameStage;
+  currentProteinStreak: number;
+  onPlayGame?: () => void;
+  onScanQR?: () => void;
+}) {
+  const endDate = useMemo(() => campaign.endAt.toDate(), [campaign.endAt]);
+  const remainingMs = useCountdown(endDate);
+  const progress = useMemo(
+    () => buildCampaignProgress(campaign, {
+      lifetimeEggScans, currentPoints: wallet.currentPoints, highestStage,
+      currentProteinStreak, lifetimeFoodLogs: lifetimeEggScans,
+    }),
+    [campaign, lifetimeEggScans, wallet.currentPoints, highestStage, currentProteinStreak],
+  );
+  const pct = campaignCompletionPct(progress);
+  const allMet = progress.every(p => p.met);
+  const nextObjective = progress.find(p => !p.met);
+  const parts = splitCountdownParts(remainingMs);
+  const label = parts.days > 0 ? `${parts.days} Day${parts.days === 1 ? '' : 's'} Left` : parts.hours > 0 ? `${parts.hours} Hour${parts.hours === 1 ? '' : 's'} Left` : `${parts.minutes} Min Left`;
+  const continueAction = allMet ? undefined : nextObjective?.kind === 'stage' ? onPlayGame : onScanQR;
+
   return (
     <div style={{
-      background: PALETTE.warmWhite, borderRadius: 22, padding: '32px 24px', textAlign: 'center',
+      position: 'sticky', top: 0, zIndex: 5, marginBottom: 12,
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+      borderRadius: 14, padding: '10px 14px', animation: 'hiFadeIn 220ms ease',
+      background: PALETTE.redDeep,
+      boxShadow: '0 4px 14px rgba(122,31,23,0.28)',
+    }}>
+      <span style={{ fontSize: 12, fontWeight: 700, color: '#fff', display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
+        <Clock size={13} color="#fff" /> {label}
+      </span>
+      <span style={{ fontSize: 12, fontWeight: 800, color: '#F4D8AA', flexShrink: 0 }}>{pct}% Complete</span>
+      <button
+        className="rc-btn-ripple rc-hero-btn"
+        onClick={continueAction}
+        disabled={!continueAction}
+        style={{
+          flexShrink: 0, padding: '6px 10px', borderRadius: 9, border: 'none', cursor: continueAction ? 'pointer' : 'default',
+          background: 'rgba(255,255,255,0.16)', color: '#fff', fontWeight: 700, fontSize: 10.5,
+          display: 'flex', alignItems: 'center', gap: 3,
+        }}
+      >
+        {allMet ? 'Claim' : 'Continue'} →
+      </button>
+    </div>
+  );
+}
+
+function ProductCard({ item, index, requirements, onSelect, onScanQR, onPlayGame }: {
+  item: RewardCatalogItem;
+  index: number;
+  requirements: RequirementProgress[];
+  onSelect: () => void;
+  onScanQR?: () => void;
+  onPlayGame?: () => void;
+}) {
+  const theme = rangeTheme(item.range);
+  const affordable = allRequirementsMet(requirements);
+  const unmet = requirements.filter(r => !r.met);
+  // "Only missing requirement is Game Stage" → offer the Continue Game shortcut directly on the card.
+  const onlyStageMissing = unmet.length === 1 && unmet[0].kind === 'stage';
+  const eggsUnmet = unmet.find(r => r.kind === 'eggScans');
+
+  return (
+    <div
+      className="rc-product-card"
+      style={{
+        position: 'relative', background: PALETTE.warmWhite, borderRadius: 20, overflow: 'hidden',
+        boxShadow: affordable ? `0 6px 18px ${PALETTE.gold}30` : '0 2px 10px rgba(43,36,32,0.06)',
+        border: affordable ? `1.5px solid ${PALETTE.gold}55` : `1px solid ${PALETTE.eggshell}`,
+        display: 'flex', flexDirection: 'column', textAlign: 'left',
+        animation: `cardRise 420ms ease both${affordable ? ', glowPulse 2.4s ease-in-out infinite' : ''}`,
+        animationDelay: `${Math.min(index, 8) * 60}ms`,
+      }}
+    >
+      <button
+        className="rc-btn-ripple"
+        onClick={onSelect}
+        style={{ all: 'unset', display: 'flex', flexDirection: 'column', cursor: 'pointer', width: '100%' }}
+      >
+        {/* Status ribbon */}
+        <span style={{
+          position: 'absolute', top: 8, right: 8, zIndex: 1, display: 'flex', alignItems: 'center', gap: 4,
+          fontSize: 8.5, fontWeight: 900, color: '#fff', borderRadius: 20, padding: '3px 8px',
+          background: affordable ? 'linear-gradient(135deg,#22C55E,#16A34A)' : 'rgba(43,36,32,0.55)',
+          letterSpacing: 0.3,
+        }}>
+          {affordable ? <><CheckCircle2 size={9} color="#fff" /> Ready</> : <><Lock size={8} color="#fff" /> Locked</>}
+        </span>
+
+        {/* Product art — ~40% of card height */}
+        <div style={{
+          aspectRatio: '1.6 / 1', background: `linear-gradient(150deg, ${theme.color} 0%, ${theme.color2} 65%, ${theme.color2} 100%)`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden',
+        }}>
+          <div style={{ position: 'absolute', top: -30, right: -30, width: 120, height: 120, borderRadius: '50%', background: 'rgba(255,255,255,0.12)' }} />
+          <div style={{ position: 'absolute', top: -34, left: -24, width: '150%', height: 70, background: 'rgba(255,255,255,0.1)', transform: 'rotate(-10deg)', pointerEvents: 'none' }} />
+          <Egg size={50} color="rgba(255,255,255,0.97)" strokeWidth={1.3} style={{ filter: 'drop-shadow(0 8px 14px rgba(0,0,0,0.25))' }} />
+          <span style={{
+            position: 'absolute', bottom: 7, left: 7, fontSize: 8, fontWeight: 800, color: '#fff',
+            background: 'rgba(0,0,0,0.28)', borderRadius: 8, padding: '3px 7px', textTransform: 'uppercase', letterSpacing: 0.4,
+          }}>
+            {theme.label}
+          </span>
+        </div>
+
+        <div style={{ padding: '10px 12px 0', width: '100%' }}>
+          <p style={{ fontSize: 12, fontWeight: 800, color: PALETTE.ink, margin: 0, lineHeight: 1.25 }}>{item.productName}</p>
+
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, margin: '5px 0 0' }}>
+            <span style={{ fontSize: 9.5, color: PALETTE.inkSoft, fontWeight: 600, textDecoration: 'line-through' }}>₹{item.mrp}</span>
+            <span style={{ fontSize: 9.5, fontWeight: 800, color: PALETTE.red }}>Save ₹{item.discountAmount}</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, margin: '2px 0 8px' }}>
+            <span style={{ fontSize: 17, fontWeight: 900, color: PALETTE.ink }}>₹{Math.max(0, item.mrp - item.discountAmount)}</span>
+            <span style={{ fontSize: 9, fontWeight: 700, color: PALETTE.inkSoft }}>you pay</span>
+          </div>
+        </div>
+      </button>
+
+      {/* Requirement progress bars — generic, one row per requirement */}
+      <div style={{ padding: '0 12px' }}>
+        {requirements.map(req => (
+          <div key={req.kind} style={{ marginBottom: 7 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
+              <span style={{ fontSize: 8.5, fontWeight: 700, color: req.met ? '#16A34A' : PALETTE.inkSoft }}>
+                {req.icon} {req.currentLabel ?? req.current} / {req.targetLabel ?? req.target}
+              </span>
+              {req.met && <CheckCircle2 size={10} color="#16A34A" />}
+            </div>
+            <div style={{ height: 5, background: PALETTE.eggshell, borderRadius: 12, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%',
+                width: `${req.target > 0 ? Math.min(100, Math.round((req.current / req.target) * 100)) : 100}%`,
+                borderRadius: 12, transition: 'width 700ms ease',
+                background: req.met ? 'linear-gradient(90deg,#4ADE80,#16A34A)' : `linear-gradient(90deg, ${PALETTE.gold}, ${PALETTE.red})`,
+              }} />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ padding: '2px 12px 12px', display: 'flex', flexDirection: 'column', gap: 6, marginTop: 'auto' }}>
+        {/* Requirements Remaining — explicit, actionable list */}
+        {!affordable && (
+          <div style={{ marginBottom: 2 }}>
+            <p style={{ fontSize: 8, fontWeight: 800, color: PALETTE.inkSoft, textTransform: 'uppercase', letterSpacing: 0.4, margin: '0 0 3px' }}>
+              Requirements Remaining
+            </p>
+            {unmet.map(r => (
+              <p key={r.kind} style={{ fontSize: 9, fontWeight: 600, color: PALETTE.ink, margin: '0 0 1px' }}>
+                • {r.kind === 'eggScans' ? `Scan ${r.target - r.current} more SKM Eggs`
+                  : r.kind === 'stage' ? `Reach ${r.targetLabel}`
+                  : `Earn ${r.target - r.current} more points`}
+              </p>
+            ))}
+          </div>
+        )}
+
+        {/* Primary action — visually dominant, color-coded by state */}
+        <button
+          onClick={e => {
+            e.stopPropagation();
+            if (affordable) onSelect();
+            else if (onlyStageMissing && onPlayGame) onPlayGame();
+            else if (eggsUnmet && onScanQR) onScanQR();
+            else onSelect();
+          }}
+          style={{
+            width: '100%', padding: '11px 0', borderRadius: 13, border: 'none', cursor: 'pointer',
+            background: `linear-gradient(135deg, ${PALETTE.red}, ${PALETTE.redDeep})`,
+            color: '#fff', fontWeight: 900, fontSize: 12.5,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            boxShadow: '0 4px 14px rgba(180,35,24,0.3)',
+          }}
+        >
+          {affordable ? <>Claim Coupon</>
+            : onlyStageMissing ? <>Continue Game</>
+            : eggsUnmet ? <>Scan More Eggs</>
+            : <>Locked</>}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RewardsEmptyState({ filter }: { filter?: RewardFilterTab }) {
+  const copy = filter === 'available'
+    ? { title: 'No Rewards Ready Yet', body: 'Keep scanning SKM Eggs and playing Egg Runner to unlock your first coupon.' }
+    : filter === 'almost'
+    ? { title: 'Nothing Almost Ready Yet', body: 'Reach 70% of a reward’s requirements and it will show up here.' }
+    : filter === 'locked'
+    ? { title: 'No Locked Rewards', body: 'Every reward here is either already claimed or ready to redeem.' }
+    : { title: 'Start Your Reward Journey', body: 'Every SKM Egg you scan earns Protein, Reward Points, Sticker Progress, and Passport Progress.' };
+
+  return (
+    <div style={{
+      marginTop: 12, background: PALETTE.warmWhite, borderRadius: 22, padding: '32px 24px', textAlign: 'center',
       boxShadow: '0 2px 10px rgba(43,36,32,0.06)', border: `1px dashed ${PALETTE.eggshell}`,
     }}>
       <div style={{
@@ -1430,13 +1904,13 @@ function RewardsEmptyState() {
       }}>
         <Egg size={30} color={PALETTE.red} strokeWidth={1.5} />
       </div>
-      <p style={{ fontSize: 15, fontWeight: 900, color: PALETTE.ink, margin: '0 0 8px' }}>Start Your Reward Journey</p>
+      <p style={{ fontSize: 15, fontWeight: 900, color: PALETTE.ink, margin: '0 0 8px' }}>{copy.title}</p>
       <p style={{ fontSize: 12, color: PALETTE.inkSoft, margin: '0 0 16px', lineHeight: 1.6 }}>
-        Every SKM Egg you scan earns Protein, Reward Points, Sticker Progress, and Passport Progress.
+        {copy.body}
       </p>
       <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: '#FDEDE8', borderRadius: 14, padding: '10px 16px' }}>
         <Sparkles size={14} color={PALETTE.red} />
-        <span style={{ fontSize: 12, fontWeight: 800, color: PALETTE.red }}>Complete 100 Points to unlock your first reward</span>
+        <span style={{ fontSize: 12, fontWeight: 800, color: PALETTE.red }}>Buy SKM Eggs → Scan → Play → Unlock Coupons</span>
       </div>
     </div>
   );
@@ -1697,12 +2171,12 @@ function historyGroupLabel(date: Date): string {
   return 'Earlier';
 }
 
-function HistoryTab({ transactions, highlightMostRecentRedeem }: { transactions: RewardTransaction[]; highlightMostRecentRedeem?: boolean }) {
+function HistoryTab({ transactions, campaignHistory, highlightMostRecentRedeem }: { transactions: RewardTransaction[]; campaignHistory: CampaignHistoryEntry[]; highlightMostRecentRedeem?: boolean }) {
   const mostRecentRedeemId = highlightMostRecentRedeem
     ? transactions.find(t => t.type === 'redeem')?.id
     : undefined;
 
-  if (transactions.length === 0) {
+  if (transactions.length === 0 && campaignHistory.length === 0) {
     return (
       <div style={{
         background: PALETTE.warmWhite, borderRadius: 22, padding: '32px 24px', textAlign: 'center',
@@ -1733,6 +2207,8 @@ function HistoryTab({ transactions, highlightMostRecentRedeem }: { transactions:
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {campaignHistory.length > 0 && <CampaignHistorySection entries={campaignHistory} />}
+
       {sortedGroups.map(([label, txs]) => (
         <div key={label}>
           <p style={{ fontSize: 11, fontWeight: 800, color: PALETTE.inkSoft, textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 8px 4px' }}>{label}</p>
@@ -1744,6 +2220,64 @@ function HistoryTab({ transactions, highlightMostRecentRedeem }: { transactions:
     </div>
   );
 }
+
+// ─────────────────────────────────────────────────────────────
+// Campaign History — past seasonal campaigns, archived once each expires
+// (see rewardCampaignService.checkAndRotateCampaign). Purely a display of
+// data already snapshotted at archive time — no recalculation here.
+// ─────────────────────────────────────────────────────────────
+
+function CampaignHistorySection({ entries }: { entries: CampaignHistoryEntry[] }) {
+  return (
+    <div>
+      <p style={{ fontSize: 11, fontWeight: 800, color: PALETTE.inkSoft, textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 8px 4px' }}>
+        Campaign History
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {entries.map(entry => {
+          const start = entry.startAt.toDate();
+          const end = entry.endAt.toDate();
+          const dateRange = `${start.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} – ${end.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}`;
+          const completed = entry.status === 'completed';
+          return (
+            <div key={entry.id} style={{
+              background: PALETTE.warmWhite, borderRadius: 18, padding: 14,
+              boxShadow: '0 2px 10px rgba(43,36,32,0.06)', border: `1px solid ${PALETTE.eggshell}`,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div>
+                  <p style={{ fontSize: 13, fontWeight: 900, color: PALETTE.ink, margin: 0 }}>{entry.campaignName}</p>
+                  <p style={{ fontSize: 10, color: PALETTE.inkSoft, margin: '2px 0 0', fontWeight: 600 }}>{dateRange}</p>
+                </div>
+                <span style={{
+                  fontSize: 9, fontWeight: 800, borderRadius: 20, padding: '4px 9px',
+                  background: completed ? '#E9F9EE' : '#FDEDE8', color: completed ? '#16A34A' : PALETTE.red,
+                }}>
+                  {completed ? '✅ Completed' : '⏱ Expired'}
+                </span>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 8 }}>
+                <DetailStat label="Completion" value={`${entry.completionPct}%`} highlight={completed} />
+                <DetailStat label="Coupons Earned" value={String(entry.couponsEarned)} />
+                <DetailStat label="Redeemed" value={String(entry.couponsRedeemed)} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                <DetailStat label="Eggs Scanned" value={String(entry.eggsScanned)} />
+                <DetailStat label="Protein" value={`${entry.proteinEarned}g`} />
+                <DetailStat label="Stage Reached" value={STAGE_DISPLAY_HISTORY[entry.highestStageReached] ?? 'Stage 1'} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const STAGE_DISPLAY_HISTORY: Record<GameStage, string> = {
+  EGG: 'Stage 1', CHICK: 'Stage 2', ADULT: 'Stage 3', STAGE2: 'Champion',
+};
 
 function ActivityTimeline({ transactions, highlightId }: { transactions: RewardTransaction[]; highlightId?: string }) {
   return (
@@ -1799,27 +2333,28 @@ function ActivityTimeline({ transactions, highlightId }: { transactions: RewardT
 // Redeem here calls the same redeemReward() flow — no logic change.
 // ─────────────────────────────────────────────────────────────
 
-const STAGE_ORDER_UI: GameStage[] = ['EGG', 'CHICK', 'ADULT', 'STAGE2'];
-
-function ConfirmRedeemDialog({ item, currentPoints, highestStage, saving, error, onConfirm, onCancel, onPlayGame }: {
+function ConfirmRedeemDialog({ item, currentPoints, highestStage, lifetimeEggScans, saving, error, onConfirm, onCancel, onPlayGame, onScanQR }: {
   item: RewardCatalogItem;
   currentPoints: number;
   highestStage: GameStage;
+  lifetimeEggScans: number;
   saving: boolean;
   error: string;
   onConfirm: () => void;
   onCancel: () => void;
   onPlayGame?: () => void;
+  onScanQR?: () => void;
 }) {
   const theme = rangeTheme(item.range);
   const remaining = currentPoints - item.pointsCost;
-  const pointsShort = Math.max(0, item.pointsCost - currentPoints);
-  const eggsRemaining = Math.ceil(pointsShort / POINTS_PER_SCAN);
-  const pct = Math.min(100, Math.round((currentPoints / item.pointsCost) * 100));
-  const pointsMet = currentPoints >= item.pointsCost;
-  const stageMet = meetsStageRequirement(item, highestStage);
-  const affordable = pointsMet && stageMet;
-  const hasStageGate = !!item.requiredStage;
+  const requirements = useMemo(
+    () => buildRequirementProgress(item, { currentPoints, highestStage, lifetimeEggScans }),
+    [item, currentPoints, highestStage, lifetimeEggScans],
+  );
+  const affordable = allRequirementsMet(requirements);
+  const unmet = requirements.filter(r => !r.met);
+  const onlyStageMissing = unmet.length === 1 && unmet[0].kind === 'stage';
+  const eggsUnmet = unmet.find(r => r.kind === 'eggScans');
 
   return (
     <div style={{
@@ -1863,46 +2398,54 @@ function ConfirmRedeemDialog({ item, currentPoints, highestStage, saving, error,
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 16 }}>
             <DetailStat label="MRP" value={`₹${item.mrp}`} />
             <DetailStat label="Discount" value={`₹${item.discountAmount}`} highlight />
-            <DetailStat label="Points Required" value={String(item.pointsCost)} />
+            <DetailStat label="Final Price" value={`₹${Math.max(0, item.mrp - item.discountAmount)}`} />
           </div>
 
-          {/* Requirements checklist — points always shown; game-stage gate only if this reward has one */}
+          {/* Requirements checklist — generic, one row per requirement (points/stage/eggs/future kinds) */}
           <div style={{ background: PALETTE.cream, borderRadius: 16, padding: 14, marginBottom: 16 }}>
             <p style={{ fontSize: 11, fontWeight: 800, color: PALETTE.inkSoft, margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: 0.3 }}>
-              Requirements
+              Reward Requirements
             </p>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: hasStageGate ? 10 : 0 }}>
-              {pointsMet ? <CheckCircle2 size={16} color="#16A34A" /> : <XCircle size={16} color="#DC2626" />}
-              <span style={{ fontSize: 12.5, fontWeight: 700, color: PALETTE.ink, flex: 1 }}>Reward Points</span>
-              <span style={{ fontSize: 12, fontWeight: 800, color: PALETTE.inkSoft }}>{currentPoints} / {item.pointsCost}</span>
-            </div>
-
-            {hasStageGate && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                {stageMet ? <CheckCircle2 size={16} color="#16A34A" /> : <XCircle size={16} color="#DC2626" />}
-                <span style={{ fontSize: 12.5, fontWeight: 700, color: PALETTE.ink, flex: 1 }}>
-                  Reach {item.requiredStageLabel ?? STAGE_DISPLAY[item.requiredStage!]}
-                </span>
+            {requirements.map((req, i) => (
+              <div key={req.kind}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  {req.met ? <CheckCircle2 size={16} color="#16A34A" /> : <XCircle size={16} color="#DC2626" />}
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: PALETTE.ink, flex: 1 }}>{req.icon} {req.label}</span>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: PALETTE.inkSoft }}>
+                    {req.currentLabel ?? req.current} / {req.targetLabel ?? req.target}
+                  </span>
+                </div>
+                <div style={{ height: 7, background: PALETTE.eggshell, borderRadius: 12, overflow: 'hidden', marginBottom: i < requirements.length - 1 ? 12 : 0 }}>
+                  <div style={{
+                    height: '100%',
+                    width: `${req.target > 0 ? Math.min(100, Math.round((req.current / req.target) * 100)) : 100}%`,
+                    borderRadius: 12, transition: 'width 700ms cubic-bezier(0.34,1.56,0.4,1)',
+                    background: req.met ? 'linear-gradient(90deg,#4ADE80,#16A34A)' : `linear-gradient(90deg, ${PALETTE.gold}, ${PALETTE.red})`,
+                  }} />
+                </div>
               </div>
-            )}
+            ))}
 
-            <div style={{ height: 8, background: PALETTE.eggshell, borderRadius: 12, overflow: 'hidden', marginTop: 12 }}>
-              <div style={{
-                height: '100%', width: `${pct}%`, borderRadius: 12, transition: 'width 700ms cubic-bezier(0.34,1.56,0.4,1)',
-                background: `linear-gradient(90deg, ${PALETTE.gold}, ${PALETTE.red})`,
-              }} />
+            {/* Overall progress */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 12, paddingTop: 12, borderTop: `1px solid ${PALETTE.eggshell}` }}>
+              <span style={{ fontSize: 10.5, fontWeight: 800, color: PALETTE.inkSoft, textTransform: 'uppercase', letterSpacing: 0.3 }}>Overall Progress</span>
+              <span style={{ fontSize: 12, fontWeight: 900, color: affordable ? '#16A34A' : PALETTE.goldDeep }}>{overallRequirementPct(requirements)}%</span>
             </div>
-            {!pointsMet && eggsRemaining > 0 && (
-              <p style={{ fontSize: 10.5, fontWeight: 700, color: PALETTE.goldDeep, margin: '8px 0 0' }}>
-                ≈ Scan {eggsRemaining} more egg{eggsRemaining === 1 ? '' : 's'} to unlock this reward
-              </p>
-            )}
 
-            {hasStageGate && (
-              <p style={{ fontSize: 10.5, fontWeight: 700, color: stageMet ? '#16A34A' : PALETTE.goldDeep, margin: '8px 0 0' }}>
-                Current Progress: {STAGE_ORDER_UI.includes(highestStage) ? STAGE_DISPLAY[highestStage] : 'Stage 1'} / {item.requiredStageLabel ?? STAGE_DISPLAY[item.requiredStage!]}
-              </p>
+            {!affordable && (
+              <div style={{ marginTop: 10 }}>
+                <p style={{ fontSize: 10.5, fontWeight: 800, color: PALETTE.inkSoft, margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: 0.3 }}>
+                  Requirements Remaining
+                </p>
+                {unmet.map(r => (
+                  <p key={r.kind} style={{ fontSize: 11, fontWeight: 600, color: PALETTE.ink, margin: '0 0 2px' }}>
+                    • {r.kind === 'eggScans' ? `Scan ${r.target - r.current} more SKM Eggs`
+                      : r.kind === 'stage' ? `Reach ${r.targetLabel}`
+                      : `Earn ${r.target - r.current} more points`}
+                  </p>
+                ))}
+              </div>
             )}
           </div>
 
@@ -1921,7 +2464,16 @@ function ConfirmRedeemDialog({ item, currentPoints, highestStage, saving, error,
             }}>
               Not Now
             </button>
-            {!stageMet && hasStageGate ? (
+            {affordable ? (
+              <button className="rc-btn-ripple" disabled={saving} onClick={onConfirm} style={{
+                flex: 1, padding: '14px 0', borderRadius: 14, border: 'none',
+                background: `linear-gradient(135deg, ${PALETTE.red}, ${PALETTE.redDeep})`,
+                color: '#fff', fontWeight: 900, fontSize: 14, opacity: saving ? 0.6 : 1, cursor: saving ? 'not-allowed' : 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              }}>
+                {saving ? 'Claiming…' : 'Claim Coupon'}
+              </button>
+            ) : onlyStageMissing ? (
               <button className="rc-btn-ripple" disabled={!onPlayGame} onClick={onPlayGame} style={{
                 flex: 1, padding: '14px 0', borderRadius: 14, border: 'none',
                 background: onPlayGame ? `linear-gradient(135deg, ${PALETTE.red}, ${PALETTE.redDeep})` : PALETTE.eggshell,
@@ -1929,18 +2481,26 @@ function ConfirmRedeemDialog({ item, currentPoints, highestStage, saving, error,
                 fontWeight: 900, fontSize: 14, cursor: onPlayGame ? 'pointer' : 'not-allowed',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
               }}>
-                🎮 Play Game
+                Continue Game
               </button>
-            ) : (
-              <button className="rc-btn-ripple" disabled={saving || !affordable} onClick={onConfirm} style={{
+            ) : eggsUnmet ? (
+              <button className="rc-btn-ripple" disabled={!onScanQR} onClick={onScanQR} style={{
                 flex: 1, padding: '14px 0', borderRadius: 14, border: 'none',
-                background: affordable ? `linear-gradient(135deg, ${PALETTE.red}, ${PALETTE.redDeep})` : PALETTE.eggshell,
-                color: affordable ? '#fff' : PALETTE.inkSoft,
-                fontWeight: 900, fontSize: 14, opacity: saving ? 0.6 : 1, cursor: saving || !affordable ? 'not-allowed' : 'pointer',
+                background: onScanQR ? `linear-gradient(135deg, ${PALETTE.red}, ${PALETTE.redDeep})` : PALETTE.eggshell,
+                color: onScanQR ? '#fff' : PALETTE.inkSoft,
+                fontWeight: 900, fontSize: 14, cursor: onScanQR ? 'pointer' : 'not-allowed',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
               }}>
-                {!affordable ? <Lock size={13} color={PALETTE.inkSoft} /> : null}
-                {saving ? 'Claiming…' : affordable ? '✅ Claim Reward' : 'Not Enough Points'}
+                📷 Scan More Eggs
+              </button>
+            ) : (
+              <button disabled style={{
+                flex: 1, padding: '14px 0', borderRadius: 14, border: 'none',
+                background: PALETTE.eggshell, color: PALETTE.inkSoft,
+                fontWeight: 900, fontSize: 14, cursor: 'not-allowed',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              }}>
+                <Lock size={13} color={PALETTE.inkSoft} /> Locked
               </button>
             )}
           </div>
@@ -1975,10 +2535,10 @@ function RedeemSuccessScreen({ coupon, onViewCoupons, onDone }: {
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24,
     }}>
       <div style={{
-        width: 96, height: 96, borderRadius: '50%', background: 'linear-gradient(135deg,#22C55E,#16A34A)',
+        width: 96, height: 96, borderRadius: '50%', background: `linear-gradient(135deg, ${PALETTE.red}, ${PALETTE.redDeep})`,
         display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 22,
         animation: 'popIn 500ms cubic-bezier(0.34,1.56,0.64,1), glowPulse 1.8s ease-in-out infinite 500ms',
-        boxShadow: '0 0 0 0 rgba(34,197,94,0.4)',
+        boxShadow: '0 0 0 0 rgba(180,35,24,0.4)',
       }}>
         <ShieldCheck size={52} color="#fff" />
       </div>

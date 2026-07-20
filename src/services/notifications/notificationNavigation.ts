@@ -54,6 +54,10 @@ export function resolveNavTarget(n: AppNotification): NavTarget | null {
     case 'membership_tier_up':
       return { screen: 'PROTEIN_TRACKER', tab: 'rewards', section: 'overview', entityId: 'membership-card' };
 
+    // ── Seasonal Campaign (started / ending soon / completed) → Rewards → Overview, highlight the campaign banner ──
+    case 'campaign':
+      return { screen: 'PROTEIN_TRACKER', tab: 'rewards', section: 'overview', entityId: 'campaign-banner' };
+
     // ── Reward Points Earned → Rewards → Overview, scroll to Reward Balance ──
     case 'reward_points_earned':
       return { screen: 'PROTEIN_TRACKER', tab: 'rewards', section: 'overview', entityId: 'reward-balance' };

@@ -356,5 +356,25 @@ service cloud.firestore {
       allow write: if isDeveloper();
     }
 
+    // Admin-managed seasonal reward campaigns — any authenticated user reads,
+    // only developers write. Client also creates the autoRestart clone doc
+    // (rewardCampaignService.cloneCampaignForward), so any authenticated user
+    // may create — never update/delete an existing campaign definition.
+    match /rewardCampaigns/{campaignId} {
+      allow read:   if isAuth();
+      allow create: if isAuth();
+      allow update: if isDeveloper();
+      allow delete: if isDeveloper();
+    }
+
+    // Per-user archived campaign progress, written once by the owner when
+    // their active campaign expires (rewardCampaignService.archiveCampaignForUser).
+    match /campaignHistory/{uid}/periods/{campaignId} {
+      allow read:   if isOwner(uid) || isDeveloper();
+      allow create: if isOwner(uid);
+      allow update: if isOwner(uid); // merge:true — allows re-archiving without duplicating logic
+      allow delete: if false;
+    }
+
   }
 }

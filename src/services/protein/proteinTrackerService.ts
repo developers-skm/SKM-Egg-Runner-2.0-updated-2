@@ -510,6 +510,18 @@ export async function getStreakInfo(uid: string): Promise<StreakInfo> {
   };
 }
 
+/**
+ * Lifetime count of genuinely new (non-duplicate) SKM egg scans, read from the
+ * same counter `updateStreak` already increments on every valid scan. Read-only —
+ * does not touch protein/point calculation, only surfaces an existing counter
+ * for the Rewards Club's "scan N eggs" requirement.
+ */
+export async function getLifetimeEggScanCount(uid: string): Promise<number> {
+  const snap = await getDoc(doc(db, 'users', uid));
+  if (!snap.exists()) return 0;
+  return snap.data().lifetimeConsumption ?? 0;
+}
+
 // ─────────────────────────────────────────────────────────────
 // ACHIEVEMENTS
 // ─────────────────────────────────────────────────────────────

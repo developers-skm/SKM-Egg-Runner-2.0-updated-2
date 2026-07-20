@@ -33,6 +33,91 @@ export interface RewardCatalogItem {
   /** Optional Egg Runner gate — if set, the reward also requires this game stage before it can be claimed, in addition to pointsCost. Items without this behave exactly as before (points-only). */
   requiredStage?:      GameStage;
   requiredStageLabel?: string; // display label, e.g. "Stage 2" or "Champion Stage"
+  /** Optional lifetime SKM egg-scan gate — if set, the reward also requires this many genuinely-new QR scans, read from users/{uid}.lifetimeConsumption. Items without this behave exactly as before. */
+  requiredEggScans?: number;
+}
+
+// ── Smart Reward Requirements ────────────────────────────────────
+// Generic multi-requirement model: a reward's eligibility is the AND of every
+// requirement it declares (points always required; stage/eggs only if set).
+// New requirement kinds (membership tier, protein streak, weekly challenge,
+// special event, ...) can be added here by extending RequirementKind and
+// pushing one more entry in buildRequirementProgress — no UI change needed,
+// the card/progress components only ever iterate this array.
+
+export type RequirementKind = 'points' | 'stage' | 'eggScans';
+
+export interface RequirementProgress {
+  kind:      RequirementKind;
+  label:     string;   // e.g. "Reward Points", "Game Progress", "Egg Scans"
+  icon:      string;   // emoji used by the UI, kept here so new kinds don't need UI edits
+  current:   number;
+  target:    number;
+  met:       boolean;
+  /** Human display of current/target for kinds where raw numbers aren't self-explanatory (e.g. stage names). */
+  currentLabel?: string;
+  targetLabel?:  string;
+}
+
+export interface RewardEligibilityContext {
+  currentPoints: number;
+  highestStage:  GameStage;
+  lifetimeEggScans: number;
+}
+
+const STAGE_DISPLAY_LABEL: Record<GameStage, string> = {
+  EGG: 'Stage 1', CHICK: 'Stage 2', ADULT: 'Stage 3', STAGE2: 'Champion Stage',
+};
+
+/** Builds the ordered list of requirements for a reward and the player's live progress against each. Pure — no reads/writes. */
+export function buildRequirementProgress(item: RewardCatalogItem, ctx: RewardEligibilityContext): RequirementProgress[] {
+  const reqs: RequirementProgress[] = [];
+
+  if (item.requiredEggScans) {
+    reqs.push({
+      kind: 'eggScans', label: 'Egg Scans', icon: '🥚',
+      current: ctx.lifetimeEggScans, target: item.requiredEggScans,
+      met: ctx.lifetimeEggScans >= item.requiredEggScans,
+    });
+  }
+
+  if (item.requiredStage) {
+    const targetRank = stageRank(item.requiredStage);
+    const currentRank = Math.min(stageRank(ctx.highestStage), targetRank);
+    reqs.push({
+      kind: 'stage', label: 'Game Progress', icon: '🎮',
+      current: currentRank, target: targetRank,
+      met: stageRank(ctx.highestStage) >= targetRank,
+      currentLabel: STAGE_DISPLAY_LABEL[ctx.highestStage] ?? 'Stage 1',
+      targetLabel: item.requiredStageLabel ?? STAGE_DISPLAY_LABEL[item.requiredStage],
+    });
+  }
+
+  // Points is always a requirement, shown last so scan/stage progress leads.
+  reqs.push({
+    kind: 'points', label: 'Reward Points', icon: '⭐',
+    current: Math.min(ctx.currentPoints, item.pointsCost), target: item.pointsCost,
+    met: ctx.currentPoints >= item.pointsCost,
+  });
+
+  return reqs;
+}
+
+export function allRequirementsMet(reqs: RequirementProgress[]): boolean {
+  return reqs.every(r => r.met);
+}
+
+/** Overall completion 0-100 across every requirement (average of each requirement's own %). */
+export function overallRequirementPct(reqs: RequirementProgress[]): number {
+  if (reqs.length === 0) return 100;
+  const sum = reqs.reduce((acc, r) => acc + (r.target > 0 ? Math.min(100, (r.current / r.target) * 100) : 100), 0);
+  return Math.round(sum / reqs.length);
+}
+
+const STAGE_ORDER: GameStage[] = ['EGG', 'CHICK', 'ADULT', 'STAGE2'];
+function stageRank(stage: GameStage): number {
+  const i = STAGE_ORDER.indexOf(stage);
+  return i === -1 ? 0 : i;
 }
 
 export type CouponStatus = 'available' | 'used' | 'expired';
@@ -80,26 +165,29 @@ export function addDays(days: number): string {
 
 // ── Redemption flow ──────────────────────────────────────────────
 
-const STAGE_ORDER: GameStage[] = ['EGG', 'CHICK', 'ADULT', 'STAGE2'];
-function stageRank(stage: GameStage): number {
-  const i = STAGE_ORDER.indexOf(stage);
-  return i === -1 ? 0 : i;
-}
-
 /** True once the player's highest-reached game stage meets or exceeds the reward's requiredStage (if any). */
 export function meetsStageRequirement(item: RewardCatalogItem, highestStage: GameStage): boolean {
   if (!item.requiredStage) return true;
   return stageRank(highestStage) >= stageRank(item.requiredStage);
 }
 
+/** True once the player's lifetime egg-scan count meets or exceeds the reward's requiredEggScans (if any). */
+export function meetsEggScanRequirement(item: RewardCatalogItem, lifetimeEggScans: number): boolean {
+  if (!item.requiredEggScans) return true;
+  return lifetimeEggScans >= item.requiredEggScans;
+}
+
 /**
  * Spends points and issues a new coupon for the given catalog item.
  * Throws if the user has insufficient points, or if the item has a game-stage
- * gate that hasn't been reached yet — caller should catch and show an error.
+ * or egg-scan gate that hasn't been reached yet — caller should catch and show an error.
  */
-export async function redeemReward(uid: string, item: RewardCatalogItem, highestStage: GameStage): Promise<RewardCoupon> {
+export async function redeemReward(uid: string, item: RewardCatalogItem, highestStage: GameStage, lifetimeEggScans: number = Infinity): Promise<RewardCoupon> {
   if (!meetsStageRequirement(item, highestStage)) {
     throw new Error(`Reach ${item.requiredStageLabel ?? item.requiredStage} in Egg Runner to unlock this reward.`);
+  }
+  if (!meetsEggScanRequirement(item, lifetimeEggScans)) {
+    throw new Error(`Scan ${item.requiredEggScans} SKM eggs to unlock this reward.`);
   }
   await spendPoints(uid, item.pointsCost, `Redeemed ${item.discountAmount > 0 ? `₹${item.discountAmount} OFF` : item.productName} — ${item.productName}`);
 

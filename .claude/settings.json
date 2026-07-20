@@ -29,7 +29,8 @@
       "Bash(node -e \"const m = require\\('lucide-react'\\); console.log\\(Object.keys\\(m\\).filter\\(k => /^\\(Pencil|Flame|Edit|Edit2|Edit3|Sparkles\\)$/.test\\(k\\)\\).join\\('\\\\n'\\)\\)\")",
       "Bash(git --no-pager diff --stat)",
       "Bash(tasklist)",
-      "Bash(taskkill //PID 21040 //F)"
+      "Bash(taskkill //PID 21040 //F)",
+      "Bash(npx tsc *)"
     ]
   }
 }

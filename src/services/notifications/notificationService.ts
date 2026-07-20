@@ -361,6 +361,47 @@ export async function notifyRewardRedeemed(userId: string, rewardTitle: string, 
   });
 }
 
+// ── Seasonal Reward Campaigns ────────────────────────────────────────────
+// No renderNotify.* toast counterpart exists for these yet (would require
+// extending renderNotificationService.ts, out of scope here) — createNotification
+// alone still writes the Firestore doc that drives the notification drawer and
+// the onNotificationCreated Cloud Function's push delivery.
+
+export async function notifyCampaignStarted(userId: string, campaignName: string, campaignId: string): Promise<void> {
+  await createNotification({
+    userId,
+    title: '🎉 New Reward Campaign Started!',
+    message: `${campaignName} is live — a new set of SKM rewards is waiting.`,
+    type: 'campaign',
+    priority: 'normal',
+    actions: [{ label: 'View Rewards', actionType: 'view_dashboard' }],
+    metadata: { campaignId, campaignName, phase: 'started' },
+  });
+}
+
+export async function notifyCampaignEndingSoon(userId: string, campaignName: string, campaignId: string, daysLeft: number): Promise<void> {
+  await createNotification({
+    userId,
+    title: `⏳ Only ${daysLeft} Day${daysLeft === 1 ? '' : 's'} Left!`,
+    message: `Complete ${campaignName} before it expires.`,
+    type: 'campaign',
+    priority: 'high',
+    actions: [{ label: 'View Rewards', actionType: 'view_dashboard' }],
+    metadata: { campaignId, campaignName, phase: 'ending_soon', daysLeft },
+  });
+}
+
+export async function notifyCampaignCompleted(userId: string, campaignName: string, campaignId: string): Promise<void> {
+  await createNotification({
+    userId,
+    title: '🏆 Congratulations!',
+    message: `You completed ${campaignName}.`,
+    type: 'campaign',
+    priority: 'normal',
+    metadata: { campaignId, campaignName, phase: 'completed' },
+  });
+}
+
 export async function notifyMembershipTierUp(userId: string, tier: string): Promise<void> {
   await createNotification({
     userId,
