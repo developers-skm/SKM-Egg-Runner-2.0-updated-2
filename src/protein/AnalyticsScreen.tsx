@@ -1,8 +1,8 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import type { User } from 'firebase/auth';
 import {
   getWeeklyData, getMonthlyData, getTrackerSettings, getStreakInfo,
-  getDailyStats, getLast30Days, todayKey,
+  todayKey,
   type WeeklyData, type TrackerSettings, type StreakInfo,
 } from '../services/protein/proteinTrackerService';
 import { getUserSummary, syncSummaryFromDailyStats, type UserSummary } from '../services/protein/userSummaryService';
@@ -77,31 +77,27 @@ export default function AnalyticsScreen({ user, refreshKey, navTarget }: Analyti
   const loadCharts = useCallback(async () => {
     startTimer('[Stats] total-phase2');
     try {
-      startTimer('[Stats] weekly-query');
-      const weekD = await getWeeklyData(user.uid);
-      endTimer('[Stats] weekly-query');
-
-      startTimer('[Stats] monthly-query');
-      const monthD = await getMonthlyData(user.uid);
-      endTimer('[Stats] monthly-query');
+      // week + month reads are independent — run them together instead of serially.
+      // getMonthlyData already reads all 30 daily_stats docs, so its result is
+      // reused below instead of re-fetching the same 30 docs a second time.
+      startTimer('[Stats] weekly+monthly-query');
+      const [weekD, monthD] = await Promise.all([
+        getWeeklyData(user.uid),
+        getMonthlyData(user.uid),
+      ]);
+      endTimer('[Stats] weekly+monthly-query');
 
       setData(period === 'week' ? weekD : monthD);
 
-      // All 30 daily docs fetched in parallel (not serial)
-      startTimer('[Stats] daily30-parallel-query');
-      const dateKeys  = getLast30Days();
-      const snapshots = await Promise.all(dateKeys.map(d => getDailyStats(user.uid, d)));
-      endTimer('[Stats] daily30-parallel-query');
-
       startTimer('[Stats] summary-sync-write');
       const si = streak;
+      const snapshots = monthD.map(d => ({ totalProtein: d.totalProtein, totalEggs: d.totalEggs, goalMet: d.goalMet }));
       await syncSummaryFromDailyStats(user.uid, snapshots, si);
       endTimer('[Stats] summary-sync-write');
 
       startTimer('[Stats] chart-processing');
       let tp = 0, te = 0, gm = 0, active = 0;
       for (const stat of snapshots) {
-        if (!stat) continue;
         tp += stat.totalProtein;
         te += stat.totalEggs;
         if (stat.goalMet)          gm++;
@@ -150,8 +146,8 @@ export default function AnalyticsScreen({ user, refreshKey, navTarget }: Analyti
   const avgProtein  = summary?.averageProtein ?? 0;
   const totalEggs30 = summary?.monthlyEggs ?? 0;
   const goalsMet30  = summary?.goalsMetThisMonth ?? 0;
-  const maxBar      = Math.max(...data.map(d => d.totalProtein), goal, 1);
-  const bestDay     = data.reduce((b, d) => d.totalProtein > b.totalProtein ? d : b, data[0] ?? { totalProtein: 0, dayLabel: '—' });
+  const maxBar      = useMemo(() => Math.max(...data.map(d => d.totalProtein), goal, 1), [data, goal]);
+  const bestDay     = useMemo(() => data.reduce((b, d) => d.totalProtein > b.totalProtein ? d : b, data[0] ?? { totalProtein: 0, dayLabel: '—' }), [data]);
 
   // Insights — generated from summary (no extra reads)
   const insights: string[] = [];

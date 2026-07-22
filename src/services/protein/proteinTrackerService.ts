@@ -17,7 +17,7 @@ import {
   getDoc, getDocs, setDoc, updateDoc, addDoc, deleteDoc,
   serverTimestamp, Timestamp,
   query, orderBy, limit, where,
-  increment,
+  increment, runTransaction,
 } from 'firebase/firestore';
 import { db } from '../firebase/firebase';
 import { updateSummaryOnScan, updateSummaryOnManualEntry } from './userSummaryService';
@@ -281,13 +281,19 @@ export async function logEggScan(uid: string, qrCode: string): Promise<{
     loggedAt: serverTimestamp() as Timestamp, qrCode, category: 'Eggs',
   };
 
-  await updateDailyStats(uid, dateKey, entry.protein, entry.calories, 1);
+  const goalJustMet   = await updateDailyStats(uid, dateKey, entry.protein, entry.calories, 1);
   const prevSnapData  = await getDoc(doc(db, 'users', uid)).then(s => s.exists() ? s.data() : {});
   const prevStreak    = prevSnapData.currentConsumptionStreak ?? 0;
   const streakInfo    = await updateStreak(uid, dateKey);
+  const challengeUpdates = [
+    updateChallengeProgress(uid, 'scan_egg', 1),
+    updateChallengeProgress(uid, 'protein_logged', entry.protein),
+    updateChallengeProgress(uid, 'streak_update', streakInfo.currentStreak),
+  ];
+  if (goalJustMet) challengeUpdates.push(updateChallengeProgress(uid, 'goal_met', 1));
   await Promise.all([
     addRewards(uid, XP_PER_EGG, COINS_PER_EGG),
-    updateChallengeProgress(uid, 'scan_egg', 1),
+    ...challengeUpdates,
     updateSummaryOnScan(uid, entry.protein, streakInfo),
   ]);
 
@@ -313,14 +319,13 @@ export async function logManualEntry(
     uid, type: 'manual', dateKey,
     loggedAt: serverTimestamp() as Timestamp, ...data,
   };
-  const colRef   = collection(db, 'protein_logs', uid, 'entries');
-  const docRef   = await addDoc(colRef, entry);
-  const totalPro = data.protein * data.quantity;
-  await updateDailyStats(uid, dateKey, totalPro, data.calories * data.quantity, 0);
-  await Promise.all([
-    updateChallengeProgress(uid, 'reach_goal', 0),
-    updateSummaryOnManualEntry(uid, totalPro),
-  ]);
+  const colRef      = collection(db, 'protein_logs', uid, 'entries');
+  const docRef      = await addDoc(colRef, entry);
+  const totalPro    = data.protein * data.quantity;
+  const goalJustMet = await updateDailyStats(uid, dateKey, totalPro, data.calories * data.quantity, 0);
+  const challengeUpdates = [updateChallengeProgress(uid, 'protein_logged', totalPro)];
+  if (goalJustMet) challengeUpdates.push(updateChallengeProgress(uid, 'goal_met', 1));
+  await Promise.all([...challengeUpdates, updateSummaryOnManualEntry(uid, totalPro)]);
   return { ...entry, id: docRef.id };
 }
 
@@ -383,33 +388,43 @@ export async function getRecentEntries(uid: string, count = 10): Promise<Protein
 // DAILY STATS
 // ─────────────────────────────────────────────────────────────
 
-async function updateDailyStats(uid: string, dateKey: string, protein: number, calories: number, eggs: number): Promise<void> {
-  const ref  = doc(db, 'daily_stats', uid, 'days', dateKey);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) {
-    const settings = await getTrackerSettings(uid);
-    await setDoc(ref, {
-      uid, dateKey,
-      totalProtein: protein, totalCalories: calories, totalEggs: eggs,
-      goal: settings.dailyGoal, entries: 1,
-      goalMet: protein >= settings.dailyGoal,
-      updatedAt: serverTimestamp(),
-    });
-  } else {
-    const d       = snap.data() as DailyStats;
-    const newP    = d.totalProtein + protein;
-    const goalMet = newP >= d.goal;
+async function updateDailyStats(uid: string, dateKey: string, protein: number, calories: number, eggs: number): Promise<boolean> {
+  const ref = doc(db, 'daily_stats', uid, 'days', dateKey);
+  // Concurrent scans/manual entries (e.g. two QR scans in quick succession)
+  // both call this for the same day — a plain getDoc-then-write would let the
+  // second write clobber the first's increment. A transaction makes the
+  // read+write atomic so no update is lost.
+  const settings = await getTrackerSettings(uid);
+  const goalJustMet = await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) {
+      const goalMet = protein >= settings.dailyGoal;
+      tx.set(ref, {
+        uid, dateKey,
+        totalProtein: protein, totalCalories: calories, totalEggs: eggs,
+        goal: settings.dailyGoal, entries: 1,
+        goalMet,
+        updatedAt: serverTimestamp(),
+      });
+      return goalMet;
+    }
+    const d          = snap.data() as DailyStats;
+    const newP       = d.totalProtein + protein;
+    const goalMet    = newP >= d.goal;
     const wasGoalMet = d.goalMet;
-    await updateDoc(ref, {
+    tx.update(ref, {
       totalProtein: newP, totalCalories: d.totalCalories + calories,
       totalEggs: d.totalEggs + eggs, entries: d.entries + 1,
       goalMet, updatedAt: serverTimestamp(),
     });
-    // Award bonus if goal was just crossed
-    if (goalMet && !wasGoalMet) {
-      await addRewards(uid, XP_PER_GOAL, COINS_PER_GOAL);
-    }
+    return goalMet && !wasGoalMet;
+  });
+
+  // Award bonus if goal was just crossed
+  if (goalJustMet) {
+    await addRewards(uid, XP_PER_GOAL, COINS_PER_GOAL);
   }
+  return goalJustMet;
 }
 
 export async function getDailyStats(uid: string, dateKey: string): Promise<DailyStats | null> {
@@ -427,37 +442,35 @@ export async function getTodayStats(uid: string): Promise<DailyStats | null> {
 
 export async function getWeeklyData(uid: string): Promise<WeeklyData[]> {
   const days = getLast7Days();
-  startTimer('[Stats] getWeeklyData:settings');
-  const goal = (await getTrackerSettings(uid)).dailyGoal;
-  endTimer('[Stats] getWeeklyData:settings');
-  startTimer('[Stats] getWeeklyData:7-serial-reads');
-  const result: WeeklyData[] = [];
-  for (const dateKey of days) {
-    const stats = await getDailyStats(uid, dateKey);
-    result.push({ dateKey, dayLabel: dayLabel(dateKey), totalProtein: stats?.totalProtein ?? 0, totalEggs: stats?.totalEggs ?? 0, goalMet: stats?.goalMet ?? false, goal });
-  }
-  endTimer('[Stats] getWeeklyData:7-serial-reads');
-  return result;
+  startTimer('[Stats] getWeeklyData:settings+reads');
+  const [goal, statsList] = await Promise.all([
+    getTrackerSettings(uid).then(s => s.dailyGoal),
+    Promise.all(days.map(dateKey => getDailyStats(uid, dateKey))),
+  ]);
+  endTimer('[Stats] getWeeklyData:settings+reads');
+  return days.map((dateKey, i) => {
+    const stats = statsList[i];
+    return { dateKey, dayLabel: dayLabel(dateKey), totalProtein: stats?.totalProtein ?? 0, totalEggs: stats?.totalEggs ?? 0, goalMet: stats?.goalMet ?? false, goal };
+  });
 }
 
 export async function getMonthlyData(uid: string): Promise<WeeklyData[]> {
   const days = getLast30Days();
-  startTimer('[Stats] getMonthlyData:settings');
-  const goal = (await getTrackerSettings(uid)).dailyGoal;
-  endTimer('[Stats] getMonthlyData:settings');
-  startTimer('[Stats] getMonthlyData:30-serial-reads');
-  const result: WeeklyData[] = [];
-  for (const dateKey of days) {
-    const stats = await getDailyStats(uid, dateKey);
-    result.push({
+  startTimer('[Stats] getMonthlyData:settings+reads');
+  const [goal, statsList] = await Promise.all([
+    getTrackerSettings(uid).then(s => s.dailyGoal),
+    Promise.all(days.map(dateKey => getDailyStats(uid, dateKey))),
+  ]);
+  endTimer('[Stats] getMonthlyData:settings+reads');
+  return days.map((dateKey, i) => {
+    const stats = statsList[i];
+    return {
       dateKey,
       dayLabel: new Date(dateKey + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
       totalProtein: stats?.totalProtein ?? 0, totalEggs: stats?.totalEggs ?? 0,
       goalMet: stats?.goalMet ?? false, goal,
-    });
-  }
-  endTimer('[Stats] getMonthlyData:30-serial-reads');
-  return result;
+    };
+  });
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -466,33 +479,38 @@ export async function getMonthlyData(uid: string): Promise<WeeklyData[]> {
 
 export async function updateStreak(uid: string, dateKey: string): Promise<StreakInfo> {
   const userRef = doc(db, 'users', uid);
-  const snap    = await getDoc(userRef);
-  if (!snap.exists()) return { currentStreak: 0, bestStreak: 0, lastActiveDate: dateKey };
-
-  const data    = snap.data();
-  const current = data.currentConsumptionStreak ?? 0;
-  const best    = data.bestConsumptionStreak    ?? 0;
-  const lastDate = data.lastConsumptionDate     ?? '';
 
   const yesterday = new Date(dateKey + 'T12:00:00');
   yesterday.setDate(yesterday.getDate() - 1);
   const yKey = dateKeyFor(yesterday);
 
-  let newStreak = current;
-  if      (lastDate === dateKey) { /* already logged today */ }
-  else if (lastDate === yKey)    { newStreak = current + 1; }
-  else                           { newStreak = 1; }
+  // Transaction — two scans landing close together must not both read the
+  // same "current" streak and each compute the same +1 (one increment lost).
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(userRef);
+    if (!snap.exists()) return { currentStreak: 0, bestStreak: 0, lastActiveDate: dateKey };
 
-  const newBest = Math.max(best, newStreak);
-  await updateDoc(userRef, {
-    currentConsumptionStreak: newStreak,
-    bestConsumptionStreak:    newBest,
-    lastConsumptionDate:      dateKey,
-    lifetimeConsumption:      increment(1),
-    totalQRCodesScanned:      increment(1),
-    updatedAt:                serverTimestamp(),
+    const data     = snap.data();
+    const current  = data.currentConsumptionStreak ?? 0;
+    const best     = data.bestConsumptionStreak    ?? 0;
+    const lastDate = data.lastConsumptionDate      ?? '';
+
+    let newStreak = current;
+    if      (lastDate === dateKey) { /* already logged today */ }
+    else if (lastDate === yKey)    { newStreak = current + 1; }
+    else                           { newStreak = 1; }
+
+    const newBest = Math.max(best, newStreak);
+    tx.update(userRef, {
+      currentConsumptionStreak: newStreak,
+      bestConsumptionStreak:    newBest,
+      lastConsumptionDate:      dateKey,
+      lifetimeConsumption:      increment(1),
+      totalQRCodesScanned:      increment(1),
+      updatedAt:                serverTimestamp(),
+    });
+    return { currentStreak: newStreak, bestStreak: newBest, lastActiveDate: dateKey };
   });
-  return { currentStreak: newStreak, bestStreak: newBest, lastActiveDate: dateKey };
 }
 
 export async function getStreakInfo(uid: string): Promise<StreakInfo> {
@@ -662,42 +680,88 @@ export async function getChallenges(uid: string): Promise<Challenge[]> {
   return result;
 }
 
-export async function updateChallengeProgress(uid: string, triggerType: string, value: number): Promise<void> {
-  const challenges = await getChallenges(uid);
-  const today      = todayKey();
-  const weekKey    = getWeekKey();
-  const monthKey   = getMonthKey();
+// Challenge ids each triggerType can possibly affect — lets updateChallengeProgress
+// skip the full getChallenges() fan-out (getDocs + creating any missing challenge
+// docs) when the trigger can't touch anything, and only recompute writes for the
+// ids that matter instead of re-checking all seven definitions every call.
+//
+// Previously only 'scan_egg' and 'app_open' were ever fired (from logEggScan and
+// nowhere else respectively), which meant daily_goal, weekly_protein,
+// monthly_streak and monthly_goal could never accumulate progress — they were
+// permanently stuck at 0 even though getChallenges() presented them to the UI
+// as active. 'protein_logged' and 'streak_update' close that gap.
+const TRIGGER_CHALLENGE_IDS: Record<string, string[]> = {
+  scan_egg:       ['daily_scan', 'weekly_eggs'],
+  app_open:       ['daily_open'],
+  protein_logged: ['weekly_protein'],
+  goal_met:       ['daily_goal', 'monthly_goal'],
+  streak_update:  ['monthly_streak'],
+};
 
+export async function updateChallengeProgress(uid: string, triggerType: string, value: number): Promise<void> {
+  const relevantIds = TRIGGER_CHALLENGE_IDS[triggerType];
+  if (!relevantIds) return;
+
+  const challenges = await getChallenges(uid);
+  const today       = todayKey();
+  const weekKey     = getWeekKey();
+  const monthKey    = getMonthKey();
+
+  const writes: Promise<void>[] = [];
   for (const ch of challenges) {
-    if (ch.completed) continue;
+    if (ch.completed || !relevantIds.includes(ch.id)) continue;
     let shouldUpdate = false;
     let newProgress  = ch.progress;
 
     switch (ch.id) {
       case 'daily_scan':
-        if (triggerType === 'scan_egg' && ch.dateKey === today) {
+        if (ch.dateKey === today) {
           newProgress = Math.min(1, ch.progress + 1); shouldUpdate = true;
         }
         break;
       case 'daily_open':
-        if (triggerType === 'app_open' && ch.dateKey === today) {
+        if (ch.dateKey === today) {
           newProgress = 1; shouldUpdate = true;
         }
         break;
       case 'weekly_eggs':
-        if (triggerType === 'scan_egg' && ch.dateKey === weekKey) {
+        if (ch.dateKey === weekKey) {
           newProgress = Math.min(10, ch.progress + 1); shouldUpdate = true;
+        }
+        break;
+      case 'daily_goal':
+        // fired only from the 'goal_met' trigger, so reaching here means today's goal was just crossed
+        if (ch.dateKey === today) {
+          newProgress = 1; shouldUpdate = true;
+        }
+        break;
+      case 'weekly_protein':
+        // value carries the protein grams from this log entry
+        if (ch.dateKey === weekKey && value > 0) {
+          newProgress = Math.min(ch.target, ch.progress + value); shouldUpdate = true;
+        }
+        break;
+      case 'monthly_goal':
+        if (ch.dateKey === monthKey) {
+          newProgress = Math.min(ch.target, ch.progress + 1); shouldUpdate = true;
+        }
+        break;
+      case 'monthly_streak':
+        // value carries the current streak length
+        if (ch.dateKey === monthKey) {
+          newProgress = Math.min(ch.target, Math.max(ch.progress, value)); shouldUpdate = true;
         }
         break;
     }
 
     if (shouldUpdate) {
       const completed = newProgress >= ch.target;
-      await setDoc(doc(db, 'tracker_challenges', uid, 'list', ch.id), {
+      writes.push(setDoc(doc(db, 'tracker_challenges', uid, 'list', ch.id), {
         ...ch, progress: newProgress, completed,
-      }, { merge: true });
+      }, { merge: true }));
     }
   }
+  await Promise.all(writes);
 }
 
 export async function claimChallenge(uid: string, challengeId: string): Promise<{ xp: number; coins: number }> {

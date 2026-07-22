@@ -71,26 +71,10 @@ export async function updateSummaryOnScan(
   streak: { currentStreak: number; bestStreak: number; lastActiveDate: string },
 ): Promise<void> {
   const ref = doc(db, 'userSummary', uid);
-  const snap = await getDoc(ref);
-
-  if (!snap.exists()) {
-    await setDoc(ref, {
-      ...DEFAULT_SUMMARY(uid),
-      totalProtein:   protein,
-      totalEggs:      1,
-      weeklyProtein:  protein,
-      monthlyProtein: protein,
-      weeklyEggs:     1,
-      monthlyEggs:    1,
-      currentStreak:  streak.currentStreak,
-      bestStreak:     streak.bestStreak,
-      lastActiveDate: streak.lastActiveDate,
-      updatedAt:      serverTimestamp(),
-    });
-    return;
-  }
-
-  await updateDoc(ref, {
+  // merge + increment works whether or not the doc already exists, so we skip
+  // the read-then-branch round trip that used to precede every scan/entry write.
+  await setDoc(ref, {
+    uid,
     totalProtein:   increment(protein),
     totalEggs:      increment(1),
     weeklyProtein:  increment(protein),
@@ -101,7 +85,7 @@ export async function updateSummaryOnScan(
     bestStreak:     streak.bestStreak,
     lastActiveDate: streak.lastActiveDate,
     updatedAt:      serverTimestamp(),
-  });
+  }, { merge: true });
 }
 
 /**
@@ -111,26 +95,14 @@ export async function updateSummaryOnManualEntry(
   uid: string,
   protein: number,
 ): Promise<void> {
-  const ref  = doc(db, 'userSummary', uid);
-  const snap = await getDoc(ref);
-
-  if (!snap.exists()) {
-    await setDoc(ref, {
-      ...DEFAULT_SUMMARY(uid),
-      totalProtein:   protein,
-      weeklyProtein:  protein,
-      monthlyProtein: protein,
-      updatedAt:      serverTimestamp(),
-    });
-    return;
-  }
-
-  await updateDoc(ref, {
+  const ref = doc(db, 'userSummary', uid);
+  await setDoc(ref, {
+    uid,
     totalProtein:   increment(protein),
     weeklyProtein:  increment(protein),
     monthlyProtein: increment(protein),
     updatedAt:      serverTimestamp(),
-  });
+  }, { merge: true });
 }
 
 /**

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import type { User } from 'firebase/auth';
 import {
   getTodayEntries, getTodayStats, getTrackerSettings,
@@ -109,12 +109,15 @@ export default function ConsumptionScreen({ user, onScanQR, refreshKey }: Consum
   const consumed  = stats?.totalProtein  ?? 0;
   const pct       = Math.min(100, Math.round((consumed / goal) * 100));
   const remaining = Math.max(0, goal - consumed);
-  const filtered  = mealTab === 'all' ? entries : entries.filter(e => e.meal === mealTab);
+  const filtered = useMemo(
+    () => mealTab === 'all' ? entries : entries.filter(e => e.meal === mealTab),
+    [entries, mealTab]
+  );
 
-  const foodResults = FOOD_DATABASE.filter(f =>
+  const foodResults = useMemo(() => FOOD_DATABASE.filter(f =>
     (catFilter === 'All' || f.category === catFilter) &&
     f.name.toLowerCase().includes(search.toLowerCase())
-  );
+  ), [catFilter, search]);
 
   const selectFood = (food: FoodItem) => {
     setForm(f => ({ ...f, foodName: food.name, protein: String(food.protein), calories: String(food.calories), category: food.category }));
@@ -132,10 +135,22 @@ export default function ConsumptionScreen({ user, onScanQR, refreshKey }: Consum
     if (isNaN(qty) || qty < 1)   { setFormErr('Quantity must be at least 1.'); return; }
     setSaving(true); setFormErr('');
     try {
-      await logManualEntry(user.uid, { foodName: name, protein: prot, calories: cal, quantity: qty, meal: form.meal, category: form.category });
+      const newEntry = await logManualEntry(user.uid, { foodName: name, protein: prot, calories: cal, quantity: qty, meal: form.meal, category: form.category });
       setShowAdd(false);
       setForm(EMPTY_FORM);
-      await load();
+      // Apply the write locally instead of re-running all 3 load() reads —
+      // logManualEntry's return value plus known totals are enough to keep
+      // the entry list and today's stats in sync with what a refetch would show.
+      const totalProtein  = prot * qty;
+      const totalCalories = cal * qty;
+      setEntries(prev => [newEntry, ...prev]);
+      setStats(prev => prev ? {
+        ...prev,
+        totalProtein:  prev.totalProtein + totalProtein,
+        totalCalories: prev.totalCalories + totalCalories,
+        entries:       prev.entries + 1,
+        goalMet:       prev.totalProtein + totalProtein >= prev.goal,
+      } : prev);
     } catch (e) {
       console.error('[Consumption] logManualEntry failed:', e);
       setFormErr(describeError(e, 'save'));
@@ -146,8 +161,17 @@ export default function ConsumptionScreen({ user, onScanQR, refreshKey }: Consum
   const handleDelete = async (entry: ProteinLogEntry) => {
     setDeleting(entry.id);
     try {
-      await deleteLogEntry(user.uid, entry.id, entry.protein * entry.quantity, entry.calories * entry.quantity, entry.type === 'qr_scan');
-      await load();
+      const protein  = entry.protein * entry.quantity;
+      const calories = entry.calories * entry.quantity;
+      await deleteLogEntry(user.uid, entry.id, protein, calories, entry.type === 'qr_scan');
+      setEntries(prev => prev.filter(e => e.id !== entry.id));
+      setStats(prev => prev ? {
+        ...prev,
+        totalProtein:  Math.max(0, prev.totalProtein - protein),
+        totalCalories: Math.max(0, prev.totalCalories - calories),
+        totalEggs:     entry.type === 'qr_scan' ? Math.max(0, prev.totalEggs - 1) : prev.totalEggs,
+        entries:       Math.max(0, prev.entries - 1),
+      } : prev);
     } catch (e) {
       console.error('[Consumption] deleteLogEntry failed:', e);
       setLoadErr(describeError(e, 'load'));
@@ -155,8 +179,14 @@ export default function ConsumptionScreen({ user, onScanQR, refreshKey }: Consum
     finally   { setDeleting(null); }
   };
 
-  const mealTotal = (m: MealFilter) =>
-    entries.filter(e => m === 'all' || e.meal === m).reduce((s, e) => s + e.protein, 0);
+  const mealTotals = useMemo(() => {
+    const totals: Record<MealFilter, number> = { all: 0, breakfast: 0, lunch: 0, dinner: 0, snack: 0 };
+    for (const e of entries) {
+      totals.all += e.protein;
+      totals[e.meal] += e.protein;
+    }
+    return totals;
+  }, [entries]);
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -223,8 +253,8 @@ export default function ConsumptionScreen({ user, onScanQR, refreshKey }: Consum
               transition: 'all 150ms ease',
             }}>
               {tab.label}
-              {mealTotal(tab.key) > 0 && (
-                <span style={{ fontSize: 9, fontWeight: 900, opacity: 0.8 }}>{mealTotal(tab.key)}g</span>
+              {mealTotals[tab.key] > 0 && (
+                <span style={{ fontSize: 9, fontWeight: 900, opacity: 0.8 }}>{mealTotals[tab.key]}g</span>
               )}
             </button>
           ))}

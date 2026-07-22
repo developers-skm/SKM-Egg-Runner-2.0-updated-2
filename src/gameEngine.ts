@@ -7084,16 +7084,37 @@ export class SKMRunnerEngine {
 
     let startX = 0;
     let startY = 0;
-    
+    let trackingTouchId: number | null = null;
+
     const handleTouchStart = (e: TouchEvent) => {
-      startX = e.touches[0].clientX;
-      startY = e.touches[0].clientY;
+      // Only during active gameplay do we own the gesture — menus/modals still
+      // need normal scrolling, so we don't preventDefault outside a run.
+      if (!this.isRunning || this.isPaused || this.isCrashed) return;
+      const t = e.touches[0];
+      trackingTouchId = t.identifier;
+      startX = t.clientX;
+      startY = t.clientY;
+      e.preventDefault();
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (trackingTouchId === null) return;
+      // Must preventDefault on move (not just start/end) or mobile browsers
+      // take the gesture as a page scroll/pull-to-refresh/pinch-zoom once
+      // movement is detected, which swallows the swipe before touchend fires.
+      e.preventDefault();
     };
 
     const handleTouchEnd = (e: TouchEvent) => {
+      if (trackingTouchId === null) return;
+      const touch = Array.from(e.changedTouches).find(t => t.identifier === trackingTouchId);
+      trackingTouchId = null;
+      if (!touch) return;
       if (!this.isRunning || this.isPaused || this.isCrashed) return;
-      const dx = e.changedTouches[0].clientX - startX;
-      const dy = e.changedTouches[0].clientY - startY;
+      e.preventDefault();
+
+      const dx = touch.clientX - startX;
+      const dy = touch.clientY - startY;
 
       // Check for Corner Turns first!
       if (this.isNearCornerTurn && !this.wasCornerTurnedSuccessfully) {
@@ -7121,8 +7142,9 @@ export class SKMRunnerEngine {
       }
     };
 
-    window.addEventListener('touchstart', handleTouchStart, { passive: true });
-    window.addEventListener('touchend', handleTouchEnd, { passive: true });
+    window.addEventListener('touchstart', handleTouchStart, { passive: false });
+    window.addEventListener('touchmove', handleTouchMove, { passive: false });
+    window.addEventListener('touchend', handleTouchEnd, { passive: false });
   }
 
   public swipeLeft() { this.moveLane(-1); }
@@ -9690,11 +9712,18 @@ export class SKMRunnerEngine {
 
     if (this.transitionTimer <= 0) {
       this.isTransitioningToRun = false;
+      // Gate-open cinematic is over — actually start gameplay now. Without this,
+      // isRunning stayed false after the very first RUN NOW tap (it's only set
+      // true in start()'s non-showcase branch), so the egg stood frozen until
+      // the player tapped play a second time.
+      this.isRunning = true;
+      this.isPaused = false;
+      this.isCrashed = false;
       this.isIntroActive = true;
       this.introTime = 1.0; // shortened intro lead
       this.distance = 0;
       this.score = 0;
-      
+
       // Play game background music
       soundManager.startMusic();
     }

@@ -1057,7 +1057,7 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
     <div className="relative w-full h-screen bg-slate-950 overflow-hidden select-none">
       
       {/* 3D WEBGL GRAPHICS CANVAS */}
-      <canvas ref={canvasRef} className="w-full h-full block" />
+      <canvas ref={canvasRef} className="w-full h-full block" style={{ touchAction: 'none' }} />
 
       {/* active UI views mapped to current gameState */}
       {gameState === 'MENU' && (
