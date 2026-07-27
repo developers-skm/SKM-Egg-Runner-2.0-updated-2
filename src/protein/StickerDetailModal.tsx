@@ -38,6 +38,7 @@ export default function StickerDetailModal({
   const shareCardRef = useRef<HTMLDivElement>(null);
 
   if (!milestone) return null;
+  const m = milestone; // narrowed non-null binding — nested function declarations below don't see the guard above
 
   const rc   = RARITY_COLOR[milestone.rarity];
   const rb   = RARITY_BG[milestone.rarity];
@@ -60,8 +61,8 @@ export default function StickerDetailModal({
 
     // Background gradient
     const grd = ctx.createLinearGradient(0, 0, W, H);
-    grd.addColorStop(0, milestone.color);
-    grd.addColorStop(1, milestone.color2);
+    grd.addColorStop(0, m.color);
+    grd.addColorStop(1, m.color2);
     ctx.fillStyle = grd;
     ctx.roundRect(0, 0, W, H, 60);
     ctx.fill();
@@ -82,10 +83,10 @@ export default function StickerDetailModal({
     // Sticker name
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 96px system-ui, sans-serif';
-    ctx.fillText(milestone.stickerName, W / 2, 310);
+    ctx.fillText(m.stickerName, W / 2, 310);
 
     // Sticker art — draw PNG if available, otherwise fall back to emoji
-    const pngSrc = STICKER_PNG[milestone.days];
+    const pngSrc = STICKER_PNG[m.days];
     if (pngSrc) {
       await new Promise<void>(resolve => {
         const img = new Image();
@@ -100,7 +101,7 @@ export default function StickerDetailModal({
     } else {
       ctx.font = '320px serif';
       ctx.textAlign = 'center';
-      ctx.fillText(milestone.sticker, W / 2, 720);
+      ctx.fillText(m.sticker, W / 2, 720);
     }
 
     // Streak pill background
@@ -114,7 +115,7 @@ export default function StickerDetailModal({
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 44px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(`🔥 ${milestone.days} Day Streak`, W / 2, pillY + 52);
+    ctx.fillText(`🔥 ${m.days} Day Streak`, W / 2, pillY + 52);
 
     // Rarity badge
     ctx.fillStyle = 'rgba(255,255,255,0.15)';
@@ -124,12 +125,12 @@ export default function StickerDetailModal({
     ctx.fill();
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 34px system-ui, sans-serif';
-    ctx.fillText(milestone.rarity.toUpperCase(), W / 2, badgeY + 43);
+    ctx.fillText(m.rarity.toUpperCase(), W / 2, badgeY + 43);
 
     // Description
     ctx.fillStyle = 'rgba(255,255,255,0.8)';
     ctx.font = '38px system-ui, sans-serif';
-    const words = milestone.stickerDesc.split(' ');
+    const words = m.stickerDesc.split(' ');
     let line = '', y = 1060;
     for (const word of words) {
       const test = line + (line ? ' ' : '') + word;
@@ -157,7 +158,7 @@ export default function StickerDetailModal({
       const a    = document.createElement('a');
       const date = new Date().toISOString().slice(0, 10);
       a.href     = url;
-      a.download = `${milestone.stickerName.replace(/\s+/g, '')}Sticker_${date}.png`;
+      a.download = `${m.stickerName.replace(/\s+/g, '')}Sticker_${date}.png`;
       a.click();
       URL.revokeObjectURL(url);
     } finally {
@@ -172,8 +173,8 @@ export default function StickerDetailModal({
       const blob = await generateShareCard();
       if (blob && navigator.canShare?.({ files: [new File([blob], 'sticker.png', { type: 'image/png' })] })) {
         await navigator.share({
-          files:  [new File([blob], `${milestone.stickerName}.png`, { type: 'image/png' })],
-          title:  `SKM Protein Tracker — ${milestone.stickerName}`,
+          files:  [new File([blob], `${m.stickerName}.png`, { type: 'image/png' })],
+          title:  `SKM Protein Tracker — ${m.stickerName}`,
           text:   shareCaption,
           url:    'https://skm-egg-runner.web.app',
         });

@@ -94,7 +94,7 @@ const HUB_TABS: { key: HubTab; label: string }[] = [
   { key: 'insights', label: 'Insights' },
 ];
 
-export default function HealthProfileScreen({ user, onBack, onProfileSaved, initialTab, highlightBmi }: HealthProfileScreenProps) {
+export default function HealthProfileScreen({ user, onBack, onProfileSaved, initialTab, highlightBmi = false }: HealthProfileScreenProps) {
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<HealthProfile | null>(null);
   const [mode, setMode] = useState<'view' | 'wizard' | 'edit'>('view');

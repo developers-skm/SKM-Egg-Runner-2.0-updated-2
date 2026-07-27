@@ -133,6 +133,10 @@ export default function ConsumptionScreen({ user, onScanQR, refreshKey }: Consum
     if (!name)               { setFormErr('Food name is required.'); return; }
     if (isNaN(prot) || prot < 0) { setFormErr('Enter a valid protein amount.'); return; }
     if (isNaN(qty) || qty < 1)   { setFormErr('Quantity must be at least 1.'); return; }
+    if (name.toLowerCase().includes('skm') && name.toLowerCase().includes('egg')) {
+      setFormErr('SKM Eggs can only be logged by scanning a valid SKM QR code.');
+      return;
+    }
     setSaving(true); setFormErr('');
     try {
       const newEntry = await logManualEntry(user.uid, { foodName: name, protein: prot, calories: cal, quantity: qty, meal: form.meal, category: form.category });
@@ -296,7 +300,11 @@ export default function ConsumptionScreen({ user, onScanQR, refreshKey }: Consum
                     <p style={{ fontSize: 13, fontWeight: 700, color: '#1A1A1A', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.foodName}</p>
                     <p style={{ fontSize: 10, color: '#999', margin: 0, marginTop: 2, textTransform: 'capitalize' }}>
                       {entry.meal} · qty {entry.quantity}
-                      {entry.type === 'qr_scan' && <span style={{ color: '#D71920', fontWeight: 700, marginLeft: 4 }}>QR</span>}
+                      {entry.type === 'qr_scan' && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: '#D71920', fontWeight: 700, marginLeft: 4 }}>
+                          ✓ Verified Scan
+                        </span>
+                      )}
                     </p>
                   </div>
                   <div style={{ textAlign: 'right', flexShrink: 0, marginRight: 6 }}>
@@ -426,7 +434,7 @@ export default function ConsumptionScreen({ user, onScanQR, refreshKey }: Consum
             <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
               <Field label="Food Name">
                 <input type="text" value={form.foodName} onChange={e => setForm(f => ({ ...f, foodName: e.target.value }))}
-                  placeholder="e.g. Boiled SKM Egg"
+                  placeholder="e.g. Grilled Chicken"
                   style={{ width: '100%', padding: '11px 14px', borderRadius: 12, border: '1.5px solid #E8E8E8', fontSize: 13, color: '#1A1A1A', outline: 'none', boxSizing: 'border-box' }} />
               </Field>
 

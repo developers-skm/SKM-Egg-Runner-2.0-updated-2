@@ -49,10 +49,12 @@ service cloud.firestore {
     // ── NOTIFICATION COLLECTIONS ─────────────────────────────
 
     match /notifications/{notifId} {
-      // Any authenticated user can read — the query always filters by userId
-      // so users only ever receive their own docs in practice.
-      // A broad read rule is safe here because all writes are owner-scoped.
-      allow read: if isAuth();
+      // Scoped to the owning user (or a developer). The app's query already
+      // filters by userId, so this doesn't change legitimate reads — it
+      // closes off a direct collection().get() by any authenticated user
+      // that could otherwise enumerate every user's notification content.
+      allow read: if isAuth()
+                  && (resource.data.userId == request.auth.uid || isDeveloper());
 
       // Users create their own notifications; developers/broadcasts create any
       allow create: if isAuth()
@@ -82,11 +84,14 @@ service cloud.firestore {
       allow write: if isOwner(uid) || isDeveloper();
     }
 
-    // Broadcast logs — any authenticated user can create (the NOTIFY UI is
-    // already gated behind the developer login). Developers can read and delete.
+    // Broadcast logs — developer-only. The NOTIFY UI (adminBroadcastService.ts)
+    // does not currently perform a client-side role check before calling this,
+    // so without a rule restricting create, any authenticated user reaching
+    // that code path could write fake audit-log entries or read every user's
+    // notification broadcast history.
     match /broadcast_logs/{logId} {
-      allow read:   if isDeveloper() || isAuth();
-      allow create: if isAuth();
+      allow read:   if isDeveloper();
+      allow create: if isDeveloper();
       allow update: if false;
       allow delete: if isDeveloper();
     }
@@ -154,7 +159,11 @@ service cloud.firestore {
                     && request.resource.data.proteinConsumedByUID == request.auth.uid
                     && request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['proteinConsumed','proteinConsumedAt','proteinConsumedByUID']);
-      allow create: if isAuth();
+      // Only developers create QR codes (via QR Management tooling). Previously
+      // any authenticated user could create a qrCodes doc, which let a client
+      // mint its own unlimited-play/unlimited-protein-claim QR code by writing
+      // { active: true, maxPlays: 999999, playCount: 0 } directly.
+      allow create: if isDeveloper();
       // Only developers can delete QR codes
       allow delete: if isDeveloper();
     }
@@ -183,9 +192,11 @@ service cloud.firestore {
 
     match /gameConfig/{docId} {
       allow read:  if isAuth();
-      // Developer may write config; fallback UID kept for backward compat
-      allow write: if isDeveloper()
-                   || (isAuth() && request.auth.uid == 'YOUR_DEVELOPER_UID');
+      // Developer may write config. The previous fallback
+      // (`request.auth.uid == 'YOUR_DEVELOPER_UID'`) was an unreplaced
+      // placeholder — never matches a real Firebase UID, so it was inert,
+      // but removed to avoid a stale bypass clause in production rules.
+      allow write: if isDeveloper();
     }
 
     // QR Management Settings (game link mapping, etc.) — developer only
@@ -324,9 +335,26 @@ service cloud.firestore {
     }
 
     // ── SKM REWARDS CLUB (loyalty points, membership, coupons) ──
+    // The client SDK writes this doc directly (rewardWalletService.ts —
+    // addPoints/spendPoints), so a full lock-to-developer would break the app.
+    // Instead we bound what a write may do: lifetimePoints and totalRedeemed
+    // are monotonically non-decreasing (they represent all-time totals and
+    // must never be reset downward by a client), and currentPoints can never
+    // go negative. This blocks the previous exploit of a client directly
+    // setDoc-ing an arbitrary currentPoints/membership value, while still
+    // allowing the legitimate earn/spend paths (which only ever increment or
+    // decrement by a bounded amount) to succeed.
     match /rewardWallet/{uid} {
-      allow read:  if isOwner(uid) || isDeveloper();
-      allow write: if isOwner(uid);
+      allow read:   if isOwner(uid) || isDeveloper();
+      allow create: if isOwner(uid)
+                    && request.resource.data.currentPoints  == 0
+                    && request.resource.data.lifetimePoints == 0
+                    && request.resource.data.totalRedeemed  == 0;
+      allow update: if isOwner(uid)
+                    && request.resource.data.currentPoints  >= 0
+                    && request.resource.data.lifetimePoints >= resource.data.lifetimePoints
+                    && request.resource.data.totalRedeemed  >= resource.data.totalRedeemed;
+      allow delete: if false;
     }
 
     match /rewardTransactions/{uid}/entries/{entryId} {
@@ -336,10 +364,17 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Coupon status only ever moves one-way: available -> used, or
+    // available -> expired (see rewardCouponService.ts markCouponUsed /
+    // getUserCoupons). Previously any owner update was allowed, which let a
+    // client flip a used/expired coupon back to "available" and reuse it.
     match /rewardCoupons/{uid}/redemptions/{couponId} {
       allow read:   if isOwner(uid) || isDeveloper();
       allow create: if isOwner(uid) && request.resource.data.userId == uid;
-      allow update: if isOwner(uid); // allows client-side expiry/used status flips
+      allow update: if isOwner(uid)
+                    && resource.data.status == 'available'
+                    && (request.resource.data.status == 'used' || request.resource.data.status == 'expired')
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'usedAt']);
       allow delete: if false;
     }
 

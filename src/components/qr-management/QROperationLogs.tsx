@@ -181,7 +181,7 @@ function LogDetailDrawer({ log, onClose }: { log: OpLog; onClose: () => void }) 
                 </React.Fragment>
               ))}
             </div>
-            {log.durationMs > 0 && (
+            {!!log.durationMs && log.durationMs > 0 && (
               <p style={{ fontSize: 10, color: '#9CA3AF', textAlign: 'center', margin: '8px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                 <Clock size={10} /> Total duration: <strong style={{ color: '#374151' }}>{durationLabel}</strong>
               </p>

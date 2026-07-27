@@ -1169,7 +1169,7 @@ export class SKMRunnerEngine {
 
       // Apply coordinates and vertex colors to terrain plane
       const posAttr = terrainGeom.getAttribute('position') as THREE.BufferAttribute;
-      const colors = [];
+      const colors: number[] = [];
       const tempColor = new THREE.Color();
       
       for (let j = 0; j < posAttr.count; j++) {
@@ -7035,116 +7035,115 @@ export class SKMRunnerEngine {
     }
   }
 
+  private touchStartX = 0;
+  private touchStartY = 0;
+  private trackingTouchId: number | null = null;
+
+  private handleKeyDown = (e: KeyboardEvent) => {
+    if (!this.isRunning || this.isPaused || this.isCrashed) return;
+
+    // Check for Corner Turns first!
+    if (this.isNearCornerTurn && !this.wasCornerTurnedSuccessfully) {
+      if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
+        if (this.cornerTurnDirection === 'LEFT' || this.cornerTurnDirection === 'T_JUNCTION') {
+          this.handleSuccessfulCornerTurn('LEFT');
+          return;
+        }
+      }
+      if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
+        if (this.cornerTurnDirection === 'RIGHT' || this.cornerTurnDirection === 'T_JUNCTION') {
+          this.handleSuccessfulCornerTurn('RIGHT');
+          return;
+        }
+      }
+    }
+
+    switch (e.key) {
+      case 'ArrowLeft':
+      case 'a':
+      case 'A':
+        this.moveLane(-1);
+        break;
+      case 'ArrowRight':
+      case 'd':
+      case 'D':
+        this.moveLane(1);
+        break;
+      case 'ArrowUp':
+      case 'w':
+      case 'W':
+      case ' ':
+        this.triggerJump();
+        break;
+      case 'ArrowDown':
+      case 's':
+      case 'S':
+        this.triggerSlide();
+        break;
+    }
+  };
+
+  private handleTouchStart = (e: TouchEvent) => {
+    // Only during active gameplay do we own the gesture — menus/modals still
+    // need normal scrolling, so we don't preventDefault outside a run.
+    if (!this.isRunning || this.isPaused || this.isCrashed) return;
+    const t = e.touches[0];
+    this.trackingTouchId = t.identifier;
+    this.touchStartX = t.clientX;
+    this.touchStartY = t.clientY;
+    e.preventDefault();
+  };
+
+  private handleTouchMove = (e: TouchEvent) => {
+    if (this.trackingTouchId === null) return;
+    // Must preventDefault on move (not just start/end) or mobile browsers
+    // take the gesture as a page scroll/pull-to-refresh/pinch-zoom once
+    // movement is detected, which swallows the swipe before touchend fires.
+    e.preventDefault();
+  };
+
+  private handleTouchEnd = (e: TouchEvent) => {
+    if (this.trackingTouchId === null) return;
+    const touch = Array.from(e.changedTouches).find(t => t.identifier === this.trackingTouchId);
+    this.trackingTouchId = null;
+    if (!touch) return;
+    if (!this.isRunning || this.isPaused || this.isCrashed) return;
+    e.preventDefault();
+
+    const dx = touch.clientX - this.touchStartX;
+    const dy = touch.clientY - this.touchStartY;
+
+    // Check for Corner Turns first!
+    if (this.isNearCornerTurn && !this.wasCornerTurnedSuccessfully) {
+      if (Math.abs(dx) > 35) {
+        if (dx > 0 && (this.cornerTurnDirection === 'RIGHT' || this.cornerTurnDirection === 'T_JUNCTION')) {
+          this.handleSuccessfulCornerTurn('RIGHT');
+          return;
+        } else if (dx < 0 && (this.cornerTurnDirection === 'LEFT' || this.cornerTurnDirection === 'T_JUNCTION')) {
+          this.handleSuccessfulCornerTurn('LEFT');
+          return;
+        }
+      }
+    }
+
+    if (Math.abs(dx) > Math.abs(dy)) {
+      if (Math.abs(dx) > 35) {
+        if (dx > 0) this.moveLane(1);
+        else this.moveLane(-1);
+      }
+    } else {
+      if (Math.abs(dy) > 35) {
+        if (dy < 0) this.triggerJump();
+        else this.triggerSlide();
+      }
+    }
+  };
+
   private setupInput() {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!this.isRunning || this.isPaused || this.isCrashed) return;
-
-      // Check for Corner Turns first!
-      if (this.isNearCornerTurn && !this.wasCornerTurnedSuccessfully) {
-        if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
-          if (this.cornerTurnDirection === 'LEFT' || this.cornerTurnDirection === 'T_JUNCTION') {
-            this.handleSuccessfulCornerTurn('LEFT');
-            return;
-          }
-        }
-        if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
-          if (this.cornerTurnDirection === 'RIGHT' || this.cornerTurnDirection === 'T_JUNCTION') {
-            this.handleSuccessfulCornerTurn('RIGHT');
-            return;
-          }
-        }
-      }
-
-      switch (e.key) {
-        case 'ArrowLeft':
-        case 'a':
-        case 'A':
-          this.moveLane(-1);
-          break;
-        case 'ArrowRight':
-        case 'd':
-        case 'D':
-          this.moveLane(1);
-          break;
-        case 'ArrowUp':
-        case 'w':
-        case 'W':
-        case ' ':
-          this.triggerJump();
-          break;
-        case 'ArrowDown':
-        case 's':
-        case 'S':
-          this.triggerSlide();
-          break;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-
-    let startX = 0;
-    let startY = 0;
-    let trackingTouchId: number | null = null;
-
-    const handleTouchStart = (e: TouchEvent) => {
-      // Only during active gameplay do we own the gesture — menus/modals still
-      // need normal scrolling, so we don't preventDefault outside a run.
-      if (!this.isRunning || this.isPaused || this.isCrashed) return;
-      const t = e.touches[0];
-      trackingTouchId = t.identifier;
-      startX = t.clientX;
-      startY = t.clientY;
-      e.preventDefault();
-    };
-
-    const handleTouchMove = (e: TouchEvent) => {
-      if (trackingTouchId === null) return;
-      // Must preventDefault on move (not just start/end) or mobile browsers
-      // take the gesture as a page scroll/pull-to-refresh/pinch-zoom once
-      // movement is detected, which swallows the swipe before touchend fires.
-      e.preventDefault();
-    };
-
-    const handleTouchEnd = (e: TouchEvent) => {
-      if (trackingTouchId === null) return;
-      const touch = Array.from(e.changedTouches).find(t => t.identifier === trackingTouchId);
-      trackingTouchId = null;
-      if (!touch) return;
-      if (!this.isRunning || this.isPaused || this.isCrashed) return;
-      e.preventDefault();
-
-      const dx = touch.clientX - startX;
-      const dy = touch.clientY - startY;
-
-      // Check for Corner Turns first!
-      if (this.isNearCornerTurn && !this.wasCornerTurnedSuccessfully) {
-        if (Math.abs(dx) > 35) {
-          if (dx > 0 && (this.cornerTurnDirection === 'RIGHT' || this.cornerTurnDirection === 'T_JUNCTION')) {
-            this.handleSuccessfulCornerTurn('RIGHT');
-            return;
-          } else if (dx < 0 && (this.cornerTurnDirection === 'LEFT' || this.cornerTurnDirection === 'T_JUNCTION')) {
-            this.handleSuccessfulCornerTurn('LEFT');
-            return;
-          }
-        }
-      }
-
-      if (Math.abs(dx) > Math.abs(dy)) {
-        if (Math.abs(dx) > 35) {
-          if (dx > 0) this.moveLane(1);
-          else this.moveLane(-1);
-        }
-      } else {
-        if (Math.abs(dy) > 35) {
-          if (dy < 0) this.triggerJump();
-          else this.triggerSlide();
-        }
-      }
-    };
-
-    window.addEventListener('touchstart', handleTouchStart, { passive: false });
-    window.addEventListener('touchmove', handleTouchMove, { passive: false });
-    window.addEventListener('touchend', handleTouchEnd, { passive: false });
+    window.addEventListener('keydown', this.handleKeyDown);
+    window.addEventListener('touchstart', this.handleTouchStart, { passive: false });
+    window.addEventListener('touchmove', this.handleTouchMove, { passive: false });
+    window.addEventListener('touchend', this.handleTouchEnd, { passive: false });
   }
 
   public swipeLeft() { this.moveLane(-1); }
@@ -10007,6 +10006,7 @@ export class SKMRunnerEngine {
       if (!this.debugMatRed) {
         this.debugMatRed = new THREE.MeshBasicMaterial({ color: 0xef4444, wireframe: true, depthTest: false, transparent: true, opacity: 0.85 });
       }
+      const debugMatRed = this.debugMatRed;
 
       // Update Player Box Viz
       const pHeight = this.isSliding ? 0.45 : 1.1;
@@ -10128,7 +10128,7 @@ export class SKMRunnerEngine {
           }
 
           if (!dMesh) {
-            dMesh = new THREE.Mesh(new THREE.BoxGeometry(obsW, obsH, obsD), this.debugMatRed);
+            dMesh = new THREE.Mesh(new THREE.BoxGeometry(obsW, obsH, obsD), debugMatRed);
             this.debugHitboxMeshes.set(obs, dMesh);
             this.scene.add(dMesh);
           } else {
@@ -11242,9 +11242,10 @@ export class SKMRunnerEngine {
 
   public cleanup() {
     this.stop();
-    window.removeEventListener('keydown', () => {});
-    window.removeEventListener('touchstart', () => {});
-    window.removeEventListener('touchend', () => {});
+    window.removeEventListener('keydown', this.handleKeyDown);
+    window.removeEventListener('touchstart', this.handleTouchStart);
+    window.removeEventListener('touchmove', this.handleTouchMove);
+    window.removeEventListener('touchend', this.handleTouchEnd);
     window.removeEventListener('resize', this.handleResize);
 
     // Clean up debug hitboxes

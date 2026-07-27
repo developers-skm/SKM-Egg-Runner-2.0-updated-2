@@ -246,5 +246,10 @@ export async function markCouponUsed(uid: string, couponId: string): Promise<voi
   const ref = doc(db, 'rewardCoupons', uid, 'redemptions', couponId);
   const snap = await getDoc(ref);
   if (!snap.exists()) return;
+  const coupon = snap.data() as RewardCoupon;
+  const today = new Date().toLocaleDateString('sv-SE');
+  if (coupon.status !== 'available' || coupon.expiryDate < today) {
+    throw new Error('This coupon is no longer valid.');
+  }
   await updateDoc(ref, { status: 'used', usedAt: serverTimestamp() });
 }

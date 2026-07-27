@@ -77,8 +77,9 @@ function typeIcon(type: NotificationType | 'login'): React.ReactNode {
     case 'anniversary':
       return <Gift size={s} color="#F59E0B" />;
     case 'week_complete':
-    case 'new_week_started':
       return <Package size={s} color="#10B981" />;
+    case 'new_week_started':
+      return <Calendar size={s} color="#10B981" />;
     case 'missed_one_day':
     case 'missed_three_days':
     case 'protein_streak_lost':
@@ -89,8 +90,6 @@ function typeIcon(type: NotificationType | 'login'): React.ReactNode {
     case 'system_update':
     case 'maintenance':
       return <Zap size={s} color="#64748B" />;
-    case 'new_week_started':
-      return <Calendar size={s} color="#10B981" />;
     case 'reward_points_earned':
     case 'reward_redeemable':
     case 'reward_redeemed':

@@ -30,7 +30,11 @@
       "Bash(git --no-pager diff --stat)",
       "Bash(tasklist)",
       "Bash(taskkill //PID 21040 //F)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(cat > *)"
+    ],
+    "additionalDirectories": [
+      "\\tmp\\tsrepro"
     ]
   }
 }

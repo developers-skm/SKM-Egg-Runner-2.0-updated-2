@@ -310,10 +310,19 @@ export async function logEggScan(uid: string, qrCode: string): Promise<{
 // LOG MANUAL FOOD ENTRY
 // ─────────────────────────────────────────────────────────────
 
+/** SKM egg products are QR-exclusive — blocks manual entries that would duplicate a QR scan. */
+function isSkmEggName(name: string): boolean {
+  const n = name.trim().toLowerCase();
+  return n.includes('skm') && n.includes('egg');
+}
+
 export async function logManualEntry(
   uid: string,
   data: { foodName: string; protein: number; calories: number; quantity: number; meal: ProteinLogEntry['meal']; category?: string }
 ): Promise<ProteinLogEntry> {
+  if (isSkmEggName(data.foodName)) {
+    throw new Error('SKM Eggs can only be logged by scanning a valid SKM QR code.');
+  }
   const dateKey = todayKey();
   const entry: Omit<ProteinLogEntry, 'id'> = {
     uid, type: 'manual', dateKey,
@@ -851,10 +860,6 @@ export interface FoodItem {
 }
 
 export const FOOD_DATABASE: FoodItem[] = [
-  { name: 'SKM Egg (Boiled)',   protein: 6,  calories: 78,  category: 'Eggs',          serving: '1 egg' },
-  { name: 'SKM Egg (Fried)',    protein: 6,  calories: 90,  category: 'Eggs',          serving: '1 egg' },
-  { name: 'SKM Egg (Scrambled)',protein: 6,  calories: 91,  category: 'Eggs',          serving: '1 egg' },
-  { name: 'Egg White',          protein: 4,  calories: 17,  category: 'Eggs',          serving: '1 white' },
   { name: 'Chicken Breast',     protein: 31, calories: 165, category: 'Chicken',       serving: '100g' },
   { name: 'Chicken Thigh',      protein: 26, calories: 209, category: 'Chicken',       serving: '100g' },
   { name: 'Grilled Chicken',    protein: 30, calories: 150, category: 'Chicken',       serving: '100g' },
@@ -872,7 +877,7 @@ export const FOOD_DATABASE: FoodItem[] = [
   { name: 'Soya Chunks',        protein: 52, calories: 336, category: 'Plant Protein', serving: '100g dry' },
 ];
 
-export const FOOD_CATEGORIES = ['All', 'Eggs', 'Chicken', 'Fish', 'Dairy', 'Supplements', 'Nuts', 'Legumes', 'Plant Protein'];
+export const FOOD_CATEGORIES = ['All', 'Chicken', 'Fish', 'Dairy', 'Supplements', 'Nuts', 'Legumes', 'Plant Protein'];
 
 // ─────────────────────────────────────────────────────────────
 // HELPERS

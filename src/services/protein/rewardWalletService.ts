@@ -10,7 +10,7 @@
  * Callers award points as a fire-and-forget side effect (see QRScanScreen.tsx).
  */
 
-import { doc, getDoc, setDoc, serverTimestamp, increment, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, increment, runTransaction, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase/firebase';
 import { MEMBERSHIP_TIERS, POINTS_PER_SCAN, POINTS_PER_STREAK_MILESTONE, type MembershipTier, type MembershipTierDef } from '../../constants/rewards';
 import { addRewardTransaction, type RewardTransactionType } from './rewardTransactionService';
@@ -78,24 +78,32 @@ export async function addPoints(
 ): Promise<RewardWallet> {
   if (points === 0) return getRewardWallet(uid);
   const ref = doc(db, WALLET_COLLECTION, uid);
-  const before = await getRewardWallet(uid);
 
-  const lifetimeDelta = points > 0 ? points : 0; // lifetime only ever grows
-  const newLifetime = before.lifetimePoints + lifetimeDelta;
-  const newCurrent = Math.max(0, before.currentPoints + points);
-  const newTier = calcMembershipTier(newLifetime).tier;
+  const updated = await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const before: RewardWallet = snap.exists()
+      ? (snap.data() as RewardWallet)
+      : { ...defaultWallet(uid), updatedAt: serverTimestamp() as Timestamp };
 
-  await setDoc(ref, {
-    userId: uid,
-    currentPoints: newCurrent,
-    lifetimePoints: newLifetime,
-    membership: newTier,
-    updatedAt: serverTimestamp(),
-  }, { merge: true });
+    const lifetimeDelta = points > 0 ? points : 0; // lifetime only ever grows
+    const newLifetime = before.lifetimePoints + lifetimeDelta;
+    const newCurrent = Math.max(0, before.currentPoints + points);
+    const newTier = calcMembershipTier(newLifetime).tier;
+
+    tx.set(ref, {
+      userId: uid,
+      currentPoints: newCurrent,
+      lifetimePoints: newLifetime,
+      membership: newTier,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+
+    return { ...before, currentPoints: newCurrent, lifetimePoints: newLifetime, membership: newTier };
+  });
 
   await addRewardTransaction(uid, { type, points, description });
 
-  return { ...before, currentPoints: newCurrent, lifetimePoints: newLifetime, membership: newTier };
+  return updated;
 }
 
 export interface ScanPointsResult {
@@ -149,24 +157,39 @@ export async function awardMilestoneStickerPoints(uid: string, points: number, d
   }
 }
 
-/** Spends points on a redemption. Throws if insufficient balance. Caller should catch and surface an error. */
+/**
+ * Spends points on a redemption. Throws if insufficient balance.
+ * The balance check and the deduction happen inside a single Firestore
+ * transaction so two concurrent redemptions (e.g. two tabs/devices) can't
+ * both read the same starting balance and both succeed — the transaction
+ * re-reads and re-validates the live balance before committing.
+ * Caller should catch and surface an error.
+ */
 export async function spendPoints(uid: string, points: number, description: string): Promise<RewardWallet> {
-  const wallet = await getRewardWallet(uid);
-  if (wallet.currentPoints < points) throw new Error('Insufficient reward points.');
-
   const ref = doc(db, WALLET_COLLECTION, uid);
-  await setDoc(ref, {
-    userId: uid,
-    currentPoints: increment(-points),
-    totalRedeemed: increment(points),
-    updatedAt: serverTimestamp(),
-  }, { merge: true });
+
+  const updated = await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const wallet: RewardWallet = snap.exists()
+      ? (snap.data() as RewardWallet)
+      : { ...defaultWallet(uid), updatedAt: serverTimestamp() as Timestamp };
+
+    if (wallet.currentPoints < points) throw new Error('Insufficient reward points.');
+
+    const newCurrent = wallet.currentPoints - points;
+    const newTotalRedeemed = wallet.totalRedeemed + points;
+
+    tx.set(ref, {
+      userId: uid,
+      currentPoints: newCurrent,
+      totalRedeemed: newTotalRedeemed,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+
+    return { ...wallet, currentPoints: newCurrent, totalRedeemed: newTotalRedeemed };
+  });
 
   await addRewardTransaction(uid, { type: 'redeem', points: -points, description });
 
-  return {
-    ...wallet,
-    currentPoints: wallet.currentPoints - points,
-    totalRedeemed: wallet.totalRedeemed + points,
-  };
+  return updated;
 }
