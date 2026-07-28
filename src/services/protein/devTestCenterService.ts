@@ -28,7 +28,7 @@ import { db } from '../firebase/firebase';
 import { todayKey } from '../../utils/dateHelpers';
 
 // ── Existing services (used, never modified) ──────────────────────
-import { logEggScan, getTodayStats } from './proteinTrackerService';
+import { processEggScan, getTodayStats } from './proteinTrackerService';
 import { recordStreakDay, getEggStreakData, getStreakHistory } from './eggStreakService';
 import {
   addPoints, spendPoints, getRewardWallet, calcMembershipTier,
@@ -126,10 +126,11 @@ export async function getDevEnvSnapshot(uid: string, email: string | null): Prom
 
 /**
  * Adds `grams` of protein by running the real scan flow N times (each scan ≈ 6g).
- * Mirrors QRScanScreen.tsx's post-scan pipeline exactly: logEggScan (protein +
- * streak), recordStreakDay (calendar history), then awardScanPoints (reward
- * points + streak-milestone bonus + notifications) — so a dev "scan" produces
- * the same reward-side effects as a genuine QR scan.
+ * Mirrors QRScanScreen.tsx's post-scan pipeline exactly: processEggScan (the
+ * atomic transaction covering protein, streak, reward points/membership,
+ * summary, and challenges), then recordStreakDay (calendar history, not part
+ * of the transaction) — so a dev "scan" produces the same effects as a
+ * genuine QR scan.
  */
 export async function devAddProtein(uid: string, grams: number): Promise<void> {
   const scans = Math.max(1, Math.round(grams / 6));
@@ -139,9 +140,9 @@ export async function devAddProtein(uid: string, grams: number): Promise<void> {
       active: true, playCount: 0, maxPlays: 999, proteinConsumed: false,
       createdAt: serverTimestamp(), _devTestEntry: true,
     });
-    const { streak } = await logEggScan(uid, fakeCode);
-    await recordStreakDay(uid).catch(() => {});
-    await awardScanPoints(uid, streak.currentStreak);
+    const result = await processEggScan(uid, fakeCode);
+    if (!result.ok) throw new Error(`devAddProtein: scan ${i} failed (${result.reason})`);
+    await recordStreakDay(uid).catch(err => console.error('[devAddProtein] recordStreakDay failed:', err));
   }
 }
 

@@ -22,6 +22,10 @@ import {
 import { db } from '../firebase/firebase';
 import { updateSummaryOnScan, updateSummaryOnManualEntry } from './userSummaryService';
 import { startTimer, endTimer } from '../../utils/perfTimer';
+import { logBackgroundFailure } from '../../utils/errorHandling';
+import { addPointsInTransaction, type RewardWallet as RewardWalletV2 } from './rewardWalletService';
+import { addRewardTransaction } from './rewardTransactionService';
+import { POINTS_PER_SCAN, POINTS_PER_STREAK_MILESTONE } from '../../constants/rewards';
 // Shared utilities — single source of truth
 import {
   todayKey as _todayKey,
@@ -234,76 +238,190 @@ export async function addRewards(uid: string, xp: number, coins: number): Promis
 }
 
 // ─────────────────────────────────────────────────────────────
-// PROTEIN SCAN DEDUPLICATION
-// Collection: proteinScans/{uid}_{qrCode}
-// Each user can earn protein credit from a specific QR exactly once.
-// Game access (validateAndUseQR) is completely separate — unaffected.
+// PROCESS EGG SCAN — atomic QR-scan pipeline
 // ─────────────────────────────────────────────────────────────
+//
+// Single Firestore transaction spanning every doc a genuine scan touches:
+// qrCodes (ownership claim), protein_logs (new entry), daily_stats, users
+// (streak), rewardWallet (points + membership), userSummary, and the
+// specific tracker_challenges docs the scan can affect. Either the whole
+// set commits together or none of it does — the QR is only ever marked
+// consumed if every dependent update succeeds in the same transaction.
+//
+// XP/coins (tracker_rewards, a separate progression currency from reward
+// points) are intentionally NOT awarded here — achievements/challenge
+// claims still award XP/coins via addRewards() on their own triggers, but
+// per-scan XP/coins were a duplicate of the reward-points system and have
+// been removed from the scan path (see rewardWallet/{uid} instead).
 
-function proteinScanDocId(uid: string, qrCode: string): string {
-  // Sanitise qrCode — Firestore doc IDs cannot contain '/'
-  const safeCode = qrCode.replace(/\//g, '_');
-  return `${uid}_${safeCode}`;
-}
+export type ProcessEggScanResult =
+  | {
+      ok: true;
+      entry: ProteinLogEntry;
+      streak: StreakInfo;
+      prevStreak: number;
+      goalJustMet: boolean;
+      pointsEarned: number;
+      wallet: RewardWalletV2;
+      tierChanged: boolean;
+    }
+  | { ok: false; reason: 'consumed_by_self' | 'consumed_by_other' }
+  | { ok: false; reason: 'error'; message: string };
 
-/** Returns true if this user has already received protein credit for this QR. */
-export async function checkProteinScanExists(uid: string, qrCode: string): Promise<boolean> {
-  const ref  = doc(db, 'proteinScans', proteinScanDocId(uid, qrCode));
-  const snap = await getDoc(ref);
-  return snap.exists();
-}
+const SCAN_CHALLENGE_IDS = ['daily_scan', 'weekly_eggs', 'weekly_protein', 'daily_goal', 'monthly_goal', 'monthly_streak'];
 
-// ─────────────────────────────────────────────────────────────
-// LOG AN EGG (QR scan)
-// ─────────────────────────────────────────────────────────────
+export async function processEggScan(uid: string, qrCode: string): Promise<ProcessEggScanResult> {
+  const dateKey  = todayKey();
+  const qrRef    = doc(db, 'qrCodes', qrCode);
+  const userRef  = doc(db, 'users', uid);
+  const statsRef = doc(db, 'daily_stats', uid, 'days', dateKey);
+  const walletRef = doc(db, 'rewardWallet', uid);
+  const summaryRef = doc(db, 'userSummary', uid);
+  const challengeRefs = SCAN_CHALLENGE_IDS.map(id => doc(db, 'tracker_challenges', uid, 'list', id));
+  const entryRef = doc(collection(db, 'protein_logs', uid, 'entries'));
 
-export async function logEggScan(uid: string, qrCode: string): Promise<{
-  entry: ProteinLogEntry; streak: StreakInfo; prevStreak: number; xpEarned: number; coinsEarned: number;
-}> {
-  // Dedup is now handled atomically by claimProteinScan() before this function
-  // is called, so we skip the dedup transaction here and write the log entry directly.
-  const dateKey = todayKey();
-  const colRef  = collection(db, 'protein_logs', uid, 'entries');
-  const newRef  = doc(colRef);
-  const entryId = newRef.id;
+  try {
+    const settings = await getTrackerSettings(uid);
 
-  await setDoc(newRef, {
-    uid, type: 'qr_scan', foodName: 'SKM Egg',
-    protein: PROTEIN_PER_EGG, calories: CALORIES_PER_EGG,
-    quantity: 1, meal: getMealByTime(), dateKey,
-    loggedAt: serverTimestamp(), qrCode, category: 'Eggs',
-  });
+    const result = await runTransaction(db, async (tx) => {
+      // ── Reads (all before any write, per Firestore transaction rules) ──
+      const qrSnap       = await tx.get(qrRef);
+      const userSnap      = await tx.get(userRef);
+      const statsSnap      = await tx.get(statsRef);
+      const walletSnap      = await tx.get(walletRef);
+      const challengeSnaps    = await Promise.all(challengeRefs.map(ref => tx.get(ref)));
 
-  const entry: Omit<ProteinLogEntry, 'id'> = {
-    uid, type: 'qr_scan', foodName: 'SKM Egg',
-    protein: PROTEIN_PER_EGG, calories: CALORIES_PER_EGG,
-    quantity: 1, meal: getMealByTime(), dateKey,
-    loggedAt: serverTimestamp() as Timestamp, qrCode, category: 'Eggs',
-  };
+      // ── Ownership check — abort with NO writes if already consumed ──
+      if (qrSnap.exists() && qrSnap.data().proteinConsumed === true) {
+        const claimedBy: string = qrSnap.data().proteinConsumedByUID ?? '';
+        return { ok: false as const, reason: claimedBy === uid ? 'consumed_by_self' as const : 'consumed_by_other' as const };
+      }
 
-  const goalJustMet   = await updateDailyStats(uid, dateKey, entry.protein, entry.calories, 1);
-  const prevSnapData  = await getDoc(doc(db, 'users', uid)).then(s => s.exists() ? s.data() : {});
-  const prevStreak    = prevSnapData.currentConsumptionStreak ?? 0;
-  const streakInfo    = await updateStreak(uid, dateKey);
-  const challengeUpdates = [
-    updateChallengeProgress(uid, 'scan_egg', 1),
-    updateChallengeProgress(uid, 'protein_logged', entry.protein),
-    updateChallengeProgress(uid, 'streak_update', streakInfo.currentStreak),
-  ];
-  if (goalJustMet) challengeUpdates.push(updateChallengeProgress(uid, 'goal_met', 1));
-  await Promise.all([
-    addRewards(uid, XP_PER_EGG, COINS_PER_EGG),
-    ...challengeUpdates,
-    updateSummaryOnScan(uid, entry.protein, streakInfo),
-  ]);
+      // ── Compute streak ──
+      const userData  = userSnap.exists() ? userSnap.data() : {};
+      const prevStreak = userData.currentConsumptionStreak ?? 0;
+      const yesterday = new Date(dateKey + 'T12:00:00');
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yKey = dateKeyFor(yesterday);
+      const lastDate = userData.lastConsumptionDate ?? '';
 
-  return {
-    entry: { ...entry, id: entryId ?? '' },
-    streak: streakInfo,
-    prevStreak,
-    xpEarned: XP_PER_EGG,
-    coinsEarned: COINS_PER_EGG,
-  };
+      let newStreak = prevStreak;
+      if      (lastDate === dateKey) { /* already logged today */ }
+      else if (lastDate === yKey)    { newStreak = prevStreak + 1; }
+      else                           { newStreak = 1; }
+      const newBestStreak = Math.max(userData.bestConsumptionStreak ?? 0, newStreak);
+      const streakInfo: StreakInfo = { currentStreak: newStreak, bestStreak: newBestStreak, lastActiveDate: dateKey };
+
+      // ── Compute daily stats ──
+      const protein  = PROTEIN_PER_EGG;
+      const calories = CALORIES_PER_EGG;
+      let goalJustMet = false;
+      let newStats: DailyStats;
+      if (!statsSnap.exists()) {
+        goalJustMet = protein >= settings.dailyGoal;
+        newStats = {
+          uid, dateKey, totalProtein: protein, totalCalories: calories, totalEggs: 1,
+          goal: settings.dailyGoal, entries: 1, goalMet: goalJustMet, updatedAt: serverTimestamp() as Timestamp,
+        };
+      } else {
+        const d = statsSnap.data() as DailyStats;
+        const newP = d.totalProtein + protein;
+        const goalMet = newP >= d.goal;
+        goalJustMet = goalMet && !d.goalMet;
+        newStats = {
+          ...d, totalProtein: newP, totalCalories: d.totalCalories + calories,
+          totalEggs: d.totalEggs + 1, entries: d.entries + 1, goalMet, updatedAt: serverTimestamp() as Timestamp,
+        };
+      }
+
+      // ── Compute reward points (base scan + streak-milestone bonus, one wallet write) ──
+      const streakBonus = POINTS_PER_STREAK_MILESTONE[newStreak] ?? 0;
+      const pointsEarned = POINTS_PER_SCAN + streakBonus;
+      const walletBefore = walletSnap.exists() ? (walletSnap.data() as RewardWalletV2) : null;
+      const { wallet, tierChanged } = addPointsInTransaction(tx, walletRef, walletBefore, pointsEarned);
+
+      // ── Compute challenge progress (only the fixed-ID docs relevant to a scan) ──
+      const today = dateKey, weekKey = getWeekKey(), monthKey = getMonthKey();
+      for (let i = 0; i < SCAN_CHALLENGE_IDS.length; i++) {
+        const id = SCAN_CHALLENGE_IDS[i];
+        const snap = challengeSnaps[i];
+        const def = CHALLENGE_DEFINITIONS.find(c => c.id === id)!;
+        const periodKey = def.type === 'daily' ? today : def.type === 'weekly' ? weekKey : monthKey;
+        const existing = snap.exists() ? (snap.data() as Challenge) : null;
+        const base: Challenge = (existing && existing.dateKey === periodKey)
+          ? existing
+          : { ...def, progress: 0, completed: false, claimed: false, dateKey: periodKey, expiresAt: getChallengeExpiry(def.type) };
+
+        if (base.completed) {
+          if (!existing || existing.dateKey !== periodKey) tx.set(challengeRefs[i], base);
+          continue;
+        }
+
+        let newProgress = base.progress;
+        let shouldWrite = !existing || existing.dateKey !== periodKey;
+        switch (id) {
+          case 'daily_scan':     newProgress = Math.min(1, base.progress + 1); shouldWrite = true; break;
+          case 'weekly_eggs':    newProgress = Math.min(10, base.progress + 1); shouldWrite = true; break;
+          case 'weekly_protein': if (protein > 0) { newProgress = Math.min(base.target, base.progress + protein); shouldWrite = true; } break;
+          case 'daily_goal':     if (goalJustMet) { newProgress = 1; shouldWrite = true; } break;
+          case 'monthly_goal':   if (goalJustMet) { newProgress = Math.min(base.target, base.progress + 1); shouldWrite = true; } break;
+          case 'monthly_streak': newProgress = Math.min(base.target, Math.max(base.progress, newStreak)); shouldWrite = true; break;
+        }
+
+        if (shouldWrite) {
+          tx.set(challengeRefs[i], { ...base, progress: newProgress, completed: newProgress >= base.target });
+        }
+      }
+
+      // ── Commit the remaining writes ──
+      tx.set(qrRef, { proteinConsumed: true, proteinConsumedAt: serverTimestamp(), proteinConsumedByUID: uid }, { merge: true });
+      tx.set(entryRef, {
+        uid, type: 'qr_scan', foodName: 'SKM Egg', protein, calories,
+        quantity: 1, meal: getMealByTime(), dateKey, loggedAt: serverTimestamp(), qrCode, category: 'Eggs',
+      });
+      tx.set(statsRef, newStats);
+      tx.set(userRef, {
+        currentConsumptionStreak: newStreak, bestConsumptionStreak: newBestStreak,
+        lastConsumptionDate: dateKey, lifetimeConsumption: increment(1),
+        totalQRCodesScanned: increment(1), updatedAt: serverTimestamp(),
+      }, { merge: true });
+      tx.set(summaryRef, {
+        uid, totalProtein: increment(protein), totalEggs: increment(1),
+        weeklyProtein: increment(protein), monthlyProtein: increment(protein),
+        weeklyEggs: increment(1), monthlyEggs: increment(1),
+        currentStreak: newStreak, bestStreak: newBestStreak, lastActiveDate: dateKey,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+
+      const entry: ProteinLogEntry = {
+        id: entryRef.id, uid, type: 'qr_scan', foodName: 'SKM Egg', protein, calories,
+        quantity: 1, meal: getMealByTime(), dateKey, loggedAt: Timestamp.now(), qrCode, category: 'Eggs',
+      };
+
+      return {
+        ok: true as const, entry, streak: streakInfo, prevStreak, goalJustMet,
+        pointsEarned, wallet, tierChanged,
+      };
+    });
+
+    if (!result.ok) return result;
+
+    // ── Non-transactional, best-effort follow-ups — logged, never swallowed ──
+    addRewardTransaction(uid, { type: 'scan', points: POINTS_PER_SCAN, description: 'Egg scan' })
+      .catch(err => logBackgroundFailure('processEggScan:addRewardTransaction:scan', err));
+    if (POINTS_PER_STREAK_MILESTONE[result.streak.currentStreak]) {
+      addRewardTransaction(uid, {
+        type: 'streak_milestone', points: POINTS_PER_STREAK_MILESTONE[result.streak.currentStreak],
+        description: `${result.streak.currentStreak}-day streak bonus`,
+      }).catch(err => logBackgroundFailure('processEggScan:addRewardTransaction:streak', err));
+    }
+
+    return result;
+  } catch (err: unknown) {
+    const e = err as { code?: string; message?: string };
+    console.error('[processEggScan] transaction error:', { uid, qrCode, code: e?.code, message: e?.message });
+    return { ok: false, reason: 'error', message: e?.message ?? 'Something went wrong. Please try again.' };
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -399,15 +517,22 @@ export async function getRecentEntries(uid: string, count = 10): Promise<Protein
 
 async function updateDailyStats(uid: string, dateKey: string, protein: number, calories: number, eggs: number): Promise<boolean> {
   const ref = doc(db, 'daily_stats', uid, 'days', dateKey);
+  const walletRef = doc(db, 'tracker_rewards', uid);
   // Concurrent scans/manual entries (e.g. two QR scans in quick succession)
   // both call this for the same day — a plain getDoc-then-write would let the
   // second write clobber the first's increment. A transaction makes the
-  // read+write atomic so no update is lost.
+  // read+write atomic so no update is lost. The goal-crossed XP/coin bonus is
+  // folded into the same transaction so it can never be dropped by a failure
+  // between the stats write and a separate follow-up call.
   const settings = await getTrackerSettings(uid);
   const goalJustMet = await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
+    const walletSnap = await tx.get(walletRef);
+
+    let goalJustMet: boolean;
     if (!snap.exists()) {
       const goalMet = protein >= settings.dailyGoal;
+      goalJustMet = goalMet;
       tx.set(ref, {
         uid, dateKey,
         totalProtein: protein, totalCalories: calories, totalEggs: eggs,
@@ -415,24 +540,34 @@ async function updateDailyStats(uid: string, dateKey: string, protein: number, c
         goalMet,
         updatedAt: serverTimestamp(),
       });
-      return goalMet;
+    } else {
+      const d          = snap.data() as DailyStats;
+      const newP       = d.totalProtein + protein;
+      const goalMet    = newP >= d.goal;
+      const wasGoalMet = d.goalMet;
+      goalJustMet = goalMet && !wasGoalMet;
+      tx.update(ref, {
+        totalProtein: newP, totalCalories: d.totalCalories + calories,
+        totalEggs: d.totalEggs + eggs, entries: d.entries + 1,
+        goalMet, updatedAt: serverTimestamp(),
+      });
     }
-    const d          = snap.data() as DailyStats;
-    const newP       = d.totalProtein + protein;
-    const goalMet    = newP >= d.goal;
-    const wasGoalMet = d.goalMet;
-    tx.update(ref, {
-      totalProtein: newP, totalCalories: d.totalCalories + calories,
-      totalEggs: d.totalEggs + eggs, entries: d.entries + 1,
-      goalMet, updatedAt: serverTimestamp(),
-    });
-    return goalMet && !wasGoalMet;
+
+    if (goalJustMet) {
+      const curr = walletSnap.exists() ? (walletSnap.data() as RewardWallet) : { coins: 0, totalXP: 0 };
+      const newXP    = (curr.totalXP ?? 0) + XP_PER_GOAL;
+      const newCoins = (curr.coins   ?? 0) + COINS_PER_GOAL;
+      const lvInfo   = calcLevel(newXP);
+      tx.set(walletRef, {
+        uid, coins: newCoins, totalXP: newXP,
+        level: lvInfo.level, levelTitle: lvInfo.title,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+    }
+
+    return goalJustMet;
   });
 
-  // Award bonus if goal was just crossed
-  if (goalJustMet) {
-    await addRewards(uid, XP_PER_GOAL, COINS_PER_GOAL);
-  }
   return goalJustMet;
 }
 

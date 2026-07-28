@@ -13,9 +13,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Html5Qrcode, Html5QrcodeScannerState } from 'html5-qrcode';
 import type { User } from 'firebase/auth';
-import { validateEggForProtein, claimProteinScan } from '../services/qr/qrService';
 import {
-  logEggScan,
+  processEggScan,
   getRecentEntries, getTodayStats, getTrackerSettings,
   PROTEIN_PER_EGG,
   type ProteinLogEntry, type DailyStats, type TrackerSettings,
@@ -26,9 +25,12 @@ import { HapticService } from '../services/audio/hapticService';
 import {
   notifyProteinAdded, notifyProteinGoalComplete,
   notifyDuplicateEgg, notifyStreakMilestone, notifyProteinMilestone,
+  notifyRewardPointsEarned, notifyMembershipTierUp,
 } from '../services/notifications/notificationService';
 import { recordStreakDay } from '../services/protein/eggStreakService';
-import { awardScanPoints, type RewardWallet } from '../services/protein/rewardWalletService';
+import { type RewardWallet } from '../services/protein/rewardWalletService';
+import { logBackgroundFailure } from '../utils/errorHandling';
+import { validateEggForProtein } from '../services/qr/qrService';
 import ScanCelebrationOverlay from './ScanCelebrationOverlay';
 
 type Phase = 'idle' | 'opening' | 'scanning' | 'processing' | 'success' | 'duplicate' | 'consumed_other' | 'error';
@@ -240,45 +242,41 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
 
       console.log('[QR VALIDATED] accepted:', validation.eggCode);
 
-      // ── Atomic global ownership claim ─────────────────────────────────────
-      // One QR = one protein claim globally. The transaction on qrCodes/{code}
-      // checks proteinConsumed and sets it atomically — only the first caller wins.
-      let claimResult: 'new' | 'consumed_by_self' | 'consumed_by_other';
-      try {
-        claimResult = await claimProteinScan(user.uid, validation.eggCode);
-      } catch (claimErr: any) {
-        console.warn('[PROTEIN CLAIM] claimProteinScan threw:', claimErr?.message);
-        claimResult = 'consumed_by_other';
-      }
+      // ── Atomic scan pipeline ─────────────────────────────────────────────
+      // One Firestore transaction: QR ownership claim, protein log entry,
+      // daily stats, streak, reward points/membership, summary, and challenge
+      // progress all commit together or not at all. The QR is only ever
+      // marked consumed if every dependent update succeeds.
+      const scanResult = await processEggScan(user.uid, validation.eggCode);
 
-      if (claimResult === 'consumed_by_self') {
-        console.warn('[PROTEIN CLAIM] Already claimed by this user:', validation.eggCode);
-        if (mountedRef.current) setPhase('duplicate');
-        // Non-fatal — fire duplicate notification
-        notifyDuplicateEgg(user.uid).catch(() => {});
-        return;
-      }
-
-      if (claimResult === 'consumed_by_other') {
+      if (!scanResult.ok) {
+        if (scanResult.reason === 'error') {
+          // A genuine failure (network/permission/etc), not a duplicate.
+          // Surface it honestly instead of masking it as "consumed".
+          console.error('[SCAN] processEggScan error:', scanResult.message);
+          if (mountedRef.current) { setErrorMessage(scanResult.message); setPhase('error'); }
+          return;
+        }
+        if (scanResult.reason === 'consumed_by_self') {
+          console.warn('[PROTEIN CLAIM] Already claimed by this user:', validation.eggCode);
+          if (mountedRef.current) setPhase('duplicate');
+          notifyDuplicateEgg(user.uid).catch(err => logBackgroundFailure('handleScan:notifyDuplicateEgg', err));
+          return;
+        }
         console.warn('[PROTEIN CLAIM] Already claimed by another user:', validation.eggCode);
         if (mountedRef.current) setPhase('consumed_other');
         return;
       }
 
-      console.log('[PROTEIN ADDED] logging +', PROTEIN_PER_EGG, 'g to Firebase…');
-      const { streak: streakInfo, prevStreak } = await logEggScan(user.uid, validation.eggCode);
-      console.log('[FIREBASE UPDATED] protein_logs + daily_stats + streak written');
+      console.log('[FIREBASE UPDATED] protein_logs + daily_stats + streak + rewardWallet written atomically');
+      const { streak: streakInfo, prevStreak, goalJustMet, pointsEarned, wallet, tierChanged } = scanResult;
 
-      // Record this day in streak history subcollection for calendar view
-      recordStreakDay(user.uid).catch(() => {});
+      // Record this day in streak history subcollection for calendar view — cosmetic, best-effort
+      recordStreakDay(user.uid).catch(err => logBackgroundFailure('handleScan:recordStreakDay', err));
 
-      // SKM Rewards Club — award loyalty points for this scan. Awaited (in
-      // parallel with the reads below) so the celebration UI can show the
-      // real points/membership numbers instead of guessing them.
-      const [ts, stg, scanPoints] = await Promise.all([
+      const [ts, stg] = await Promise.all([
         getTodayStats(user.uid),
         getTrackerSettings(user.uid),
-        awardScanPoints(user.uid, streakInfo.currentStreak).catch(() => null),
       ]);
 
       // Play chick chirp — only on genuine success, never on error/duplicate
@@ -291,7 +289,7 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
       const streakIsNew    = streakInfo.currentStreak > (prevStreak ?? 0);
       const isMilestone    = [3, 7, 14, 30, 60, 100].includes(streakInfo.currentStreak);
       const streak         = streakInfo.currentStreak;
-      const goalJustHit    = todayProtein >= todayGoal;
+      const goalJustHit    = goalJustMet;
       const streakMilestoneHit = [3, 7, 14, 30, 60, 100].includes(streak);
       const lifetimeMs     = [100, 500, 1000, 5000];
       const proteinMilestoneHit = lifetimeMs.some(m => todayProtein >= m && todayProtein - PROTEIN_PER_EGG < m);
@@ -304,8 +302,8 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
         todayEggs:    ts?.totalEggs ?? 0,
         todayProtein,
         goal:         todayGoal,
-        pointsEarned: scanPoints?.pointsEarned ?? PROTEIN_PER_EGG,
-        wallet:       scanPoints?.wallet ?? null,
+        pointsEarned,
+        wallet,
       });
       setPhase('success');
 
@@ -322,30 +320,22 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
 
       // Write Firestore notification docs — Cloud Function / FCM sends
       // real Android push notification to the device. No in-app popup shown.
-      notifyProteinAdded(user.uid, PROTEIN_PER_EGG, todayProtein).catch(() => {});
-      if (goalJustHit) notifyProteinGoalComplete(user.uid, todayGoal).catch(() => {});
-      if (streakMilestoneHit) notifyStreakMilestone(user.uid, streak).catch(() => {});
-      if (proteinMilestoneHit) notifyProteinMilestone(user.uid, todayProtein).catch(() => {});
+      notifyProteinAdded(user.uid, PROTEIN_PER_EGG, todayProtein).catch(err => logBackgroundFailure('handleScan:notifyProteinAdded', err));
+      if (goalJustHit) notifyProteinGoalComplete(user.uid, todayGoal).catch(err => logBackgroundFailure('handleScan:notifyProteinGoalComplete', err));
+      if (streakMilestoneHit) notifyStreakMilestone(user.uid, streak).catch(err => logBackgroundFailure('handleScan:notifyStreakMilestone', err));
+      if (proteinMilestoneHit) notifyProteinMilestone(user.uid, todayProtein).catch(err => logBackgroundFailure('handleScan:notifyProteinMilestone', err));
+      notifyRewardPointsEarned(user.uid, pointsEarned, wallet.currentPoints).catch(err => logBackgroundFailure('handleScan:notifyRewardPointsEarned', err));
+      if (tierChanged) {
+        notifyMembershipTierUp(user.uid, wallet.membership).catch(err => logBackgroundFailure('handleScan:notifyMembershipTierUp', err));
+        // See rewardWalletService.awardScanPoints for the same activation-window caveat on this haptic pulse.
+        HapticService.heavy();
+      }
 
     } catch (err: unknown) {
       const msg = (err as { message?: string }).message ?? String(err);
       console.error('[SCAN] handleScan error:', msg);
       if (!mountedRef.current) return;
-
-      // A permission-denied on the qrCodes update means proteinConsumed is already
-      // true and the rule blocked the write. Treat as consumed by another user.
-      if (msg.includes('permission') && msg.includes('PERMISSION_DENIED')) {
-        setPhase('consumed_other');
-        return;
-      }
-
-      if (msg.includes('permission') || msg.includes('insufficient')) {
-        setErrorMessage('Permission error. Please log out and log back in, then try again.');
-      } else if (msg.includes('network') || msg.includes('offline')) {
-        setErrorMessage('Network error. Please check your connection and try again.');
-      } else {
-        setErrorMessage('Something went wrong. Please try again.');
-      }
+      setErrorMessage('Something went wrong. Please try again.');
       setPhase('error');
     }
   };

@@ -10,12 +10,13 @@
  * Callers award points as a fire-and-forget side effect (see QRScanScreen.tsx).
  */
 
-import { doc, getDoc, setDoc, serverTimestamp, increment, runTransaction, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, increment, runTransaction, Timestamp, type Transaction, type DocumentReference } from 'firebase/firestore';
 import { db } from '../firebase/firebase';
 import { MEMBERSHIP_TIERS, POINTS_PER_SCAN, POINTS_PER_STREAK_MILESTONE, type MembershipTier, type MembershipTierDef } from '../../constants/rewards';
 import { addRewardTransaction, type RewardTransactionType } from './rewardTransactionService';
 import { notifyRewardPointsEarned, notifyMembershipTierUp } from '../notifications/notificationService';
 import { HapticService } from '../audio/hapticService';
+import { logBackgroundFailure } from '../../utils/errorHandling';
 
 export interface RewardWallet {
   userId:         string;
@@ -67,6 +68,73 @@ export async function getRewardWallet(uid: string): Promise<RewardWallet> {
 }
 
 /**
+ * Transaction-scoped point mutation — reads and writes the wallet doc using an
+ * already-open Transaction handle so callers (processEggScan, redeemReward) can
+ * fold the wallet mutation into their own outer transaction instead of nesting
+ * runTransaction calls (Firestore forbids nested transactions).
+ *
+ * Does NOT write the ledger entry — Firestore transactions must not depend on
+ * non-transactional reads/writes for correctness, and the ledger is an additive
+ * log, not state, so callers append it with addRewardTransaction() after the
+ * outer transaction commits.
+ */
+export function addPointsInTransaction(
+  tx: Transaction,
+  ref: DocumentReference,
+  before: RewardWallet | null,
+  points: number,
+): { wallet: RewardWallet; tierChanged: boolean } {
+  const uid = ref.id;
+  const start: RewardWallet = before ?? { ...defaultWallet(uid), updatedAt: serverTimestamp() as Timestamp };
+
+  const lifetimeDelta = points > 0 ? points : 0; // lifetime only ever grows
+  const newLifetime = start.lifetimePoints + lifetimeDelta;
+  const newCurrent = Math.max(0, start.currentPoints + points);
+  const newTier = calcMembershipTier(newLifetime).tier;
+
+  tx.set(ref, {
+    userId: uid,
+    currentPoints: newCurrent,
+    lifetimePoints: newLifetime,
+    membership: newTier,
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
+
+  return {
+    wallet: { ...start, currentPoints: newCurrent, lifetimePoints: newLifetime, membership: newTier },
+    tierChanged: newTier !== start.membership,
+  };
+}
+
+/**
+ * Transaction-scoped point deduction — throws if insufficient balance. Same
+ * nesting rationale as addPointsInTransaction: caller supplies the open tx.
+ */
+export function spendPointsInTransaction(
+  tx: Transaction,
+  ref: DocumentReference,
+  before: RewardWallet | null,
+  points: number,
+): RewardWallet {
+  const uid = ref.id;
+  const wallet: RewardWallet = before ?? { ...defaultWallet(uid), updatedAt: serverTimestamp() as Timestamp };
+
+  if (wallet.currentPoints < points) throw new Error('Insufficient reward points.');
+
+  const newCurrent = wallet.currentPoints - points;
+  const newTotalRedeemed = wallet.totalRedeemed + points;
+
+  tx.set(ref, {
+    userId: uid,
+    currentPoints: newCurrent,
+    totalRedeemed: newTotalRedeemed,
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
+
+  return { ...wallet, currentPoints: newCurrent, totalRedeemed: newTotalRedeemed };
+}
+
+/**
  * Adds (or subtracts, if negative) points to the wallet, recalculates membership
  * tier from lifetime points, and logs an immutable transaction entry.
  */
@@ -79,26 +147,10 @@ export async function addPoints(
   if (points === 0) return getRewardWallet(uid);
   const ref = doc(db, WALLET_COLLECTION, uid);
 
-  const updated = await runTransaction(db, async (tx) => {
+  const { wallet: updated } = await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
-    const before: RewardWallet = snap.exists()
-      ? (snap.data() as RewardWallet)
-      : { ...defaultWallet(uid), updatedAt: serverTimestamp() as Timestamp };
-
-    const lifetimeDelta = points > 0 ? points : 0; // lifetime only ever grows
-    const newLifetime = before.lifetimePoints + lifetimeDelta;
-    const newCurrent = Math.max(0, before.currentPoints + points);
-    const newTier = calcMembershipTier(newLifetime).tier;
-
-    tx.set(ref, {
-      userId: uid,
-      currentPoints: newCurrent,
-      lifetimePoints: newLifetime,
-      membership: newTier,
-      updatedAt: serverTimestamp(),
-    }, { merge: true });
-
-    return { ...before, currentPoints: newCurrent, lifetimePoints: newLifetime, membership: newTier };
+    const before = snap.exists() ? (snap.data() as RewardWallet) : null;
+    return addPointsInTransaction(tx, ref, before, points);
   });
 
   await addRewardTransaction(uid, { type, points, description });
@@ -129,11 +181,11 @@ export async function awardScanPoints(uid: string, currentStreak: number): Promi
   }
 
   const pointsEarned = POINTS_PER_SCAN + (streakBonus ?? 0);
-  notifyRewardPointsEarned(uid, pointsEarned, wallet.currentPoints).catch(() => {});
+  notifyRewardPointsEarned(uid, pointsEarned, wallet.currentPoints).catch(err => logBackgroundFailure('awardScanPoints:notifyRewardPointsEarned', err));
 
   const tierChanged = wallet.membership !== before.membership;
   if (tierChanged) {
-    notifyMembershipTierUp(uid, wallet.membership).catch(() => {});
+    notifyMembershipTierUp(uid, wallet.membership).catch(err => logBackgroundFailure('awardScanPoints:notifyMembershipTierUp', err));
     // Membership Upgrade — best-effort only. This function may be invoked
     // fire-and-forget with no direct tie to a user gesture, so on Android
     // Chrome navigator.vibrate() may silently no-op here if the page's
@@ -149,9 +201,9 @@ export async function awardScanPoints(uid: string, currentStreak: number): Promi
 export async function awardMilestoneStickerPoints(uid: string, points: number, days: number): Promise<void> {
   const before = await getRewardWallet(uid);
   const wallet = await addPoints(uid, points, 'sticker_milestone', `${days}-day sticker milestone bonus`);
-  notifyRewardPointsEarned(uid, points, wallet.currentPoints).catch(() => {});
+  notifyRewardPointsEarned(uid, points, wallet.currentPoints).catch(err => logBackgroundFailure('awardMilestoneStickerPoints:notifyRewardPointsEarned', err));
   if (wallet.membership !== before.membership) {
-    notifyMembershipTierUp(uid, wallet.membership).catch(() => {});
+    notifyMembershipTierUp(uid, wallet.membership).catch(err => logBackgroundFailure('awardMilestoneStickerPoints:notifyMembershipTierUp', err));
     // Membership Upgrade — see awardScanPoints() above re: activation-window caveat.
     HapticService.heavy();
   }
@@ -170,23 +222,8 @@ export async function spendPoints(uid: string, points: number, description: stri
 
   const updated = await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
-    const wallet: RewardWallet = snap.exists()
-      ? (snap.data() as RewardWallet)
-      : { ...defaultWallet(uid), updatedAt: serverTimestamp() as Timestamp };
-
-    if (wallet.currentPoints < points) throw new Error('Insufficient reward points.');
-
-    const newCurrent = wallet.currentPoints - points;
-    const newTotalRedeemed = wallet.totalRedeemed + points;
-
-    tx.set(ref, {
-      userId: uid,
-      currentPoints: newCurrent,
-      totalRedeemed: newTotalRedeemed,
-      updatedAt: serverTimestamp(),
-    }, { merge: true });
-
-    return { ...wallet, currentPoints: newCurrent, totalRedeemed: newTotalRedeemed };
+    const before = snap.exists() ? (snap.data() as RewardWallet) : null;
+    return spendPointsInTransaction(tx, ref, before, points);
   });
 
   await addRewardTransaction(uid, { type: 'redeem', points: -points, description });
