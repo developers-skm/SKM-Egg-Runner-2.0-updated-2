@@ -12,12 +12,14 @@
 
 import {
   addDoc, collection, doc, getDoc, getDocs, orderBy, query, serverTimestamp,
-  Timestamp, updateDoc, where,
+  Timestamp, updateDoc, where, runTransaction,
 } from 'firebase/firestore';
 import { db } from '../firebase/firebase';
 import { DEFAULT_COUPON_VALID_DAYS } from '../../constants/rewards';
-import { spendPoints } from './rewardWalletService';
+import { spendPointsInTransaction, type RewardWallet } from './rewardWalletService';
+import { addRewardTransaction } from './rewardTransactionService';
 import { notifyRewardRedeemed } from '../notifications/notificationService';
+import { logBackgroundFailure } from '../../utils/errorHandling';
 import type { GameStage } from '../game/gameStatsService';
 
 export interface RewardCatalogItem {
@@ -189,28 +191,42 @@ export async function redeemReward(uid: string, item: RewardCatalogItem, highest
   if (!meetsEggScanRequirement(item, lifetimeEggScans)) {
     throw new Error(`Scan ${item.requiredEggScans} SKM eggs to unlock this reward.`);
   }
-  await spendPoints(uid, item.pointsCost, `Redeemed ${item.discountAmount > 0 ? `₹${item.discountAmount} OFF` : item.productName} — ${item.productName}`);
 
+  const description = `Redeemed ${item.discountAmount > 0 ? `₹${item.discountAmount} OFF` : item.productName} — ${item.productName}`;
   const couponCode = generateCouponCode();
   const expiryDate = addDays(DEFAULT_COUPON_VALID_DAYS);
 
-  const colRef = collection(db, 'rewardCoupons', uid, 'redemptions');
-  const ref = await addDoc(colRef, {
-    userId: uid,
-    couponCode,
-    rewardTitle: item.productName,
-    discountAmount: item.discountAmount,
-    minimumPurchase: item.minimumPurchase,
-    pointsCost: item.pointsCost,
-    expiryDate,
-    status: 'available' as CouponStatus,
-    createdAt: serverTimestamp(),
+  const walletRef  = doc(db, 'rewardWallet', uid);
+  const couponRef  = doc(collection(db, 'rewardCoupons', uid, 'redemptions'));
+
+  // Points deduction and coupon issuance commit together — if either fails,
+  // neither happens, so a redemption can never spend points without
+  // producing a coupon (or vice versa).
+  await runTransaction(db, async (tx) => {
+    const walletSnap = await tx.get(walletRef);
+    const before = walletSnap.exists() ? (walletSnap.data() as RewardWallet) : null;
+    spendPointsInTransaction(tx, walletRef, before, item.pointsCost);
+
+    tx.set(couponRef, {
+      userId: uid,
+      couponCode,
+      rewardTitle: item.productName,
+      discountAmount: item.discountAmount,
+      minimumPurchase: item.minimumPurchase,
+      pointsCost: item.pointsCost,
+      expiryDate,
+      status: 'available' as CouponStatus,
+      createdAt: serverTimestamp(),
+    });
   });
 
-  notifyRewardRedeemed(uid, item.productName, ref.id).catch(() => {});
+  addRewardTransaction(uid, { type: 'redeem', points: -item.pointsCost, description })
+    .catch(err => logBackgroundFailure('redeemReward:addRewardTransaction', err));
+  notifyRewardRedeemed(uid, item.productName, couponRef.id)
+    .catch(err => logBackgroundFailure('redeemReward:notifyRewardRedeemed', err));
 
   return {
-    id: ref.id,
+    id: couponRef.id,
     userId: uid,
     couponCode,
     rewardTitle: item.productName,
@@ -242,14 +258,23 @@ export async function getUserCoupons(uid: string): Promise<RewardCoupon[]> {
   return coupons.map(c => (c.status === 'available' && c.expiryDate < today ? { ...c, status: 'expired' as CouponStatus } : c));
 }
 
+/**
+ * Status check and the 'used' write happen inside one transaction so two
+ * concurrent "use this coupon" calls (e.g. two tabs) can't both read
+ * status:'available' and both succeed — the transaction re-validates the
+ * live status right before committing.
+ */
 export async function markCouponUsed(uid: string, couponId: string): Promise<void> {
   const ref = doc(db, 'rewardCoupons', uid, 'redemptions', couponId);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return;
-  const coupon = snap.data() as RewardCoupon;
   const today = new Date().toLocaleDateString('sv-SE');
-  if (coupon.status !== 'available' || coupon.expiryDate < today) {
-    throw new Error('This coupon is no longer valid.');
-  }
-  await updateDoc(ref, { status: 'used', usedAt: serverTimestamp() });
+
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const coupon = snap.data() as RewardCoupon;
+    if (coupon.status !== 'available' || coupon.expiryDate < today) {
+      throw new Error('This coupon is no longer valid.');
+    }
+    tx.update(ref, { status: 'used', usedAt: serverTimestamp() });
+  });
 }

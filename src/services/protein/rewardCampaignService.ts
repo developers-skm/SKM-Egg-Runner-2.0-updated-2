@@ -24,7 +24,7 @@
 
 import {
   addDoc, collection, doc, getDoc, getDocs, orderBy, query, serverTimestamp,
-  setDoc, Timestamp, updateDoc, where, limit,
+  setDoc, Timestamp, updateDoc, where, limit, runTransaction,
 } from 'firebase/firestore';
 import { db } from '../firebase/firebase';
 import type { GameStage } from '../game/gameStatsService';
@@ -109,11 +109,6 @@ export async function getCampaignHistory(uid: string, take = 20): Promise<Campai
   return snap.docs.map(d => ({ id: d.id, ...d.data() } as CampaignHistoryEntry));
 }
 
-async function hasArchivedCampaign(uid: string, campaignId: string): Promise<boolean> {
-  const ref = doc(db, HISTORY_COL, uid, 'periods', campaignId);
-  const snap = await getDoc(ref);
-  return snap.exists();
-}
 
 // ── Rotation (lazy, client-side — mirrors getUserCoupons' expiry check) ────
 
@@ -147,9 +142,7 @@ export async function checkAndRotateCampaign(
   const expired = Timestamp.now().toMillis() >= campaign.endAt.toMillis();
   if (!expired) return { campaign, rotated: false };
 
-  if (!(await hasArchivedCampaign(uid, campaign.id))) {
-    await archiveCampaignForUser(uid, campaign, progress);
-  }
+  await archiveCampaignForUserIfMissing(uid, campaign, progress);
 
   const next = await getUpcomingCampaign(campaign.endAt);
   if (next) return { campaign: next, rotated: true };
@@ -162,7 +155,13 @@ export async function checkAndRotateCampaign(
   return { campaign: null, rotated: true };
 }
 
-async function archiveCampaignForUser(
+/**
+ * Existence check and the archive write happen inside one transaction so two
+ * near-simultaneous Rewards-screen loads (e.g. two tabs) can't both read
+ * "not yet archived" and both write — the second commit would silently
+ * clobber the first's snapshot with a second archivedAt otherwise.
+ */
+async function archiveCampaignForUserIfMissing(
   uid: string,
   campaign: RewardCampaign,
   progress: {
@@ -188,7 +187,11 @@ async function archiveCampaignForUser(
     status:               progress.completionPct >= 100 ? 'completed' : 'expired',
     archivedAt:           serverTimestamp() as unknown as Timestamp,
   };
-  await setDoc(ref, entry, { merge: true });
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists()) return;
+    tx.set(ref, entry);
+  });
 }
 
 /** autoRestart fallback — only used when no admin-scheduled next campaign exists. Same objectives, same duration, starting now. */

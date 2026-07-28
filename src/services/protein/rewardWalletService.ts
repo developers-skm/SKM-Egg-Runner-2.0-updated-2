@@ -92,10 +92,17 @@ export function addPointsInTransaction(
   const newCurrent = Math.max(0, start.currentPoints + points);
   const newTier = calcMembershipTier(newLifetime).tier;
 
+  // Always write the full doc shape (including totalRedeemed unchanged) so a
+  // first-ever write for a brand-new user is a complete, rule-valid doc —
+  // the security rule's create branch has no way to see this as an "update"
+  // that's allowed to omit fields, and there is no separate bootstrap write
+  // before this one now that the wallet mutation happens inside a larger
+  // transaction (see the rewardWallet rule's combined create/update clause).
   tx.set(ref, {
     userId: uid,
     currentPoints: newCurrent,
     lifetimePoints: newLifetime,
+    totalRedeemed: start.totalRedeemed,
     membership: newTier,
     updatedAt: serverTimestamp(),
   }, { merge: true });
@@ -127,7 +134,9 @@ export function spendPointsInTransaction(
   tx.set(ref, {
     userId: uid,
     currentPoints: newCurrent,
+    lifetimePoints: wallet.lifetimePoints,
     totalRedeemed: newTotalRedeemed,
+    membership: wallet.membership,
     updatedAt: serverTimestamp(),
   }, { merge: true });
 

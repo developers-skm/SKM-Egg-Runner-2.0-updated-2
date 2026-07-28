@@ -121,7 +121,7 @@ export async function getDevEnvSnapshot(uid: string, email: string | null): Prom
 }
 
 // ─────────────────────────────────────────────────────────────────
-// PROTEIN  (uses logEggScan via a fake dev qrCode, same as a real scan)
+// PROTEIN  (uses processEggScan via a fake dev qrCode, same as a real scan)
 // ─────────────────────────────────────────────────────────────────
 
 /**

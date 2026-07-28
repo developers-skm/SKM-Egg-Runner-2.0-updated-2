@@ -336,19 +336,29 @@ service cloud.firestore {
 
     // ── SKM REWARDS CLUB (loyalty points, membership, coupons) ──
     // The client SDK writes this doc directly (rewardWalletService.ts —
-    // addPoints/spendPoints), so a full lock-to-developer would break the app.
+    // addPointsInTransaction/spendPointsInTransaction, used by processEggScan
+    // and redeemReward), so a full lock-to-developer would break the app.
     // Instead we bound what a write may do: lifetimePoints and totalRedeemed
     // are monotonically non-decreasing (they represent all-time totals and
     // must never be reset downward by a client), and currentPoints can never
-    // go negative. This blocks the previous exploit of a client directly
-    // setDoc-ing an arbitrary currentPoints/membership value, while still
-    // allowing the legitimate earn/spend paths (which only ever increment or
-    // decrement by a bounded amount) to succeed.
+    // go negative. This blocks the exploit of a client directly setDoc-ing an
+    // arbitrary currentPoints/membership value, while still allowing the
+    // legitimate earn/spend paths (which only ever increment or decrement by
+    // a bounded amount) to succeed.
+    //
+    // create allows a brand-new wallet's very first write to already contain
+    // a genuine first scan's points (processEggScan folds wallet creation and
+    // the first point-earn into one transaction — there is no longer a
+    // separate zeroed bootstrap write before the real mutation), capped at
+    // MAX_SINGLE_SCAN_POINTS so a client can't mint an arbitrary starting
+    // balance. totalRedeemed must still be 0 on create — nothing can be
+    // redeemed before a wallet exists.
     match /rewardWallet/{uid} {
       allow read:   if isOwner(uid) || isDeveloper();
       allow create: if isOwner(uid)
-                    && request.resource.data.currentPoints  == 0
-                    && request.resource.data.lifetimePoints == 0
+                    && request.resource.data.currentPoints  >= 0
+                    && request.resource.data.currentPoints  <= 3000
+                    && request.resource.data.lifetimePoints == request.resource.data.currentPoints
                     && request.resource.data.totalRedeemed  == 0;
       allow update: if isOwner(uid)
                     && request.resource.data.currentPoints  >= 0

@@ -108,7 +108,7 @@ export function getBatchRewardLabel(batchNum: number): string {
   return '';
 }
 
-// ─── Record a day as completed (called from QRScanScreen after logEggScan) ──
+// ─── Record a day as completed (called from QRScanScreen after processEggScan) ──
 
 export async function recordStreakDay(uid: string, time?: string): Promise<void> {
   const today = todayKey();

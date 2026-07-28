@@ -320,6 +320,12 @@ export async function consumeOnePlay(rawCode: string): Promise<QRValidationResul
  *
  * The transaction guarantees that even if two users scan simultaneously,
  * only one transaction commits. Throws on Firestore error.
+ *
+ * The real scan pipeline (proteinTrackerService.processEggScan) performs this
+ * exact check-and-claim inline inside its own larger transaction, rather than
+ * calling this function, so the ownership claim and all of a scan's dependent
+ * writes (protein log, daily stats, streak, reward points, etc.) commit or
+ * fail together. This standalone version is kept for isolated testing/reuse.
  */
 export async function claimProteinScan(
   uid: string,

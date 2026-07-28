@@ -11,6 +11,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase/firebase';
 import { renderNotify } from './renderNotificationService';
+import { logBackgroundFailure } from '../../utils/errorHandling';
 import type {
   AppNotification,
   NotificationType,
@@ -258,7 +259,7 @@ export async function notifyProteinAdded(userId: string, grams: number, total: n
     actions: [{ label: 'View Dashboard', actionType: 'view_dashboard' }],
     metadata: { grams, total },
   });
-  renderNotify.proteinAdded(userId, grams, total).catch(() => {});
+  renderNotify.proteinAdded(userId, grams, total).catch(err => logBackgroundFailure('notificationService:renderNotify.proteinAdded', err));
 }
 
 export async function notifyProteinGoalComplete(userId: string, goal: number): Promise<void> {
@@ -272,7 +273,7 @@ export async function notifyProteinGoalComplete(userId: string, goal: number): P
     actions: [{ label: 'View Stats', actionType: 'view_dashboard' }],
     metadata: { goal },
   });
-  renderNotify.proteinGoalComplete(userId, goal).catch(() => {});
+  renderNotify.proteinGoalComplete(userId, goal).catch(err => logBackgroundFailure('notificationService:renderNotify.proteinGoalComplete', err));
 }
 
 export async function notifyDuplicateEgg(userId: string): Promise<void> {
@@ -284,7 +285,7 @@ export async function notifyDuplicateEgg(userId: string): Promise<void> {
     priority: 'normal',
     actions: [{ label: 'Scan New QR', actionType: 'scan_qr' }],
   });
-  renderNotify.proteinDuplicate(userId).catch(() => {});
+  renderNotify.proteinDuplicate(userId).catch(err => logBackgroundFailure('notificationService:renderNotify.proteinDuplicate', err));
 }
 
 export async function notifyGoldenEgg(userId: string): Promise<void> {
@@ -297,7 +298,7 @@ export async function notifyGoldenEgg(userId: string): Promise<void> {
     actionUrl: 'game',
     actions: [{ label: 'Play Game', actionType: 'play_game' }],
   });
-  renderNotify.goldenEgg(userId).catch(() => {});
+  renderNotify.goldenEgg(userId).catch(err => logBackgroundFailure('notificationService:renderNotify.goldenEgg', err));
 }
 
 export async function notifyStreakMilestone(userId: string, days: number): Promise<void> {
@@ -309,7 +310,7 @@ export async function notifyStreakMilestone(userId: string, days: number): Promi
     priority: 'high',
     metadata: { days },
   });
-  renderNotify.streakMilestone(userId, days).catch(() => {});
+  renderNotify.streakMilestone(userId, days).catch(err => logBackgroundFailure('notificationService:renderNotify.streakMilestone', err));
 }
 
 export async function notifyProteinMilestone(userId: string, total: number): Promise<void> {
@@ -321,7 +322,7 @@ export async function notifyProteinMilestone(userId: string, total: number): Pro
     priority: 'high',
     metadata: { total },
   });
-  renderNotify.proteinMilestone(userId, total).catch(() => {});
+  renderNotify.proteinMilestone(userId, total).catch(err => logBackgroundFailure('notificationService:renderNotify.proteinMilestone', err));
 }
 
 export async function notifyRewardPointsEarned(userId: string, points: number, currentPoints: number): Promise<void> {
@@ -334,7 +335,7 @@ export async function notifyRewardPointsEarned(userId: string, points: number, c
     actions: [{ label: 'View Rewards', actionType: 'view_dashboard' }],
     metadata: { points, currentPoints },
   });
-  renderNotify.rewardPointsEarned(userId, points, currentPoints).catch(() => {});
+  renderNotify.rewardPointsEarned(userId, points, currentPoints).catch(err => logBackgroundFailure('notificationService:renderNotify.rewardPointsEarned', err));
 }
 
 export async function notifyRewardRedeemable(userId: string, message: string): Promise<void> {
@@ -346,7 +347,7 @@ export async function notifyRewardRedeemable(userId: string, message: string): P
     priority: 'normal',
     actions: [{ label: 'Redeem Now', actionType: 'view_dashboard' }],
   });
-  renderNotify.rewardRedeemable(userId, message).catch(() => {});
+  renderNotify.rewardRedeemable(userId, message).catch(err => logBackgroundFailure('notificationService:renderNotify.rewardRedeemable', err));
 }
 
 /** Fired right after a successful redemption — distinct from notifyRewardRedeemable (which fires *before*, when a reward becomes affordable). */
@@ -412,7 +413,7 @@ export async function notifyMembershipTierUp(userId: string, tier: string): Prom
     actions: [{ label: 'View Rewards', actionType: 'view_dashboard' }],
     metadata: { tier },
   });
-  renderNotify.membershipTierUp(userId, tier).catch(() => {});
+  renderNotify.membershipTierUp(userId, tier).catch(err => logBackgroundFailure('notificationService:renderNotify.membershipTierUp', err));
 }
 
 export async function notifyCouponExpiring(userId: string, rewardTitle: string, daysLeft: number, couponId?: string): Promise<void> {
@@ -425,7 +426,7 @@ export async function notifyCouponExpiring(userId: string, rewardTitle: string, 
     actions: [{ label: 'View Coupons', actionType: 'view_dashboard' }],
     metadata: couponId ? { rewardTitle, daysLeft, couponId } : { rewardTitle, daysLeft },
   });
-  renderNotify.couponExpiring(userId, rewardTitle, daysLeft).catch(() => {});
+  renderNotify.couponExpiring(userId, rewardTitle, daysLeft).catch(err => logBackgroundFailure('notificationService:renderNotify.couponExpiring', err));
 }
 
 export async function notifyChampionRank(userId: string, rank: number): Promise<void> {
@@ -438,7 +439,7 @@ export async function notifyChampionRank(userId: string, rank: number): Promise<
     actionUrl: 'leaderboard',
     metadata: { rank },
   });
-  renderNotify.championRank(userId, rank).catch(() => {});
+  renderNotify.championRank(userId, rank).catch(err => logBackgroundFailure('notificationService:renderNotify.championRank', err));
 }
 
 export async function notifyNewHighScore(userId: string, score: number): Promise<void> {
@@ -450,7 +451,7 @@ export async function notifyNewHighScore(userId: string, score: number): Promise
     priority: 'high',
     metadata: { score },
   });
-  renderNotify.newHighScore(userId, score).catch(() => {});
+  renderNotify.newHighScore(userId, score).catch(err => logBackgroundFailure('notificationService:renderNotify.newHighScore', err));
 }
 
 export async function notifyMissionComplete(userId: string, missionName: string): Promise<void> {
@@ -463,7 +464,7 @@ export async function notifyMissionComplete(userId: string, missionName: string)
     actions: [{ label: 'View Missions', actionType: 'view_achievement' }],
     metadata: { missionName },
   });
-  renderNotify.missionComplete(userId, missionName).catch(() => {});
+  renderNotify.missionComplete(userId, missionName).catch(err => logBackgroundFailure('notificationService:renderNotify.missionComplete', err));
 }
 
 export async function notifyQRValidated(userId: string, plays: number): Promise<void> {
@@ -476,7 +477,7 @@ export async function notifyQRValidated(userId: string, plays: number): Promise<
     actions: [{ label: 'Play Game', actionType: 'play_game' }],
     metadata: { plays },
   });
-  renderNotify.qrValidated(userId, plays).catch(() => {});
+  renderNotify.qrValidated(userId, plays).catch(err => logBackgroundFailure('notificationService:renderNotify.qrValidated', err));
 }
 
 export async function sendAdminAnnouncement(
@@ -529,7 +530,7 @@ export async function notifyStickerUnlocked(
     actions: [{ label: 'View Sticker', actionType: 'view_sticker' }],
     metadata: days != null ? { stickerName, rarity, days } : { stickerName, rarity },
   });
-  renderNotify.stickerUnlocked(userId, stickerName, rarity).catch(() => {});
+  renderNotify.stickerUnlocked(userId, stickerName, rarity).catch(err => logBackgroundFailure('notificationService:renderNotify.stickerUnlocked', err));
 }
 
 export async function notifyStickerProgress(
@@ -576,7 +577,7 @@ export async function notifyWeekComplete(userId: string, batchNumber?: number): 
     actions: [{ label: 'View Streak', actionType: 'view_streak' }],
     metadata: batchNumber != null ? { batchNumber } : undefined,
   });
-  renderNotify.weekComplete(userId).catch(() => {});
+  renderNotify.weekComplete(userId).catch(err => logBackgroundFailure('notificationService:renderNotify.weekComplete', err));
 }
 
 export async function notifyNewWeekStarted(userId: string): Promise<void> {
@@ -588,7 +589,7 @@ export async function notifyNewWeekStarted(userId: string): Promise<void> {
     priority: 'normal',
     actions: [{ label: 'View Streak', actionType: 'view_streak' }],
   });
-  renderNotify.newWeekStarted(userId).catch(() => {});
+  renderNotify.newWeekStarted(userId).catch(err => logBackgroundFailure('notificationService:renderNotify.newWeekStarted', err));
 }
 
 // ─── Re-engagement ────────────────────────────────────────────────────────────
@@ -602,7 +603,7 @@ export async function notifyMissedOneDay(userId: string): Promise<void> {
     priority: 'normal',
     actions: [{ label: 'Scan Now', actionType: 'scan_qr' }],
   });
-  renderNotify.reEngage(userId, 'missed_one_day').catch(() => {});
+  renderNotify.reEngage(userId, 'missed_one_day').catch(err => logBackgroundFailure('notificationService:renderNotify.reEngage', err));
 }
 
 export async function notifyMissedThreeDays(userId: string): Promise<void> {
@@ -614,7 +615,7 @@ export async function notifyMissedThreeDays(userId: string): Promise<void> {
     priority: 'high',
     actions: [{ label: 'Scan Now', actionType: 'scan_qr' }],
   });
-  renderNotify.reEngage(userId, 'missed_three_days').catch(() => {});
+  renderNotify.reEngage(userId, 'missed_three_days').catch(err => logBackgroundFailure('notificationService:renderNotify.reEngage', err));
 }
 
 // ─── Streak lost ──────────────────────────────────────────────────────────────
@@ -642,7 +643,7 @@ export async function notifyMysteryReward(userId: string): Promise<void> {
     priority: 'high',
     actions: [{ label: 'View Sticker', actionType: 'view_sticker' }],
   });
-  renderNotify.mysteryReward(userId).catch(() => {});
+  renderNotify.mysteryReward(userId).catch(err => logBackgroundFailure('notificationService:renderNotify.mysteryReward', err));
 }
 
 // ─── Special occasions ────────────────────────────────────────────────────────
@@ -731,5 +732,5 @@ export async function notifyDailySummary(
     priority: 'low',
     metadata: { protein, runs, streak, rank: rank ?? 0 },
   });
-  renderNotify.dailySummary(userId, protein, runs, streak, rank).catch(() => {});
+  renderNotify.dailySummary(userId, protein, runs, streak, rank).catch(err => logBackgroundFailure('notificationService:renderNotify.dailySummary', err));
 }
