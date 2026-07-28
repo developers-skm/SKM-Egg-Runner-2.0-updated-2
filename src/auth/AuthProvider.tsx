@@ -6,10 +6,11 @@
  * Components must NOT navigate based on login callbacks — react to user state.
  */
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../services/firebase/firebase';
 import { signOutGoogle, checkRedirectResult } from './googleAuthService';
+import { writeAuditLog } from '../services/audit/auditLogService';
 
 interface AuthContextValue {
   /** undefined = loading, null = logged out, User = logged in */
@@ -24,6 +25,10 @@ const AuthContext = createContext<AuthContextValue>({
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null | undefined>(undefined);
+  // Tracks whether we've already logged a "login" for the current uid, so a
+  // page reload (which re-fires onAuthStateChanged with the persisted user)
+  // doesn't get logged as a fresh sign-in every time.
+  const loggedInUidRef = useRef<string | null>(null);
 
   useEffect(() => {
     // onAuthStateChanged is the single source of truth for auth state.
@@ -31,6 +36,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // after any sign-in/sign-out event — including redirect completions.
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       console.log('[AUTH] onAuthStateChanged →', firebaseUser ? `uid=${firebaseUser.uid}` : 'null');
+      if (firebaseUser && loggedInUidRef.current !== firebaseUser.uid) {
+        loggedInUidRef.current = firebaseUser.uid;
+        writeAuditLog(firebaseUser.uid, 'login', firebaseUser.email ?? firebaseUser.uid, true);
+      } else if (!firebaseUser) {
+        loggedInUidRef.current = null;
+      }
       setUser(firebaseUser);
     });
 
@@ -53,6 +64,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = async () => {
     console.log('[AUTH] Logging out');
+    if (user) writeAuditLog(user.uid, 'logout', user.email ?? user.uid, true);
     await signOutGoogle();
     // onAuthStateChanged fires → user becomes null → AppRoot shows WelcomeScreen
   };

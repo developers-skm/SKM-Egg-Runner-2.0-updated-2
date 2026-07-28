@@ -20,6 +20,8 @@ import { spendPointsInTransaction, type RewardWallet } from './rewardWalletServi
 import { addRewardTransaction } from './rewardTransactionService';
 import { notifyRewardRedeemed } from '../notifications/notificationService';
 import { logBackgroundFailure } from '../../utils/errorHandling';
+import { writeAuditLog } from '../audit/auditLogService';
+import { startTimer, endTimer } from '../../utils/perfTimer';
 import type { GameStage } from '../game/gameStatsService';
 
 export interface RewardCatalogItem {
@@ -191,6 +193,7 @@ export function meetsEggScanRequirement(item: RewardCatalogItem, lifetimeEggScan
  * otherwise unlock stage-gated rewards without ever reaching that stage.
  */
 export async function redeemReward(uid: string, item: RewardCatalogItem): Promise<RewardCoupon> {
+  startTimer('redeemReward');
   const description = `Redeemed ${item.discountAmount > 0 ? `₹${item.discountAmount} OFF` : item.productName} — ${item.productName}`;
   const couponCode = generateCouponCode();
   const expiryDate = addDays(DEFAULT_COUPON_VALID_DAYS);
@@ -205,40 +208,51 @@ export async function redeemReward(uid: string, item: RewardCatalogItem): Promis
   // producing a coupon (or vice versa). Stage/egg-scan checks are re-read
   // and re-validated here too, so the whole eligibility decision is atomic
   // and server-trusted rather than based on a value passed in by the caller.
-  await runTransaction(db, async (tx) => {
-    const [walletSnap, gameStatsSnap, userSnap] = await Promise.all([
-      tx.get(walletRef), tx.get(gameStatsRef), tx.get(userRef),
-    ]);
+  try {
+    await runTransaction(db, async (tx) => {
+      const [walletSnap, gameStatsSnap, userSnap] = await Promise.all([
+        tx.get(walletRef), tx.get(gameStatsRef), tx.get(userRef),
+      ]);
 
-    const trustedHighestStage: GameStage = gameStatsSnap.exists()
-      ? ((gameStatsSnap.data().highestStage as GameStage) ?? 'EGG')
-      : 'EGG';
-    const trustedLifetimeEggScans: number = userSnap.exists()
-      ? ((userSnap.data().lifetimeConsumption as number) ?? 0)
-      : 0;
+      const trustedHighestStage: GameStage = gameStatsSnap.exists()
+        ? ((gameStatsSnap.data().highestStage as GameStage) ?? 'EGG')
+        : 'EGG';
+      const trustedLifetimeEggScans: number = userSnap.exists()
+        ? ((userSnap.data().lifetimeConsumption as number) ?? 0)
+        : 0;
 
-    if (!meetsStageRequirement(item, trustedHighestStage)) {
-      throw new Error(`Reach ${item.requiredStageLabel ?? item.requiredStage} in Egg Runner to unlock this reward.`);
-    }
-    if (!meetsEggScanRequirement(item, trustedLifetimeEggScans)) {
-      throw new Error(`Scan ${item.requiredEggScans} SKM eggs to unlock this reward.`);
-    }
+      if (!meetsStageRequirement(item, trustedHighestStage)) {
+        throw new Error(`Reach ${item.requiredStageLabel ?? item.requiredStage} in Egg Runner to unlock this reward.`);
+      }
+      if (!meetsEggScanRequirement(item, trustedLifetimeEggScans)) {
+        throw new Error(`Scan ${item.requiredEggScans} SKM eggs to unlock this reward.`);
+      }
 
-    const before = walletSnap.exists() ? (walletSnap.data() as RewardWallet) : null;
-    spendPointsInTransaction(tx, walletRef, before, item.pointsCost);
+      const before = walletSnap.exists() ? (walletSnap.data() as RewardWallet) : null;
+      spendPointsInTransaction(tx, walletRef, before, item.pointsCost);
 
-    tx.set(couponRef, {
-      userId: uid,
-      couponCode,
-      rewardTitle: item.productName,
-      discountAmount: item.discountAmount,
-      minimumPurchase: item.minimumPurchase,
-      pointsCost: item.pointsCost,
-      expiryDate,
-      status: 'available' as CouponStatus,
-      createdAt: serverTimestamp(),
+      tx.set(couponRef, {
+        userId: uid,
+        couponCode,
+        rewardTitle: item.productName,
+        discountAmount: item.discountAmount,
+        minimumPurchase: item.minimumPurchase,
+        pointsCost: item.pointsCost,
+        expiryDate,
+        status: 'available' as CouponStatus,
+        createdAt: serverTimestamp(),
+      });
     });
-  });
+  } catch (err) {
+    const e = err as { message?: string };
+    writeAuditLog(uid, 'coupon_redeemed', `${item.productName} — rejected: ${e?.message ?? 'unknown error'}`, false);
+    endTimer('redeemReward', 3000);
+    throw err;
+  }
+
+  writeAuditLog(uid, 'coupon_redeemed', `${item.productName} — ${item.pointsCost}pts`, true);
+  writeAuditLog(uid, 'reward_claimed', `${item.productName} — ${item.pointsCost}pts`, true);
+  endTimer('redeemReward', 3000);
 
   addRewardTransaction(uid, { type: 'redeem', points: -item.pointsCost, description })
     .catch(err => logBackgroundFailure('redeemReward:addRewardTransaction', err));

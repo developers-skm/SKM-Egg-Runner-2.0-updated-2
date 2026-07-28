@@ -23,6 +23,7 @@ import { db } from '../firebase/firebase';
 import { updateSummaryOnScan, updateSummaryOnManualEntry } from './userSummaryService';
 import { startTimer, endTimer } from '../../utils/perfTimer';
 import { logBackgroundFailure } from '../../utils/errorHandling';
+import { writeAuditLog } from '../audit/auditLogService';
 import { addPointsInTransaction, type RewardWallet as RewardWalletV2 } from './rewardWalletService';
 import { addRewardTransaction } from './rewardTransactionService';
 import { POINTS_PER_SCAN, POINTS_PER_STREAK_MILESTONE } from '../../constants/rewards';
@@ -271,6 +272,7 @@ export type ProcessEggScanResult =
 const SCAN_CHALLENGE_IDS = ['daily_scan', 'weekly_eggs', 'weekly_protein', 'daily_goal', 'monthly_goal', 'monthly_streak'];
 
 export async function processEggScan(uid: string, qrCode: string): Promise<ProcessEggScanResult> {
+  startTimer('processEggScan');
   const dateKey  = todayKey();
   const qrRef    = doc(db, 'qrCodes', qrCode);
   const userRef  = doc(db, 'users', uid);
@@ -404,7 +406,11 @@ export async function processEggScan(uid: string, qrCode: string): Promise<Proce
       };
     });
 
-    if (!result.ok) return result;
+    if (!result.ok) {
+      writeAuditLog(uid, 'qr_scan', `QR scan rejected — ${result.reason}`, false);
+      endTimer('processEggScan', 3000);
+      return result;
+    }
 
     // ── Non-transactional, best-effort follow-ups — logged, never swallowed ──
     addRewardTransaction(uid, { type: 'scan', points: POINTS_PER_SCAN, description: 'Egg scan' })
@@ -415,11 +421,18 @@ export async function processEggScan(uid: string, qrCode: string): Promise<Proce
         description: `${result.streak.currentStreak}-day streak bonus`,
       }).catch(err => logBackgroundFailure('processEggScan:addRewardTransaction:streak', err));
     }
+    writeAuditLog(uid, 'qr_scan', `+${result.pointsEarned}pts, streak ${result.streak.currentStreak}`, true);
+    if (result.tierChanged) {
+      writeAuditLog(uid, 'membership_changed', `New tier: ${result.wallet.membership}`, true);
+    }
+    endTimer('processEggScan', 3000);
 
     return result;
   } catch (err: unknown) {
     const e = err as { code?: string; message?: string };
     console.error('[processEggScan] transaction error:', { uid, qrCode, code: e?.code, message: e?.message });
+    writeAuditLog(uid, 'qr_scan', `QR scan error — ${e?.message ?? 'unknown'}`, false);
+    endTimer('processEggScan', 3000);
     return { ok: false, reason: 'error', message: e?.message ?? 'Something went wrong. Please try again.' };
   }
 }

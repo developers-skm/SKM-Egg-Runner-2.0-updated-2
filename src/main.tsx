@@ -18,11 +18,29 @@ import { NotificationProvider } from './context/NotificationContext.tsx';
 import { NavigationProvider, useNavigation } from './context/NavigationContext.tsx';
 import type { NavTarget } from './context/NavigationContext.tsx';
 import NotificationDrawer from './components/notifications/NotificationDrawer.tsx';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
+import { reportError } from './utils/errorHandling.ts';
+import { writeAuditLog } from './services/audit/auditLogService.ts';
+import { startTimer, endTimer } from './utils/perfTimer.ts';
 import './index.css';
+
+// App startup timer — started at module load (script execution start),
+// ended once LoadingScreen's onDone fires (first meaningful screen ready).
+startTimer('appStartup');
 
 // Start Firestore real-time config sync as soon as the app loads.
 // This ensures every client gets live developer config updates instantly.
 startRealtimeConfigSync();
+
+// Global safety net for errors React's ErrorBoundary can't catch (event
+// handlers, async code, promise rejections) — logs with the same
+// categorization the boundary uses, never lets an uncaught error go silent.
+window.addEventListener('error', (event) => {
+  reportError('window.onerror', event.error ?? event.message);
+});
+window.addEventListener('unhandledrejection', (event) => {
+  reportError('unhandledrejection', event.reason);
+});
 
 // Prewarm AudioContext on the very first user gesture so click sounds are
 // instant when RUN NOW is tapped (AudioContext requires a user gesture to start).
@@ -180,7 +198,9 @@ function AppRoot() {
         ready={dataReady}
         onDone={() => {
           // onDone fires after fade-out — React will re-render naturally
-          // once profileStatus leaves CHECKING, so this is a no-op.
+          // once profileStatus leaves CHECKING, so this is a no-op beyond
+          // closing out the startup timer.
+          endTimer('appStartup', 5000);
         }}
       />
     );
@@ -293,12 +313,28 @@ function OnlineGate() {
     <AuthProvider>
       <NotificationProvider>
         <NavigationProvider>
-          <AppRoot />
+          <AppErrorBoundary>
+            <AppRoot />
+          </AppErrorBoundary>
           {/* Notification drawer — history panel, opened manually by user */}
           <NotificationDrawer />
         </NavigationProvider>
       </NotificationProvider>
     </AuthProvider>
+  );
+}
+
+function AppErrorBoundary({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  return (
+    <ErrorBoundary
+      boundaryName="AppRoot"
+      onError={(_error, category) => {
+        if (user?.uid) writeAuditLog(user.uid, 'app_error', `Unhandled ${category} error`, false);
+      }}
+    >
+      {children}
+    </ErrorBoundary>
   );
 }
 

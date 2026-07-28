@@ -12,6 +12,7 @@ import {
   type FieldValue,
 } from 'firebase/firestore';
 import { db } from '../firebase/firebase';
+import { writeAuditLog } from '../audit/auditLogService';
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -128,6 +129,10 @@ export async function saveRunStats(uid: string, run: RunSummary): Promise<void> 
     };
 
     await setDoc(ref, update, { merge: true });
+
+    if (newHighestStage !== existingHighestStage) {
+      writeAuditLog(uid, 'stage_completed', `Reached ${newHighestStage}`, true);
+    }
   } catch (e) {
     console.warn('[gameStatsService] saveRunStats error:', e);
     // Non-fatal — game continues even if Firestore write fails

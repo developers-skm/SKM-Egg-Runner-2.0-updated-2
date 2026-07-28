@@ -13,6 +13,7 @@
 import { doc, getDoc, setDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase/firebase';
 import { DEFAULT_DAILY_GOAL } from '../../constants/tracker';
+import { writeAuditLog } from '../audit/auditLogService';
 
 export type Gender = 'Male' | 'Female' | 'Other';
 
@@ -350,6 +351,7 @@ export async function saveHealthProfile(uid: string, input: HealthProfileInput):
   const built = buildProfile(uid, input, prev);
   const data: HealthProfile = { ...built, updatedAt: serverTimestamp() as Timestamp };
   await setDoc(doc(db, 'health_profiles', uid), data, { merge: true });
+  writeAuditLog(uid, 'health_profile_updated', `BMI ${built.bmi}`, true);
   return data;
 }
 

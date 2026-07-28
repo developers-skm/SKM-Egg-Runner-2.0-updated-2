@@ -13,9 +13,12 @@ import {
   setPersistence,
 } from 'firebase/auth';
 import {
+  initializeFirestore,
   getFirestore,
   Firestore,
   connectFirestoreEmulator,
+  persistentLocalCache,
+  persistentMultipleTabManager,
 } from 'firebase/firestore';
 import { getAnalytics, Analytics, isSupported } from 'firebase/analytics';
 import { getMessaging, Messaging, isSupported as isMessagingSupported } from 'firebase/messaging';
@@ -44,8 +47,24 @@ setPersistence(auth, browserLocalPersistence).catch(() => {
   // Silently ignore — falls back to session persistence
 });
 
-// Firestore instance
-export const db: Firestore = getFirestore(app);
+// Firestore instance — persistent (IndexedDB) local cache with multi-tab
+// support, so reads survive offline and writes queue automatically while
+// offline, then replay in order once connectivity returns. Falls back to
+// memory-only cache (still functional, just non-persistent) if IndexedDB
+// is unavailable (private browsing, some embedded webviews), another tab
+// already holds a lock the multi-tab manager can't share, or (during dev
+// HMR) Firestore was already initialized for this app instance earlier —
+// initializeFirestore throws in that case, unlike the old getFirestore().
+let db: Firestore;
+try {
+  db = initializeFirestore(app, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+  });
+} catch (err) {
+  console.warn('[firebase] Persistent Firestore cache unavailable, falling back to default:', (err as Error)?.message);
+  db = getFirestore(app);
+}
+export { db };
 
 // Analytics (only in browser environments that support it)
 let analytics: Analytics | null = null;

@@ -4,8 +4,9 @@ import {
   ChevronLeft, Wrench, Database, Bell, Egg, Coins, Flame, Calendar,
   Award, BookOpen, Ticket, Gift, Crown, Ruler,
   RefreshCw, Search, ChevronDown, X, CheckCircle2, XCircle,
-  AlertTriangle, User as UserIcon, BarChart3, Trash2, Heart, Sparkles,
+  AlertTriangle, User as UserIcon, BarChart3, Trash2, Heart, Sparkles, Activity,
 } from 'lucide-react';
+import { runHealthChecks, type HealthCheckResult } from '../services/health/systemHealthService';
 import {
   getDevEnvSnapshot, type DevEnvSnapshot,
   getDevDebugSnapshot, type DevDebugSnapshot,
@@ -175,6 +176,11 @@ export default function DevTestCenterScreen({ user, onBack, onDataChanged }: Dev
         {/* ── Debug Information (live panel, always near top) ── */}
         {matches('debug information user id firestore status') && (
           <DebugPanel env={env} debug={debug} uid={user.uid} email={user.email} onRefresh={refresh} />
+        )}
+
+        {/* ── System Health Monitor ── */}
+        {matches('system health monitor firestore auth notification reward qr game cloud functions') && (
+          <SystemHealthPanel uid={user.uid} />
         )}
 
         {/* ── User Progress ── */}
@@ -546,6 +552,85 @@ function DebugPanel({ env, debug, uid, email, onRefresh }: {
             <DebugTile label="Version" value={env?.version ?? '—'} />
             <DebugTile label="Notify Server" value={env?.notification ?? '—'} />
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SystemHealthPanel({ uid }: { uid: string }) {
+  const [open, setOpen] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [results, setResults] = useState<HealthCheckResult[] | null>(null);
+  const [lastRun, setLastRun] = useState<string | null>(null);
+
+  const run = async () => {
+    setRunning(true);
+    try {
+      const r = await runHealthChecks(uid);
+      setResults(r);
+      setLastRun(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const statusColor = (s: HealthCheckResult['status']) => s === 'healthy' ? '#4ADE80' : s === 'warning' ? '#FBBF24' : DEV.red;
+  const StatusIcon = ({ s }: { s: HealthCheckResult['status'] }) => {
+    const color = statusColor(s);
+    if (s === 'healthy') return <CheckCircle2 size={14} color={color} />;
+    if (s === 'warning') return <AlertTriangle size={14} color={color} />;
+    return <XCircle size={14} color={color} />;
+  };
+
+  return (
+    <div style={{ background: DEV.surface, borderRadius: 18, border: `1px solid ${DEV.border}`, overflow: 'hidden' }}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px',
+        background: DEV.surface2, border: 'none', cursor: 'pointer', textAlign: 'left',
+      }}>
+        <Activity size={14} color={DEV.accent} />
+        <p style={{ fontSize: 12, fontWeight: 900, color: DEV.text, margin: 0, flex: 1 }}>System Health Monitor</p>
+        {results && (
+          <span style={{
+            width: 8, height: 8, borderRadius: '50%',
+            background: statusColor(results.some(r => r.status === 'offline') ? 'offline' : results.some(r => r.status === 'warning') ? 'warning' : 'healthy'),
+          }} />
+        )}
+        <ChevronDown size={14} color={DEV.textSoft} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 200ms' }} />
+      </button>
+      {open && (
+        <div style={{ padding: '12px 14px 14px' }}>
+          <button
+            onClick={run}
+            disabled={running}
+            style={{
+              width: '100%', padding: '10px 14px', borderRadius: 12, marginBottom: 10,
+              border: `1px solid ${DEV.accent}44`, background: `${DEV.accent}18`, color: DEV.accent,
+              fontWeight: 800, fontSize: 12, cursor: running ? 'default' : 'pointer', opacity: running ? 0.6 : 1,
+            }}
+          >
+            {running ? 'Running checks…' : 'Run Health Check'}
+          </button>
+
+          {results && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {results.map(r => (
+                <div key={r.name} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, background: DEV.surface2,
+                  borderRadius: 10, padding: '8px 10px',
+                }}>
+                  <StatusIcon s={r.status} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontSize: 11, fontWeight: 800, color: DEV.text, margin: 0 }}>{r.name}</p>
+                    <p style={{ fontSize: 9.5, color: DEV.textSoft, margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.detail}</p>
+                  </div>
+                  <span style={{ fontSize: 9, fontWeight: 800, color: statusColor(r.status), textTransform: 'uppercase', flexShrink: 0 }}>{r.status}</span>
+                </div>
+              ))}
+              {lastRun && <p style={{ fontSize: 9, color: DEV.textFaint, margin: '8px 0 0', textAlign: 'center' }}>Last run {lastRun}</p>}
+            </div>
+          )}
         </div>
       )}
     </div>

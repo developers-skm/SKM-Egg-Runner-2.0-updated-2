@@ -52,6 +52,7 @@ import { updateProfile } from 'firebase/auth';
 import { auth } from '../firebase/firebase';
 import { MEMBERSHIP_TIERS, DEFAULT_COUPON_VALID_DAYS, POINTS_PER_MILESTONE_STICKER, type MembershipTier } from '../../constants/rewards';
 import type { NotificationType } from '../../types/notifications';
+import { writeAuditLog } from '../audit/auditLogService';
 
 // ─────────────────────────────────────────────────────────────────
 // ROLE CHECK — single source of truth for "is this a developer account"
@@ -68,9 +69,22 @@ export async function isDevUser(uid: string): Promise<boolean> {
   }
 }
 
+/** Best-effort extraction of the calling devXxx function's name from the stack, for the audit log detail. */
+function callerName(): string {
+  const stack = new Error().stack ?? '';
+  const frames = stack.split('\n').slice(1); // drop "Error" line
+  // frame[0] = callerName itself, frame[1] = assertDevUser, frame[2] = the actual dev action
+  const frame = frames[2] ?? '';
+  const m = frame.match(/at (?:async )?(\w+)/);
+  return m?.[1] ?? 'unknown';
+}
+
 // Re-checks the role server-side so calling these functions directly (bypassing the UI gate) is still rejected.
+// Also writes one audit-log entry per dev action, since these ~70 functions
+// are powerful account mutators that otherwise leave no trail.
 async function assertDevUser(uid: string): Promise<void> {
   const ok = await isDevUser(uid);
+  writeAuditLog(uid, 'developer_action', callerName(), ok);
   if (!ok) throw new Error('Developer Test Center: forbidden — developer role required.');
 }
 

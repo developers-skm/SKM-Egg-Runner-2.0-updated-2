@@ -182,6 +182,17 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Generic activity audit trail (services/audit/auditLogService.ts) —
+    // append-only: a user can log their own actions and read their own
+    // history; developers can read everything for support/diagnostics.
+    // Never updatable/deletable — an audit trail that can be edited isn't one.
+    match /auditLogs/{logId} {
+      allow read:   if isAuth() && (resource.data.uid == request.auth.uid || isDeveloper());
+      allow create: if isAuth() && request.resource.data.uid == request.auth.uid;
+      allow update: if false;
+      allow delete: if false;
+    }
+
     // Admin operation log — developer read/write/delete only
     match /qrOperationLogs/{logId} {
       allow read:   if isDeveloper();
