@@ -212,10 +212,28 @@ service cloud.firestore {
     }
 
     // Game stats bridge — Egg Runner run summaries, read by the Protein
-    // Tracker/Rewards Club (see services/game/gameStatsService.ts).
+    // Tracker/Rewards Club (see services/game/gameStatsService.ts) and used
+    // there to gate Stage-2 reward unlocks (rewardCouponService.redeemReward).
+    // Unlike other collections, this was previously `allow write: if isOwner(uid)`
+    // with NO field validation — a client could set highestStage directly to
+    // 'STAGE2' without ever playing a run. highestStage must now be one of the
+    // real enum values and can only advance (never regress) relative to the
+    // existing document, mirroring the client-side ratchet in gameStatsService.ts
+    // so the ratchet is actually enforced, not just advisory.
+    function gameStageRank(stage) {
+      return stage == 'EGG'    ? 0
+           : stage == 'CHICK'  ? 1
+           : stage == 'ADULT'  ? 2
+           : stage == 'STAGE2' ? 3
+           : -1;
+    }
     match /users/{uid}/gameStats/{docId} {
       allow read:  if isOwner(uid) || isDeveloper();
-      allow write: if isOwner(uid);
+      allow create: if isOwner(uid)
+                    && gameStageRank(request.resource.data.highestStage) >= 0;
+      allow update: if isOwner(uid)
+                    && gameStageRank(request.resource.data.highestStage) >= 0
+                    && gameStageRank(request.resource.data.highestStage) >= gameStageRank(resource.data.get('highestStage', 'EGG'));
     }
 
     // ── PROTEIN TRACKER COLLECTIONS ─────────────────────────

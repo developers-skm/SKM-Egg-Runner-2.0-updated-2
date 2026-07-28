@@ -37,6 +37,7 @@ import { syncConfigWithServer, addDebugLog, getActiveLiveConfig } from './liveCo
 import { saveRunStats, type GameStage } from './services/game/gameStatsService';
 import { consumeOnePlay } from './services/qr/qrService';
 import { isDeveloperModeEnabled } from './services/dev/devModeService';
+import { isDevUser } from './services/protein/devTestCenterService';
 
 // Storage keys are scoped per Firebase UID so each account has isolated data.
 // getUid() is resolved inside App() where useAuth() is available.
@@ -1073,8 +1074,10 @@ export default function App({ onBackToMenu }: { onBackToMenu?: () => void } = {}
             console.log('[GAME] Button clicked.');
 
             // Developer Mode: local-only testing bypass, skips QR entirely.
-            // Consumes no QR, writes no Firestore records/play counts.
-            if (isDeveloperModeEnabled()) {
+            // The localStorage flag alone is untrusted (settable via devtools
+            // by any user) — only honored once the account's Firestore role
+            // confirms it's actually a developer.
+            if (isDeveloperModeEnabled() && uid !== 'guest' && await isDevUser(uid)) {
               console.log('[GAME] Developer Mode — skipping QR verification.');
               updateSession({ remainingAttempts: 999, unlimited: true });
               handleStartGame();

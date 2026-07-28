@@ -4,10 +4,11 @@
  */
 
 // Developer Mode: a local-only testing toggle that bypasses QR verification
-// so developers can start the game instantly. Strictly client-side —
-// consumes no QR, writes no Firestore records, does not touch play counts,
-// analytics, or the Protein Tracker. Persisted in localStorage so it
-// survives reloads; must default OFF for every real user.
+// so developers can start the game instantly. The run itself still writes
+// real gameStats via saveRunStats — this flag only skips the QR/session
+// check, it doesn't make the run stats fake. Persisted in localStorage, so
+// the flag alone is untrusted; App.tsx only honors it after independently
+// confirming the account's Firestore role via isDevUser().
 
 const STORAGE_KEY = 'skm_developer_mode';
 const EVENT_NAME = 'skm_developer_mode_changed';

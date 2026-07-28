@@ -16,8 +16,10 @@
  *   • protein calculation          • coupon generation logic
  *   • notification infrastructure   • user authentication
  *
- * Guarded at the UI layer behind VITE_DEV_TOOLS / import.meta.env.DEV. Delete or
- * flip the flag before the official public launch.
+ * Gated on the caller's Firestore `role` field (isDevUser, below) both at the
+ * UI layer (ProfileScreen's isDevRole) and again inside every mutating
+ * function here via assertDevUser — never a build-time flag, which would
+ * ship the same gate into every client's bundle regardless of role.
  */
 
 import {
@@ -64,6 +66,12 @@ export async function isDevUser(uid: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// Re-checks the role server-side so calling these functions directly (bypassing the UI gate) is still rejected.
+async function assertDevUser(uid: string): Promise<void> {
+  const ok = await isDevUser(uid);
+  if (!ok) throw new Error('Developer Test Center: forbidden — developer role required.');
 }
 
 // ── Small local helpers (mirror service internals; no logic overrides) ──
@@ -133,6 +141,7 @@ export async function getDevEnvSnapshot(uid: string, email: string | null): Prom
  * genuine QR scan.
  */
 export async function devAddProtein(uid: string, grams: number): Promise<void> {
+  await assertDevUser(uid);
   const scans = Math.max(1, Math.round(grams / 6));
   for (let i = 0; i < scans; i++) {
     const fakeCode = `DEV-TEST-${Date.now()}-${i}`;
@@ -147,6 +156,7 @@ export async function devAddProtein(uid: string, grams: number): Promise<void> {
 }
 
 export async function devResetProtein(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const dk = todayKey();
   await deleteDoc(doc(db, 'daily_stats', uid, 'days', dk)).catch(() => {});
   const snap = await getDocs(collection(db, 'protein_logs', uid, 'entries'));
@@ -160,6 +170,7 @@ export async function devResetProtein(uid: string): Promise<void> {
 // ─────────────────────────────────────────────────────────────────
 
 export async function devAddPoints(uid: string, points: number): Promise<void> {
+  await assertDevUser(uid);
   const before = await getRewardWallet(uid);
   const wallet = await addPoints(uid, points, 'adjustment', `Dev test +${points} points`);
   notifyRewardPointsEarned(uid, points, wallet.currentPoints).catch(() => {});
@@ -170,6 +181,7 @@ export async function devAddPoints(uid: string, points: number): Promise<void> {
 
 /** Resets current points to 0 (lifetime points are immutable by design). */
 export async function devResetPoints(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const w = await getRewardWallet(uid);
   if (w.currentPoints > 0) {
     await spendPoints(uid, w.currentPoints, 'Dev test — reset current points').catch(() => {});
@@ -217,6 +229,7 @@ async function stampStreakHistoryDay(uid: string, dateKey: string): Promise<void
  * for the final day only. Prefer devAddStreak for realistic simulation.
  */
 export async function devSetStreak(uid: string, days: number): Promise<void> {
+  await assertDevUser(uid);
   const dk = todayKey();
   await setStreakCounters(uid, days, dk);
   await stampStreakHistoryDay(uid, dk);
@@ -233,6 +246,7 @@ export async function devSetStreak(uid: string, days: number): Promise<void> {
  * recalculated, and reward-points notifications fire exactly as in production.
  */
 export async function devAddStreak(uid: string, days: number): Promise<void> {
+  await assertDevUser(uid);
   const userRef = doc(db, 'users', uid);
   const snap = await getDoc(userRef);
   const current = snap.exists() ? ((snap.data().currentConsumptionStreak as number) ?? 0) : 0;
@@ -250,6 +264,7 @@ export async function devAddStreak(uid: string, days: number): Promise<void> {
 }
 
 export async function devResetStreak(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await updateDoc(doc(db, 'users', uid), {
     currentConsumptionStreak: 0, bestConsumptionStreak: 0, lastConsumptionDate: '',
   }).catch(() => {});
@@ -267,6 +282,7 @@ const WEEKLY_DEV_DOC = (uid: string) => doc(db, 'devWeeklyProgress', uid);
 const DEV_BATCH_BONUS_POINTS = 50;
 
 export async function devCompleteCurrentWeek(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const ref = WEEKLY_DEV_DOC(uid);
   const snap = await getDoc(ref);
   const week = snap.exists() ? ((snap.data().currentWeek as number) ?? 1) : 1;
@@ -279,6 +295,7 @@ export async function devCompleteCurrentWeek(uid: string): Promise<void> {
 }
 
 export async function devUnlockNextWeek(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const ref = WEEKLY_DEV_DOC(uid);
   const snap = await getDoc(ref);
   const week = snap.exists() ? ((snap.data().currentWeek as number) ?? 1) : 1;
@@ -286,6 +303,7 @@ export async function devUnlockNextWeek(uid: string): Promise<void> {
 }
 
 export async function devResetWeekly(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await deleteDoc(WEEKLY_DEV_DOC(uid)).catch(() => {});
 }
 
@@ -312,6 +330,7 @@ async function claimStickerWithPoints(uid: string, claimed: number[], days: numb
 }
 
 export async function devUnlockNextSticker(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const claimed = await getClaimedDays(uid);
   const next = MILESTONES.find(m => !claimed.includes(m.days));
   if (!next) return;
@@ -320,17 +339,20 @@ export async function devUnlockNextSticker(uid: string): Promise<void> {
 }
 
 export async function devUnlockRarity(uid: string, rarity: Rarity): Promise<void> {
+  await assertDevUser(uid);
   let claimed = await getClaimedDays(uid);
   const toAdd = MILESTONES.filter(m => m.rarity === rarity).map(m => m.days);
   for (const days of toAdd) claimed = await claimStickerWithPoints(uid, claimed, days);
 }
 
 export async function devUnlockAllStickers(uid: string): Promise<void> {
+  await assertDevUser(uid);
   let claimed = await getClaimedDays(uid);
   for (const m of MILESTONES) claimed = await claimStickerWithPoints(uid, claimed, m.days);
 }
 
 export async function devResetStickers(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await deleteDoc(doc(db, 'milestone_rewards', uid)).catch(() => {});
 }
 
@@ -342,6 +364,7 @@ const PASSPORT_DEV_DOC = (uid: string) => doc(db, 'devPassportProgress', uid);
 const PASSPORT_TOTAL = 5;
 
 export async function devCompleteCurrentPassport(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const ref = PASSPORT_DEV_DOC(uid);
   const snap = await getDoc(ref);
   const cur = snap.exists() ? ((snap.data().current as number) ?? 1) : 1;
@@ -349,6 +372,7 @@ export async function devCompleteCurrentPassport(uid: string): Promise<void> {
 }
 
 export async function devUnlockNextPassport(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const ref = PASSPORT_DEV_DOC(uid);
   const snap = await getDoc(ref);
   const cur = snap.exists() ? ((snap.data().current as number) ?? 1) : 1;
@@ -356,12 +380,14 @@ export async function devUnlockNextPassport(uid: string): Promise<void> {
 }
 
 export async function devCompleteAllPassports(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const data: Record<string, unknown> = { current: PASSPORT_TOTAL, updatedAt: serverTimestamp() };
   for (let i = 1; i <= PASSPORT_TOTAL; i++) data[`passport_${i}_complete`] = true;
   await setDoc(PASSPORT_DEV_DOC(uid), data, { merge: true });
 }
 
 export async function devResetPassport(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await deleteDoc(PASSPORT_DEV_DOC(uid)).catch(() => {});
 }
 
@@ -370,6 +396,7 @@ export async function devResetPassport(uid: string): Promise<void> {
 // ─────────────────────────────────────────────────────────────────
 
 async function pushNotification(uid: string, type: NotificationType, title: string, message: string): Promise<void> {
+  await assertDevUser(uid);
   await createNotification({ userId: uid, type, title, message, priority: 'normal' });
 }
 
@@ -384,6 +411,7 @@ export const devNotify = {
 };
 
 export async function devClearNotifications(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const snap = await getDocs(collection(db, 'notifications'));
   await Promise.all(
     snap.docs.filter(d => d.data().userId === uid).map(d => deleteDoc(d.ref)),
@@ -392,6 +420,7 @@ export async function devClearNotifications(uid: string): Promise<void> {
 
 /** Generates the full set of sample notifications so the Notification Center fills immediately. */
 export async function devGenerateSampleNotifications(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const samples: Array<[NotificationType, string, string]> = [
     ['protein_added',        '🥚 Egg scanned successfully', 'You added 6g of protein.'],
     ['streak_milestone',     '🔥 7-day streak achieved',    'Amazing consistency — keep it going!'],
@@ -412,6 +441,7 @@ export async function devGenerateSampleNotifications(uid: string): Promise<void>
 // ─────────────────────────────────────────────────────────────────
 
 export async function devGenerateCoupon(uid: string, discount: number): Promise<void> {
+  await assertDevUser(uid);
   const code = randomCouponCode();
   const ref = doc(collection(db, 'rewardCoupons', uid, 'redemptions'));
   const coupon: Omit<RewardCoupon, 'createdAt'> & { createdAt: unknown } = {
@@ -431,6 +461,7 @@ export async function devGenerateCoupon(uid: string, discount: number): Promise<
 
 /** Flips all available coupons to expired (sets expiry in the past). */
 export async function devExpireCoupons(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const coupons = await getUserCoupons(uid);
   await Promise.all(
     coupons
@@ -442,6 +473,7 @@ export async function devExpireCoupons(uid: string): Promise<void> {
 }
 
 export async function devResetCoupons(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const snap = await getDocs(collection(db, 'rewardCoupons', uid, 'redemptions'));
   await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
 }
@@ -452,17 +484,20 @@ export async function devResetCoupons(uid: string): Promise<void> {
 
 /** Issues a sample reward coupon (₹20). Uses the dev coupon writer so no points are required. */
 export async function devGenerateReward(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await devGenerateCoupon(uid, 20);
 }
 
 /** Marks the most recent available coupon as used (simulates redemption end-state). */
 export async function devRedeemReward(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const coupons = await getUserCoupons(uid);
   const avail = coupons.find(c => c.status === 'available');
   if (avail) await markCouponUsed(uid, avail.id);
 }
 
 export async function devResetRewards(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await devResetCoupons(uid);
 }
 
@@ -477,6 +512,7 @@ export async function devRefreshCatalog(): Promise<number> {
 // ─────────────────────────────────────────────────────────────────
 
 export async function devSetMembership(uid: string, tier: MembershipTier): Promise<void> {
+  await assertDevUser(uid);
   const def = MEMBERSHIP_TIERS.find(t => t.tier === tier)!;
   const wallet = await getRewardWallet(uid);
   const targetLifetime = Math.max(wallet.lifetimePoints, def.minPoints);
@@ -497,10 +533,12 @@ export async function devSetMembership(uid: string, tier: MembershipTier): Promi
 const EGG_CONSUMPTION_DOC = (uid: string) => doc(db, 'devEggConsumption', uid);
 
 export async function devAddEggs(uid: string, count: number): Promise<void> {
+  await assertDevUser(uid);
   await setDoc(EGG_CONSUMPTION_DOC(uid), { total: increment(count), updatedAt: serverTimestamp() }, { merge: true });
 }
 
 export async function devResetEggs(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await setDoc(EGG_CONSUMPTION_DOC(uid), { total: 0, updatedAt: serverTimestamp() }, { merge: true });
 }
 
@@ -522,6 +560,7 @@ function weightForBmiBand(band: BmiTarget, heightCm = 170): number {
 }
 
 export async function devGenerateBmi(uid: string, band: BmiTarget): Promise<number> {
+  await assertDevUser(uid);
   const heightCm = 170;
   const weightKg = weightForBmiBand(band, heightCm);
   await saveHealthProfile(uid, {
@@ -535,6 +574,7 @@ export async function devGenerateBmi(uid: string, band: BmiTarget): Promise<numb
 }
 
 export async function devResetBmi(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await deleteDoc(doc(db, 'health_profiles', uid)).catch(() => {});
 }
 
@@ -543,12 +583,14 @@ export async function devResetBmi(uid: string): Promise<void> {
 // ─────────────────────────────────────────────────────────────────
 
 export async function devCompleteDailyGoal(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const dk = todayKey();
   await setDoc(doc(db, 'daily_stats', uid, 'days', dk), { goalMet: true, updatedAt: serverTimestamp() }, { merge: true });
   notifyProteinGoalComplete(uid, 60).catch(() => {});
 }
 
 export async function devResetDailyGoal(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const dk = todayKey();
   await setDoc(doc(db, 'daily_stats', uid, 'days', dk), { goalMet: false, updatedAt: serverTimestamp() }, { merge: true });
 }
@@ -564,6 +606,7 @@ const DEV_CHALLENGE_BONUS_POINTS: Record<'daily' | 'weekly' | 'monthly', number>
 };
 
 export async function devCompleteChallenge(uid: string, type: 'daily' | 'weekly' | 'monthly'): Promise<void> {
+  await assertDevUser(uid);
   await setDoc(CHALLENGE_DEV_DOC(uid), { [`${type}_complete`]: true, updatedAt: serverTimestamp() }, { merge: true });
   const points = DEV_CHALLENGE_BONUS_POINTS[type];
   const before = await getRewardWallet(uid);
@@ -573,6 +616,7 @@ export async function devCompleteChallenge(uid: string, type: 'daily' | 'weekly'
 }
 
 export async function devResetChallenges(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await deleteDoc(CHALLENGE_DEV_DOC(uid)).catch(() => {});
 }
 
@@ -582,15 +626,18 @@ export async function devResetChallenges(uid: string): Promise<void> {
 
 /** Ensures a wallet doc exists and returns its current snapshot (Sync User / Reload). */
 export async function devSyncUser(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await getRewardWallet(uid);
 }
 
 export async function devReloadUser(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await getDoc(doc(db, 'users', uid));
 }
 
 /** No server cache to clear beyond in-memory; touches the wallet to force a re-read. */
 export async function devClearCache(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await getRewardWallet(uid);
 }
 
@@ -603,6 +650,7 @@ export async function devClearCache(uid: string): Promise<void> {
 
 /** Advances the streak by the delta needed to reach `targetDays` (no-op if already there or lower). */
 export async function devSetCustomStreak(uid: string, targetDays: number): Promise<void> {
+  await assertDevUser(uid);
   const snap = await getDoc(doc(db, 'users', uid));
   const current = snap.exists() ? ((snap.data().currentConsumptionStreak as number) ?? 0) : 0;
   const delta = targetDays - current;
@@ -610,6 +658,7 @@ export async function devSetCustomStreak(uid: string, targetDays: number): Promi
 }
 
 export async function devSetCustomProtein(uid: string, grams: number): Promise<void> {
+  await assertDevUser(uid);
   await devAddProtein(uid, grams);
 }
 
@@ -617,6 +666,7 @@ const BMI_CUSTOM_HEIGHT_CM = 170;
 
 /** Saves a health profile whose weight is chosen to land at exactly `targetBmi` at a fixed height. */
 export async function devSetCustomBmi(uid: string, targetBmi: number): Promise<number> {
+  await assertDevUser(uid);
   const m = BMI_CUSTOM_HEIGHT_CM / 100;
   const weightKg = Math.round(targetBmi * m * m);
   await saveHealthProfile(uid, {
@@ -631,8 +681,21 @@ export async function devSetCustomBmi(uid: string, targetBmi: number): Promise<n
 // pipeline (redeemReward / markCouponUsed), never a shadow coupon writer.
 // ─────────────────────────────────────────────────────────────────
 
+/**
+ * Sets this dev account's own gameStats.highestStage to STAGE2 (a real, rules-
+ * validated write to their own doc — never above what the ratchet permits to
+ * regress) so redeemReward's own server-side re-check passes without needing
+ * a separate bypass parameter. Kept dev-only via assertDevUser at each call site.
+ */
+async function devUnlockStage2(uid: string): Promise<void> {
+  await setDoc(doc(db, 'users', uid, 'gameStats', 'summary'), {
+    highestStage: 'STAGE2', championReached: true, updatedAt: serverTimestamp(),
+  }, { merge: true });
+}
+
 /** Redeems the cheapest catalog item at or under `maxPoints` (used by "Redeem ₹10/₹20 Coupon" — picks the closest real catalog match). */
 export async function devRedeemCatalogItemNear(uid: string, targetDiscount: number): Promise<RewardCoupon | null> {
+  await assertDevUser(uid);
   const catalog = await getRewardCatalog();
   if (catalog.length === 0) return null;
   const closest = [...catalog].sort((a, b) => Math.abs(a.discountAmount - targetDiscount) - Math.abs(b.discountAmount - targetDiscount))[0];
@@ -642,11 +705,13 @@ export async function devRedeemCatalogItemNear(uid: string, targetDiscount: numb
   }
   // Dev-only shortcut — bypass the game-stage gate by claiming the highest stage, same as
   // the point top-up above bypasses the points gate. Real users still go through Play Game.
-  return redeemReward(uid, closest, 'STAGE2');
+  await devUnlockStage2(uid);
+  return redeemReward(uid, closest);
 }
 
 /** Redeems the single highest-discount catalog item (mirrors the Rewards Club's "Featured Reward"). */
 export async function devRedeemFeaturedProduct(uid: string): Promise<RewardCoupon | null> {
+  await assertDevUser(uid);
   const catalog = await getRewardCatalog();
   if (catalog.length === 0) return null;
   const featured = [...catalog].sort((a, b) => b.discountAmount - a.discountAmount)[0];
@@ -655,7 +720,8 @@ export async function devRedeemFeaturedProduct(uid: string): Promise<RewardCoupo
     await addPoints(uid, featured.pointsCost - wallet.currentPoints, 'adjustment', 'Dev test — top-up to afford redemption');
   }
   // Dev-only shortcut — bypass the game-stage gate, same rationale as devRedeemCatalogItemNear above.
-  return redeemReward(uid, featured, 'STAGE2');
+  await devUnlockStage2(uid);
+  return redeemReward(uid, featured);
 }
 
 /**
@@ -666,6 +732,7 @@ export async function devRedeemFeaturedProduct(uid: string): Promise<RewardCoupo
  * touches real coupon *validation* logic (QR/point-spend rules untouched).
  */
 export async function devRefundCoupon(uid: string, couponId: string): Promise<void> {
+  await assertDevUser(uid);
   const ref = doc(db, 'rewardCoupons', uid, 'redemptions', couponId);
   const snap = await getDoc(ref);
   if (!snap.exists()) return;
@@ -683,6 +750,7 @@ export async function devRefundCoupon(uid: string, couponId: string): Promise<vo
 
 /** Adds enough scans to hit `targetEggs` for *today* specifically (caps at a sane batch size to avoid runaway writes). */
 export async function devSetTodayEggs(uid: string, targetEggs: number): Promise<void> {
+  await assertDevUser(uid);
   const today = await getTodayStats(uid);
   const have = today?.totalEggs ?? 0;
   const need = Math.max(0, targetEggs - have);
@@ -691,11 +759,13 @@ export async function devSetTodayEggs(uid: string, targetEggs: number): Promise<
 
 /** Simulates lifetime egg consumption by advancing the streak by `days` (each day = one real scan-equivalent). */
 export async function devSimulateLifetimeEggs(uid: string, days: number): Promise<void> {
+  await assertDevUser(uid);
   await devAddStreak(uid, days);
 }
 
 /** Backfills a long streak so the 30/60-day history views have real data to render. */
 export async function devGenerate365DayHistory(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await devAddStreak(uid, 365);
 }
 
@@ -706,6 +776,7 @@ export async function devGenerate365DayHistory(uid: string): Promise<void> {
 
 /** Subtracts points (never below 0) via the real addPoints pipeline (negative delta). */
 export async function devRemovePoints(uid: string, points: number): Promise<void> {
+  await assertDevUser(uid);
   const wallet = await getRewardWallet(uid);
   const delta = -Math.min(points, wallet.currentPoints);
   if (delta !== 0) await addPoints(uid, delta, 'adjustment', `Dev test — removed ${Math.abs(delta)} points`);
@@ -713,6 +784,7 @@ export async function devRemovePoints(uid: string, points: number): Promise<void
 
 /** Logs a one-off adjustment transaction so the Activity Timeline has something to render. */
 export async function devGenerateRewardTransaction(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await addPoints(uid, 15, 'adjustment', 'Dev test — sample transaction');
 }
 
@@ -721,14 +793,17 @@ export async function devGenerateRewardTransaction(uid: string): Promise<void> {
 // ─────────────────────────────────────────────────────────────────
 
 export async function devMarkAllNotificationsRead(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await markAllAsRead(uid);
 }
 
 export async function devNotifyWeeklyReminder(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await pushNotification(uid, 'system_update', '📅 Weekly Check-in', 'See how your week is going — scan an egg to keep the streak alive.');
 }
 
 export async function devNotifyDailyReminder(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await pushNotification(uid, 'daily_goal_reminder', '🥚 Daily Reminder', "Don't forget today's SKM egg scan!");
 }
 
@@ -741,16 +816,19 @@ export async function devNotifyDailyReminder(uid: string): Promise<void> {
 // ─────────────────────────────────────────────────────────────────
 
 export async function devPreviewMembershipUpgrade(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const wallet = await getRewardWallet(uid);
   await notifyMembershipTierUp(uid, wallet.membership);
 }
 
 export async function devPreviewRewardUnlock(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const wallet = await getRewardWallet(uid);
   await notifyRewardPointsEarned(uid, 25, wallet.currentPoints + 25);
 }
 
 export async function devPreviewStickerUnlock(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const claimed = await getClaimedDays(uid);
   const mostRecent = [...MILESTONES].reverse().find(m => claimed.includes(m.days)) ?? MILESTONES[0];
   await notifyStickerUnlocked(uid, mostRecent.stickerName ?? `${mostRecent.days}-day sticker`, mostRecent.rarity, mostRecent.days);
@@ -780,28 +858,34 @@ async function fillHistoryDays(uid: string, days: number, predicate: (dayIndex: 
 }
 
 export async function devFillLast7Days(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await fillHistoryDays(uid, 7, () => true);
 }
 
 export async function devFillLast30Days(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await fillHistoryDays(uid, 30, () => true);
 }
 
 /** Deterministic-looking but varied pattern — roughly 70% of days completed. */
 export async function devRandomHistory(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await fillHistoryDays(uid, 30, i => (i * 7 + 3) % 10 < 7);
 }
 
 export async function devPerfectHistory(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await fillHistoryDays(uid, 30, () => true);
 }
 
 /** Leaves gaps every 4th day so the calendar shows a realistic broken streak. */
 export async function devBrokenStreakHistory(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await fillHistoryDays(uid, 30, i => i % 4 !== 0);
 }
 
 export async function devResetHistory(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const hist = await getDocs(collection(db, 'streakHistory', uid, 'days'));
   await Promise.all(hist.docs.map(d => deleteDoc(d.ref)));
 }
@@ -812,6 +896,7 @@ export async function devResetHistory(uid: string): Promise<void> {
 // ─────────────────────────────────────────────────────────────────
 
 export async function devFailDailyGoal(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const dk = todayKey();
   await setDoc(doc(db, 'daily_stats', uid, 'days', dk), { goalMet: false, updatedAt: serverTimestamp() }, { merge: true });
   await notifyProteinGoalMissed(uid, 60).catch(() => {});
@@ -819,6 +904,7 @@ export async function devFailDailyGoal(uid: string): Promise<void> {
 
 /** Marks the last 7 days as goal-met (history-side effect only, mirrors devCompleteDailyGoal for each day). */
 export async function devPerfectWeek(uid: string): Promise<void> {
+  await assertDevUser(uid);
   for (let i = 0; i < 7; i++) {
     const dk = dateKeyOffset(-i);
     await setDoc(doc(db, 'daily_stats', uid, 'days', dk), { goalMet: true, updatedAt: serverTimestamp() }, { merge: true });
@@ -827,6 +913,7 @@ export async function devPerfectWeek(uid: string): Promise<void> {
 }
 
 export async function devPerfectMonth(uid: string): Promise<void> {
+  await assertDevUser(uid);
   for (let i = 0; i < 30; i++) {
     const dk = dateKeyOffset(-i);
     await setDoc(doc(db, 'daily_stats', uid, 'days', dk), { goalMet: true, updatedAt: serverTimestamp() }, { merge: true });
@@ -834,6 +921,7 @@ export async function devPerfectMonth(uid: string): Promise<void> {
 }
 
 export async function devResetHealthProgress(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const snap = await getDocs(collection(db, 'daily_stats', uid, 'days'));
   await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
   await devResetBmi(uid);
@@ -848,6 +936,7 @@ export async function devResetHealthProgress(uid: string): Promise<void> {
 // ─────────────────────────────────────────────────────────────────
 
 export async function devRestoreCoupon(uid: string, couponId: string): Promise<void> {
+  await assertDevUser(uid);
   const ref = doc(db, 'rewardCoupons', uid, 'redemptions', couponId);
   const snap = await getDoc(ref);
   if (!snap.exists()) return;
@@ -856,12 +945,14 @@ export async function devRestoreCoupon(uid: string, couponId: string): Promise<v
 
 /** Convenience one-tap version: restores the most recently used/expired coupon, if any. */
 export async function devRestoreMostRecentCoupon(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const coupons = await getUserCoupons(uid);
   const target = coupons.find(c => c.status !== 'available');
   if (target) await devRestoreCoupon(uid, target.id);
 }
 
 export async function devResetRedeemStore(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await devResetCoupons(uid);
   await devResetRewards(uid);
 }
@@ -882,6 +973,7 @@ function pickRandom<T>(arr: T[]): T {
 
 /** Sets a deterministic placeholder avatar (DiceBear, publicly embeddable SVG avatars — no upload flow exists yet). */
 export async function devSetRandomAvatar(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const seed = pickRandom(DEV_AVATAR_SEEDS) + '-' + Date.now();
   const photoURL = `https://api.dicebear.com/7.x/avataaars/svg?seed=${seed}`;
   if (auth.currentUser) await updateProfile(auth.currentUser, { photoURL });
@@ -889,6 +981,7 @@ export async function devSetRandomAvatar(uid: string): Promise<void> {
 }
 
 export async function devSetRandomUsername(uid: string): Promise<void> {
+  await assertDevUser(uid);
   const name = `${pickRandom(DEV_USERNAME_ADJECTIVES)}${pickRandom(DEV_USERNAME_NOUNS)}${Math.floor(Math.random() * 100)}`;
   if (auth.currentUser) await updateProfile(auth.currentUser, { displayName: name });
   await updateDoc(doc(db, 'users', uid), { playerName: name }).catch(() => {});
@@ -896,6 +989,7 @@ export async function devSetRandomUsername(uid: string): Promise<void> {
 
 /** Clears the dev-set avatar and reverts display name to the account's original provider name where possible. */
 export async function devResetProfile(uid: string): Promise<void> {
+  await assertDevUser(uid);
   if (auth.currentUser) await updateProfile(auth.currentUser, { photoURL: null });
   await updateDoc(doc(db, 'users', uid), {
     photoURL: '', age: '', gender: '', height: '', weight: '', goalWeight: '', phone: '',
@@ -909,6 +1003,7 @@ export async function devResetProfile(uid: string): Promise<void> {
 // ─────────────────────────────────────────────────────────────────
 
 export async function devFactoryReset(uid: string): Promise<void> {
+  await assertDevUser(uid);
   await devResetRewards(uid);
   await devResetStreak(uid);
   await devResetProtein(uid);

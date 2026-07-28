@@ -5,6 +5,8 @@ import { validateQR } from '../services/qr/qrService';
 import { SettingsModal } from '../frontend/modals/SettingsModal';
 import NotificationBell from '../components/notifications/NotificationBell';
 import { isDeveloperModeEnabled, subscribeDeveloperMode } from '../services/dev/devModeService';
+import { isDevUser } from '../services/protein/devTestCenterService';
+import { useAuth } from './AuthProvider';
 
 interface ModuleSelectScreenProps {
   onSelectGame:    () => void;
@@ -18,57 +20,45 @@ const LAST_MODULE_KEY  = 'skm_last_module';
 const QR_ELEMENT_ID    = 'module-select-qr-reader';
 
 // ─────────────────────────────────────────────────────────────
-// System Update Gate — developer authentication modal
+// System Update Gate — developer role check
 // Shown after 12 secret taps. Renders via portal over everything.
+// Access is decided entirely by the caller's Firestore `role` field
+// (isDevUser), never a client-side secret — any credential embedded in the
+// bundle is trivially recoverable from devtools, so it can't be the boundary.
 // ─────────────────────────────────────────────────────────────
 
-const ENCODED_DEV_NAME = 'REVWRUxPUEVS'; // base64 → "DEVELOPER"
-const ENCODED_DEV_PASS = 'bnBtIHJ1biBkZXY='; // base64 → "npm run dev"
-
 function SystemUpdateGate({
+  uid,
   onAccessGranted,
   onCancel,
 }: {
+  uid: string | undefined;
   onAccessGranted: () => void;
   onCancel: () => void;
 }) {
-  const [visible,   setVisible]   = useState(false);
-  const [devId,     setDevId]     = useState('');
-  const [devPass,   setDevPass]   = useState('');
-  const [error,     setError]     = useState('');
-  const [loading,   setLoading]   = useState(false);
-  const idRef = useRef<HTMLInputElement>(null);
+  const [visible, setVisible] = useState(false);
+  const [status, setStatus]   = useState<'checking' | 'denied'>('checking');
 
   useEffect(() => {
     const t = requestAnimationFrame(() => setVisible(true));
-    setTimeout(() => idRef.current?.focus(), 300);
     return () => cancelAnimationFrame(t);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const ok = uid ? await isDevUser(uid) : false;
+      if (cancelled) return;
+      if (ok) closeWith(onAccessGranted);
+      else setStatus('denied');
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid]);
 
   const closeWith = (cb?: () => void) => {
     setVisible(false);
     setTimeout(() => cb?.(), 250);
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
-    setTimeout(() => {
-      try {
-        const validId   = btoa(devId.trim())   === ENCODED_DEV_NAME;
-        const validPass = btoa(devPass.trim())  === ENCODED_DEV_PASS;
-        if (validId && validPass) {
-          closeWith(onAccessGranted);
-        } else {
-          setError('Access Denied — Invalid credentials.');
-          setDevPass('');
-        }
-      } catch {
-        setError('Access Denied — Invalid credentials.');
-      }
-      setLoading(false);
-    }, 400);
   };
 
   const overlay: React.CSSProperties = {
@@ -126,84 +116,26 @@ function SystemUpdateGate({
             </p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-3">
-            {/* Developer ID */}
-            <div>
-              <label className="block text-[10px] font-bold uppercase tracking-widest mb-1.5"
-                style={{ color: 'rgba(255,255,255,0.4)', fontFamily: 'monospace' }}>
-                Developer ID
-              </label>
-              <input
-                ref={idRef}
-                type="text"
-                value={devId}
-                onChange={e => { setDevId(e.target.value); setError(''); }}
-                placeholder="Enter Developer ID"
-                autoComplete="off"
-                className="w-full px-4 py-3 rounded-xl font-mono text-sm focus:outline-none transition"
-                style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  border: '1.5px solid rgba(255,255,255,0.12)',
-                  color: 'white',
-                }}
-                onFocus={e => (e.target.style.borderColor = 'rgba(215,25,32,0.7)')}
-                onBlur={e => (e.target.style.borderColor = 'rgba(255,255,255,0.12)')}
-              />
+          {status === 'checking' ? (
+            <div className="flex items-center justify-center py-4">
+              <span className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block" />
             </div>
-
-            {/* Password */}
-            <div>
-              <label className="block text-[10px] font-bold uppercase tracking-widest mb-1.5"
-                style={{ color: 'rgba(255,255,255,0.4)', fontFamily: 'monospace' }}>
-                Password
-              </label>
-              <input
-                type="password"
-                value={devPass}
-                onChange={e => { setDevPass(e.target.value); setError(''); }}
-                placeholder="Enter Password"
-                autoComplete="current-password"
-                className="w-full px-4 py-3 rounded-xl font-mono text-sm focus:outline-none transition"
-                style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  border: '1.5px solid rgba(255,255,255,0.12)',
-                  color: 'white',
-                }}
-                onFocus={e => (e.target.style.borderColor = 'rgba(215,25,32,0.7)')}
-                onBlur={e => (e.target.style.borderColor = 'rgba(255,255,255,0.12)')}
-              />
-            </div>
-
-            {/* Error */}
-            {error && (
-              <div className="rounded-xl px-4 py-2.5 text-center"
+          ) : (
+            <>
+              <div className="rounded-xl px-4 py-2.5 text-center mb-4"
                 style={{ background: 'rgba(215,25,32,0.15)', border: '1px solid rgba(215,25,32,0.3)' }}>
-                <p className="text-xs font-bold font-mono" style={{ color: '#ff6b6b' }}>{error}</p>
+                <p className="text-xs font-bold font-mono" style={{ color: '#ff6b6b' }}>Access Denied — this account is not a developer.</p>
               </div>
-            )}
-
-            {/* Buttons */}
-            <div className="flex gap-3 pt-1">
               <button
                 type="button"
                 onClick={() => closeWith(onCancel)}
-                className="flex-1 py-3 rounded-2xl font-bold text-sm uppercase tracking-wide transition active:scale-95 cursor-pointer"
+                className="w-full py-3 rounded-2xl font-bold text-sm uppercase tracking-wide transition active:scale-95 cursor-pointer"
                 style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.6)', border: '1px solid rgba(255,255,255,0.12)' }}
               >
-                Cancel
+                Close
               </button>
-              <button
-                type="submit"
-                disabled={loading || !devId.trim() || !devPass.trim()}
-                className="flex-1 py-3 rounded-2xl font-black text-sm uppercase tracking-wide transition active:scale-95 disabled:opacity-50 cursor-pointer"
-                style={{ background: 'linear-gradient(135deg,#D71920,#8B0000)', color: 'white', boxShadow: '0 4px 16px rgba(215,25,32,0.4)' }}
-              >
-                {loading ? (
-                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block" />
-                ) : 'Access Controller'}
-              </button>
-            </div>
-          </form>
+            </>
+          )}
         </div>
       </div>
     </div>,
@@ -530,6 +462,7 @@ const TAP_REQUIRED = 12;
 const TAP_INTERVAL = 1500;
 
 export default function ModuleSelectScreen({ onSelectGame, onSelectTracker, onSelectQR, autoStartGame }: ModuleSelectScreenProps) {
+  const { user } = useAuth();
   const [visible,      setVisible]      = useState(false);
   const [pressing,     setPressing]     = useState<'game' | 'tracker' | null>(null);
   const [showQRModal,  setShowQRModal]  = useState(false);
@@ -796,6 +729,7 @@ export default function ModuleSelectScreen({ onSelectGame, onSelectTracker, onSe
 
       {showGate && !showDevPanel && (
         <SystemUpdateGate
+          uid={user?.uid}
           onAccessGranted={() => { setShowGate(false); setShowDevPanel(true); }}
           onCancel={() => setShowGate(false)}
         />

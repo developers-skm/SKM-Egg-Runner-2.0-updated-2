@@ -183,27 +183,47 @@ export function meetsEggScanRequirement(item: RewardCatalogItem, lifetimeEggScan
  * Spends points and issues a new coupon for the given catalog item.
  * Throws if the user has insufficient points, or if the item has a game-stage
  * or egg-scan gate that hasn't been reached yet — caller should catch and show an error.
+ *
+ * Stage/egg-scan eligibility is re-read from Firestore inside the transaction
+ * rather than trusted from the caller's arguments — the UI only passes its
+ * locally-cached values for the pre-flight/progress-bar display, since a
+ * client calling this function directly with a fabricated highestStage would
+ * otherwise unlock stage-gated rewards without ever reaching that stage.
  */
-export async function redeemReward(uid: string, item: RewardCatalogItem, highestStage: GameStage, lifetimeEggScans: number = Infinity): Promise<RewardCoupon> {
-  if (!meetsStageRequirement(item, highestStage)) {
-    throw new Error(`Reach ${item.requiredStageLabel ?? item.requiredStage} in Egg Runner to unlock this reward.`);
-  }
-  if (!meetsEggScanRequirement(item, lifetimeEggScans)) {
-    throw new Error(`Scan ${item.requiredEggScans} SKM eggs to unlock this reward.`);
-  }
-
+export async function redeemReward(uid: string, item: RewardCatalogItem): Promise<RewardCoupon> {
   const description = `Redeemed ${item.discountAmount > 0 ? `₹${item.discountAmount} OFF` : item.productName} — ${item.productName}`;
   const couponCode = generateCouponCode();
   const expiryDate = addDays(DEFAULT_COUPON_VALID_DAYS);
 
-  const walletRef  = doc(db, 'rewardWallet', uid);
-  const couponRef  = doc(collection(db, 'rewardCoupons', uid, 'redemptions'));
+  const walletRef     = doc(db, 'rewardWallet', uid);
+  const couponRef      = doc(collection(db, 'rewardCoupons', uid, 'redemptions'));
+  const gameStatsRef   = doc(db, 'users', uid, 'gameStats', 'summary');
+  const userRef        = doc(db, 'users', uid);
 
   // Points deduction and coupon issuance commit together — if either fails,
   // neither happens, so a redemption can never spend points without
-  // producing a coupon (or vice versa).
+  // producing a coupon (or vice versa). Stage/egg-scan checks are re-read
+  // and re-validated here too, so the whole eligibility decision is atomic
+  // and server-trusted rather than based on a value passed in by the caller.
   await runTransaction(db, async (tx) => {
-    const walletSnap = await tx.get(walletRef);
+    const [walletSnap, gameStatsSnap, userSnap] = await Promise.all([
+      tx.get(walletRef), tx.get(gameStatsRef), tx.get(userRef),
+    ]);
+
+    const trustedHighestStage: GameStage = gameStatsSnap.exists()
+      ? ((gameStatsSnap.data().highestStage as GameStage) ?? 'EGG')
+      : 'EGG';
+    const trustedLifetimeEggScans: number = userSnap.exists()
+      ? ((userSnap.data().lifetimeConsumption as number) ?? 0)
+      : 0;
+
+    if (!meetsStageRequirement(item, trustedHighestStage)) {
+      throw new Error(`Reach ${item.requiredStageLabel ?? item.requiredStage} in Egg Runner to unlock this reward.`);
+    }
+    if (!meetsEggScanRequirement(item, trustedLifetimeEggScans)) {
+      throw new Error(`Scan ${item.requiredEggScans} SKM eggs to unlock this reward.`);
+    }
+
     const before = walletSnap.exists() ? (walletSnap.data() as RewardWallet) : null;
     spendPointsInTransaction(tx, walletRef, before, item.pointsCost);
 

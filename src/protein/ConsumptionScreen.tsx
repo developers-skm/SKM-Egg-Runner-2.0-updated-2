@@ -163,11 +163,12 @@ export default function ConsumptionScreen({ user, onScanQR, refreshKey }: Consum
   };
 
   const handleDelete = async (entry: ProteinLogEntry) => {
+    if (entry.type === 'qr_scan') return; // verified scans can't be deleted — see deleteLogEntry
     setDeleting(entry.id);
     try {
       const protein  = entry.protein * entry.quantity;
       const calories = entry.calories * entry.quantity;
-      await deleteLogEntry(user.uid, entry.id, protein, calories, entry.type === 'qr_scan');
+      await deleteLogEntry(user.uid, entry.id, protein, calories, false, entry.dateKey);
       setEntries(prev => prev.filter(e => e.id !== entry.id));
       setStats(prev => prev ? {
         ...prev,
@@ -311,12 +312,14 @@ export default function ConsumptionScreen({ user, onScanQR, refreshKey }: Consum
                     <p style={{ fontSize: 13, fontWeight: 900, color: '#D71920', margin: 0 }}>+{entry.protein}g</p>
                     <p style={{ fontSize: 10, color: '#bbb', margin: 0 }}>{entry.calories} kcal</p>
                   </div>
-                  <button onClick={() => handleDelete(entry)} disabled={deleting === entry.id}
-                    style={{ width: 30, height: 30, borderRadius: 9, background: '#FEE2E2', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    {deleting === entry.id
-                      ? <div style={{ width: 12, height: 12, borderRadius: '50%', border: '2px solid #fca5a5', borderTopColor: '#D71920', animation: 'spin 0.8s linear infinite' }} />
-                      : <TrashIcon size={13} color="#D71920" />}
-                  </button>
+                  {entry.type !== 'qr_scan' && (
+                    <button onClick={() => handleDelete(entry)} disabled={deleting === entry.id}
+                      style={{ width: 30, height: 30, borderRadius: 9, background: '#FEE2E2', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      {deleting === entry.id
+                        ? <div style={{ width: 12, height: 12, borderRadius: '50%', border: '2px solid #fca5a5', borderTopColor: '#D71920', animation: 'spin 0.8s linear infinite' }} />
+                        : <TrashIcon size={13} color="#D71920" />}
+                    </button>
+                  )}
                 </div>
               ))}
 

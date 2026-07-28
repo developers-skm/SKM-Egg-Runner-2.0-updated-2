@@ -268,13 +268,13 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, onPlayGame, 
     setRedeeming(true); setRedeemErr('');
     HapticService.selection(); // major button press — Redeem confirm
     try {
-      const coupon = await redeemReward(user.uid, confirmItem, highestStage, lifetimeEggScans);
+      const coupon = await redeemReward(user.uid, confirmItem);
       setConfirmItem(null);
       setSuccessCoupon(coupon);
       HapticService.success(); // Coupon Unlocked / Reward Redeemed
       await load();
-    } catch {
-      setRedeemErr('Failed to redeem. Please try again.');
+    } catch (e) {
+      setRedeemErr(e instanceof Error ? e.message : 'Failed to redeem. Please try again.');
     } finally {
       setRedeeming(false);
     }

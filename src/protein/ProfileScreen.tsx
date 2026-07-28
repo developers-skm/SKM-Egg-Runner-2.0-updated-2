@@ -1,11 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
 
-// IS_DEV: developer tools visibility.
-//   • Always ON during local development (`npm run dev`) via import.meta.env.DEV.
-//   • ON in built/deployed bundles only when VITE_DEV_TOOLS=true is present at build time.
-//   • Set VITE_DEV_TOOLS=false (and build in production mode) for the official public launch.
-// This guarantees Developer Mode can never silently disappear during development.
-const IS_DEV = import.meta.env.VITE_DEV_TOOLS === 'true' || import.meta.env.DEV === true;
+// Developer Tools visibility is gated by the caller's Firestore `role` field
+// (checked via `isDevRole`, fetched with `isDevUser()` below), never by a
+// build-time env var — a VITE_* flag ships into the client bundle and would
+// expose developer-only actions (which write through real production reward/
+// streak services) to every user in production regardless of role.
 
 const DEV_MODE_KEY = 'skm_dev_mode_enabled';
 function readDevMode(): boolean {
@@ -849,8 +848,8 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
             onClose={() => setActiveSticker(null)}
           />
 
-          {/* ── DEVELOPER TOOLS — always visible in non-production builds ── */}
-          {IS_DEV && (
+          {/* ── DEVELOPER TOOLS — visible only to accounts with role == 'developer'/'admin' ── */}
+          {isDevRole && (
             <div style={{ marginTop: 14 }}>
 
               {/* Development build badge */}

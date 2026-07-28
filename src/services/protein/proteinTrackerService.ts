@@ -460,21 +460,37 @@ export async function logManualEntry(
 // DELETE LOG ENTRY
 // ─────────────────────────────────────────────────────────────
 
-export async function deleteLogEntry(uid: string, entryId: string, protein: number, calories: number, isEgg: boolean): Promise<void> {
-  await deleteDoc(doc(db, 'protein_logs', uid, 'entries', entryId));
-  const dateKey = todayKey();
-  const ref  = doc(db, 'daily_stats', uid, 'days', dateKey);
-  const snap = await getDoc(ref);
-  if (snap.exists()) {
-    const d = snap.data() as DailyStats;
-    await updateDoc(ref, {
-      totalProtein:  Math.max(0, d.totalProtein - protein),
-      totalCalories: Math.max(0, d.totalCalories - calories),
-      totalEggs:     isEgg ? Math.max(0, d.totalEggs - 1) : d.totalEggs,
-      entries:       Math.max(0, d.entries - 1),
-      updatedAt:     serverTimestamp(),
-    });
+/**
+ * QR-scanned egg entries can't be deleted here: the scan already committed
+ * real, irreversible side effects (reward points, streak, membership,
+ * challenge progress — see processEggScan) and the source qrCodes doc is
+ * permanently marked consumed. Deleting only the log line would let a user
+ * keep those rewards while erasing the evidence, and there is no safe way to
+ * roll every dependent module back atomically from here. Manual entries have
+ * no such side effects, so they can be deleted freely.
+ */
+export async function deleteLogEntry(uid: string, entryId: string, protein: number, calories: number, isEgg: boolean, dateKey: string): Promise<void> {
+  if (isEgg) {
+    throw new Error('QR-scanned egg entries cannot be deleted — the reward, streak, and points already earned from this scan cannot be safely reversed.');
   }
+
+  const entryRef = doc(db, 'protein_logs', uid, 'entries', entryId);
+  const statsRef  = doc(db, 'daily_stats', uid, 'days', dateKey);
+
+  await runTransaction(db, async (tx) => {
+    const statsSnap = await tx.get(statsRef);
+    tx.delete(entryRef);
+    if (statsSnap.exists()) {
+      const d = statsSnap.data() as DailyStats;
+      tx.update(statsRef, {
+        totalProtein:  Math.max(0, d.totalProtein - protein),
+        totalCalories: Math.max(0, d.totalCalories - calories),
+        totalEggs:     isEgg ? Math.max(0, d.totalEggs - 1) : d.totalEggs,
+        entries:       Math.max(0, d.entries - 1),
+        updatedAt:     serverTimestamp(),
+      });
+    }
+  });
 }
 
 // ─────────────────────────────────────────────────────────────

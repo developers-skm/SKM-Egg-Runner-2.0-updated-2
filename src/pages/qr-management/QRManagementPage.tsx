@@ -8,6 +8,7 @@ import {
 import { subscribeDashboardStats, fetchAllQRCodes, EMPTY_STATS, subscribeProteinScansToday } from '../../services/qr/qrManagementService';
 import type { QRDashboardStats, QRCodeRecord } from '../../types/qr/qrManagementTypes';
 import { useAuth } from '../../auth/AuthProvider';
+import { isDevUser } from '../../services/protein/devTestCenterService';
 import QRDashboard     from '../../components/qr-management/QRDashboard';
 import QRGenerator     from '../../components/qr-management/QRGenerator';
 import QRSearch        from '../../components/qr-management/QRSearch';
@@ -146,6 +147,17 @@ export default function QRManagementPage({ onBack }: Props) {
   const actor     = user?.email ?? user?.displayName ?? 'Admin';
   const isMobile  = useIsMobile();
 
+  // Defense in depth: QRManagementPage renders no matter which caller routed
+  // here, so it re-checks the developer role itself rather than trusting the
+  // router (main.tsx's /codes handler) to always be the only entry point.
+  const [authStatus, setAuthStatus] = useState<'checking' | 'allowed' | 'denied'>('checking');
+  useEffect(() => {
+    let cancelled = false;
+    if (!user?.uid) { setAuthStatus('denied'); return; }
+    isDevUser(user.uid).then(ok => { if (!cancelled) setAuthStatus(ok ? 'allowed' : 'denied'); });
+    return () => { cancelled = true; };
+  }, [user?.uid]);
+
   const [activeTab,         setActiveTab]         = useState<TabId>('dashboard');
   const [stats,             setStats]             = useState<QRDashboardStats>(EMPTY_STATS);
   const [codes,             setCodes]             = useState<QRCodeRecord[]>([]);
@@ -175,16 +187,18 @@ export default function QRManagementPage({ onBack }: Props) {
   }, []);
 
   useEffect(() => {
+    if (authStatus !== 'allowed') return;
     unsubProteinRef.current?.();
     unsubProteinRef.current = subscribeProteinScansToday((count) => {
       setProteinScansToday(count);
     });
     return () => { unsubProteinRef.current?.(); };
-  }, []);
+  }, [authStatus]);
 
   const refresh = useCallback(() => setRefreshKey(k => k + 1), []);
 
   useEffect(() => {
+    if (authStatus !== 'allowed') return;
     setLoadingStats(true);
     setStatsError(null);
     unsubRef.current = subscribeDashboardStats((newStats) => {
@@ -198,7 +212,7 @@ export default function QRManagementPage({ onBack }: Props) {
         setLoadingStats(false);
       });
     return () => { unsubRef.current?.(); };
-  }, [refreshKey]);
+  }, [refreshKey, authStatus]);
 
   const navigate = (tab: TabId) => {
     setActiveTab(tab);
@@ -232,6 +246,28 @@ export default function QRManagementPage({ onBack }: Props) {
       case 'settings':  return <QRSettings />;
     }
   };
+
+  if (authStatus !== 'allowed') {
+    return (
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 1000, background: '#F8F9FB',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontFamily: 'system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+      }}>
+        {authStatus === 'checking' ? (
+          <div style={{ width: 28, height: 28, borderRadius: '50%', border: '3px solid #E5E7EB', borderTopColor: RED, animation: 'spin 0.8s linear infinite' }} />
+        ) : (
+          <div style={{ textAlign: 'center', maxWidth: 320 }}>
+            <p style={{ fontSize: 15, fontWeight: 800, color: '#1A1A1A', margin: '0 0 6px' }}>Access Denied</p>
+            <p style={{ fontSize: 13, color: '#666', margin: '0 0 20px' }}>This page is restricted to developer accounts.</p>
+            <button onClick={onBack} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: RED, color: '#fff', fontWeight: 700, cursor: 'pointer' }}>
+              Go Back
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div style={{

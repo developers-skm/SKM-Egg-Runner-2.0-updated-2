@@ -11,6 +11,7 @@ import LoadingScreen from './auth/LoadingScreen.tsx';
 import OfflineScreen from './auth/OfflineScreen.tsx';
 import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './services/firebase/firebase.ts';
+import { isDevUser } from './services/protein/devTestCenterService.ts';
 import { startRealtimeConfigSync } from './liveConfig.ts';
 import { soundManager } from './audio.ts';
 import { NotificationProvider } from './context/NotificationContext.tsx';
@@ -129,16 +130,24 @@ function AppRoot() {
   }, [user]);
 
   // Reset screen to MODULE_SELECT when a different user logs in,
-  // but honour /codes deep-link if that's where they arrived.
+  // but honour /codes deep-link if that's where they arrived — only for
+  // accounts with a real developer role. QRManagementPage itself doesn't
+  // gate rendering (see services/protein/devTestCenterService.ts isDevUser),
+  // so a non-developer typing /codes into the address bar must never reach it.
   useEffect(() => {
-    if (user?.uid) {
-      if (INITIAL_PATH === '/codes') {
-        setScreen('QR_MANAGEMENT');
-        // Clean up the URL so refresh doesn't re-trigger unexpectedly
-        window.history.replaceState(null, '', '/codes');
-      } else {
-        setScreen('MODULE_SELECT');
-      }
+    if (!user?.uid) return;
+    if (INITIAL_PATH === '/codes') {
+      isDevUser(user.uid).then(ok => {
+        if (ok) {
+          setScreen('QR_MANAGEMENT');
+        } else {
+          setScreen('MODULE_SELECT');
+        }
+        // Clean up the URL either way so refresh doesn't re-trigger unexpectedly
+        window.history.replaceState(null, '', ok ? '/codes' : '/');
+      });
+    } else {
+      setScreen('MODULE_SELECT');
     }
   }, [user?.uid]);
 
