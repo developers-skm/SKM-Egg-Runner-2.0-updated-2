@@ -126,6 +126,34 @@ function waitForSWActive(reg: ServiceWorkerRegistration): Promise<void> {
 
 // ─── STEP 3 + 4: Generate token and save to Firestore ────────────────────────
 
+// Raw browser push service errors (code 20 / AbortError) are usually transient —
+// a network blip talking to fcm.googleapis.com — so retry a couple of times
+// before giving up. Firebase config errors (bad VAPID key, blocked permission)
+// are not transient and are retried harmlessly since they fail the same way each time.
+function isPushServiceError(err: any): boolean {
+  return err?.name === 'AbortError' || err?.code === 20 || /push service error/i.test(err?.message ?? '');
+}
+
+async function getTokenWithRetry(
+  messaging: NonNullable<Awaited<typeof messagingPromise>>,
+  swReg: ServiceWorkerRegistration,
+  attempts = 3,
+): Promise<string> {
+  let lastErr: any;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: swReg });
+    } catch (err: any) {
+      lastErr = err;
+      if (!isPushServiceError(err) || i === attempts - 1) throw err;
+      const delayMs = 1000 * (i + 1);
+      console.warn(`[FCM] STEP 3 — push service error, retrying in ${delayMs}ms (attempt ${i + 2}/${attempts})...`);
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+  throw lastErr;
+}
+
 export async function initFCMToken(uid: string): Promise<string | null> {
   console.info('[FCM] ══════════════════════════════════════════');
   console.info('[FCM] Starting FCM initialization for uid:', uid);
@@ -184,10 +212,7 @@ export async function initFCMToken(uid: string): Promise<string | null> {
   console.info('[FCM] STEP 3 — Calling getToken() with VAPID key...');
   let token: string;
   try {
-    token = await getToken(messaging, {
-      vapidKey: VAPID_KEY,
-      serviceWorkerRegistration: swReg,
-    });
+    token = await getTokenWithRetry(messaging, swReg);
   } catch (err: any) {
     console.error('[FCM] STEP 3 FAILED — getToken() threw an error:');
     console.error('[FCM]   code:   ', err?.code    ?? 'none');
@@ -197,6 +222,9 @@ export async function initFCMToken(uid: string): Promise<string | null> {
     }
     if (err?.code === 'messaging/permission-blocked') {
       console.error('[FCM]   → Notifications are blocked. User must unblock in browser site settings.');
+    }
+    if (isPushServiceError(err)) {
+      console.error('[FCM]   → Browser push service unreachable (network/firewall/VPN, or OS notifications disabled for this browser).');
     }
     return null;
   }
