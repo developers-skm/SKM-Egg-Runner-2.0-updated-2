@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Info } from 'lucide-react';
-import type { QRAnalyticsData } from '../../types/qr/qrManagementTypes';
-import { fetchAnalytics } from '../../services/qr/qrManagementService';
+import { AlertTriangle, Info, TrendingUp, BarChart2, Clock } from 'lucide-react';
+import type { QRAnalyticsData, QRBatchSummary } from '../../types/qr/qrManagementTypes';
+import { fetchAnalytics, fetchBatchSummaries, fetchAllQRCodes } from '../../services/qr/qrManagementService';
 
 const RED = '#D71920';
 
@@ -37,15 +37,35 @@ function BarChart({ data }: { data: QRAnalyticsData[] }) {
 export default function QRAnalytics() {
   const [period,  setPeriod]  = useState<Period>('daily');
   const [data,    setData]    = useState<{ daily: QRAnalyticsData[]; weekly: QRAnalyticsData[]; monthly: QRAnalyticsData[] }>({ daily: [], weekly: [], monthly: [] });
+  const [batches, setBatches] = useState<QRBatchSummary[]>([]);
+  const [growth,  setGrowth]  = useState<QRAnalyticsData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true); setError(null);
-    fetchAnalytics()
-      .then(result => { setData(result); })
-      .catch(err   => { setError(err?.message ?? 'Failed to load analytics'); })
-      .finally(()  => setLoading(false));
+    Promise.all([fetchAnalytics(), fetchBatchSummaries(), fetchAllQRCodes()])
+      .then(([result, batchSummaries, codes]) => {
+        setData(result);
+        setBatches(batchSummaries);
+        // QR Growth — cumulative count of QR codes generated per day, last 14 days
+        const days = Array.from({ length: 14 }, (_, i) => {
+          const d = new Date(); d.setDate(d.getDate() - (13 - i));
+          return d.toISOString().slice(0, 10);
+        });
+        const countsByDay = new Map<string, number>();
+        codes.forEach(c => {
+          const key = c.createdAt.toISOString().slice(0, 10);
+          countsByDay.set(key, (countsByDay.get(key) ?? 0) + 1);
+        });
+        let running = codes.filter(c => c.createdAt.toISOString().slice(0, 10) < days[0]).length;
+        setGrowth(days.map(day => {
+          running += countsByDay.get(day) ?? 0;
+          return { label: new Date(day + 'T12:00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' }), scans: running };
+        }));
+      })
+      .catch(err => { setError(err?.message ?? 'Failed to load analytics'); })
+      .finally(() => setLoading(false));
   }, []);
 
   const tabs: { key: Period; label: string }[] = [
@@ -116,6 +136,50 @@ export default function QRAnalytics() {
           </>
         )}
       </div>
+
+      {/* ── Batch Usage + QR Growth ── */}
+      {!loading && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 16, marginTop: 16 }}>
+          <div style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 18, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+              <BarChart2 size={15} color={RED} />
+              <h3 style={{ fontSize: 13, fontWeight: 800, color: '#1A1A1A', margin: 0 }}>Batch Usage</h3>
+            </div>
+            {batches.length === 0 ? (
+              <p style={{ fontSize: 12, color: '#9CA3AF', textAlign: 'center', padding: '20px 0' }}>No batches yet.</p>
+            ) : (
+              <BarChart data={batches.slice(0, 8).map(b => ({ label: b.batchName.length > 10 ? b.batchName.slice(0, 9) + '…' : b.batchName, scans: b.usagePct }))} />
+            )}
+          </div>
+
+          <div style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 18, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+              <TrendingUp size={15} color={RED} />
+              <h3 style={{ fontSize: 13, fontWeight: 800, color: '#1A1A1A', margin: 0 }}>QR Growth</h3>
+            </div>
+            <BarChart data={growth} />
+          </div>
+        </div>
+      )}
+
+      {/* ── Not yet derivable from current data (honest placeholder, not fabricated) ── */}
+      <div style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 18, padding: 20, marginTop: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+          <Clock size={15} color="#9CA3AF" />
+          <h3 style={{ fontSize: 13, fontWeight: 800, color: '#6B7280', margin: 0 }}>Coming Soon</h3>
+        </div>
+        <p style={{ fontSize: 11, color: '#9CA3AF', margin: '0 0 10px' }}>
+          These require campaign/reward/coupon linkage that isn't stored on QR records yet:
+        </p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {['Top Campaigns', 'Reward Usage', 'Coupon Claims'].map(label => (
+            <span key={label} style={{ fontSize: 10, fontWeight: 700, padding: '5px 12px', borderRadius: 20, background: '#F3F4F6', color: '#9CA3AF', border: '1px solid #E5E7EB' }}>
+              {label}
+            </span>
+          ))}
+        </div>
+      </div>
+
       <style>{`@keyframes anpulse { 0%,100%{opacity:0.6} 50%{opacity:1} }`}</style>
     </section>
   );

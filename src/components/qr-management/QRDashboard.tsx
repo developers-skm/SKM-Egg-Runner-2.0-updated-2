@@ -7,6 +7,9 @@ import {
   Wifi, Server, Key, Link2, HardDrive,
 } from 'lucide-react';
 import type { QRDashboardStats, QRCodeRecord } from '../../types/qr/qrManagementTypes';
+import QRQuickActionBar from './QRQuickActionBar';
+import KPICard from './shared/KPICard';
+import { writeOpLog } from '../../services/qr/qrManagementService';
 
 const RED  = '#D71920';
 const SAFE = '#16A34A';
@@ -382,11 +385,40 @@ export default function QRDashboard({ stats, loading, error, codes = [], actor =
 
   // Quick stats
   const avgScans    = codes.length ? (codes.reduce((s, c) => s + c.playCount, 0) / codes.length).toFixed(1) : '0';
+  // Avg usage rate = mean of (playCount/maxPlays) across all codes with a finite maxPlays
+  const finiteCodes = codes.filter(c => c.maxPlays > 0 && c.maxPlays < 999999);
+  const avgUsageRatePct = finiteCodes.length
+    ? Math.round((finiteCodes.reduce((s, c) => s + Math.min(1, c.playCount / c.maxPlays), 0) / finiteCodes.length) * 100)
+    : 0;
+  // Success rate = share of codes that are still usable (active, plays remaining)
+  const successRatePct = codes.length
+    ? Math.round((codes.filter(c => c.active && c.playCount < c.maxPlays).length / codes.length) * 100)
+    : 0;
   const totalLeft   = codes.filter(c => c.maxPlays < 999999).reduce((s, c) => s + Math.max(0, c.maxPlays - c.playCount), 0);
   const mostUsed    = codes.sort((a, b) => b.playCount - a.playCount)[0];
   const latestBatch = codes[0]?.batch || '—';
 
   const gameLink = (() => { try { return localStorage.getItem('qr_game_url') || 'Not set'; } catch { return '—'; } })();
+
+  // Yesterday's scan total (for KPI trend arrows) — same dailyScans map already used for last7
+  const yesterdayScans = React.useMemo(() => {
+    const d = new Date(); d.setDate(d.getDate() - 1);
+    const key = d.toISOString().slice(0, 10);
+    let total = 0;
+    codes.forEach(c => {
+      const ds = (c as any).dailyScans as Record<string, number> | undefined;
+      if (ds) total += ds[key] ?? 0;
+    });
+    return total;
+  }, [codes]);
+  const scanTrendPct = yesterdayScans > 0
+    ? Math.round(((scannedToday - yesterdayScans) / yesterdayScans) * 100)
+    : (scannedToday > 0 ? 100 : 0);
+
+  const handleImportCSV = (file: File) => {
+    writeOpLog('import', 'csv', 1, actor, { reason: `Imported file: ${file.name} (logged for record-keeping only — no QR codes created)` })
+      .catch(() => { /* best-effort logging */ });
+  };
 
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
@@ -405,26 +437,13 @@ export default function QRDashboard({ stats, loading, error, codes = [], actor =
           </p>
         </div>
 
-        {/* Quick actions */}
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {[
-            { label: 'Generate', icon: <Plus size={13} />, tab: 'generator', primary: true },
-            { label: 'Print',    icon: <Printer size={13} />, tab: 'print' },
-            { label: 'Export',   icon: <Download size={13} />, tab: 'bulk' },
-          ].map(({ label, icon, tab, primary }) => (
-            <button key={label} onClick={() => onNavigate?.(tab)} style={{
-              display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', borderRadius: 10,
-              fontSize: 12, fontWeight: 800, cursor: 'pointer', border: 'none',
-              background: primary ? `linear-gradient(135deg,${RED},#B51218)` : '#F3F4F6',
-              color:      primary ? '#fff' : '#374151',
-              boxShadow:  primary ? `0 3px 10px ${RED}30` : 'none',
-            }}>{icon}{label}</button>
-          ))}
-          <button onClick={onRefresh} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#6B7280' }}>
-            <RefreshCw size={13} style={{ animation: loading ? 'dbSpin 0.9s linear infinite' : 'none' }} />
-          </button>
-        </div>
+        <button onClick={onRefresh} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#6B7280', alignSelf: 'flex-start' }}>
+          <RefreshCw size={13} style={{ animation: loading ? 'dbSpin 0.9s linear infinite' : 'none' }} />
+        </button>
       </div>
+
+      {/* ── Persistent Quick Action Bar ── */}
+      {onNavigate && <QRQuickActionBar onNavigate={onNavigate} onImportCSV={handleImportCSV} />}
 
       {error && (
         <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 12, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -453,9 +472,9 @@ export default function QRDashboard({ stats, loading, error, codes = [], actor =
           {/* ── KPI Grid ── */}
           <div>
             <p style={{ fontSize: 10, fontWeight: 800, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 1.5, margin: '0 0 10px' }}>QR Status</p>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(130px,1fr))', gap: 10 }}>
-              <KpiCard label="Total Generated" value={stats.totalGenerated}  icon={<QrCode size={16} strokeWidth={2} />}       accent="#6366F1" onClick={() => onNavigate?.('search')} />
-              <KpiCard label="Active QR"       value={stats.activeQR}        icon={<CheckCircle2 size={16} strokeWidth={2} />} accent={SAFE}    sub="plays remaining" onClick={() => onNavigate?.('search')} />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: 10 }}>
+              <KPICard label="Total QR"     value={stats.totalGenerated}  icon={<QrCode size={16} strokeWidth={2} />}       accent="#6366F1" todayDelta={generatedToday} onClick={() => onNavigate?.('search')} />
+              <KPICard label="Active QR"    value={stats.activeQR}        icon={<CheckCircle2 size={16} strokeWidth={2} />} accent={SAFE}    percentage={stats.totalGenerated ? Math.round((stats.activeQR / stats.totalGenerated) * 100) : 0} onClick={() => onNavigate?.('search')} />
               <KpiCard label="Disabled"        value={stats.disabledQR}      icon={<Ban size={16} strokeWidth={2} />}          accent="#DC2626" sub="active=false" />
               <KpiCard label="Exhausted"       value={stats.exhaustedQR ?? 0}icon={<AlertTriangle size={16} strokeWidth={2} />}accent="#F97316" sub="all plays used" />
               <KpiCard label="Unused"          value={stats.unusedQR}        icon={<PackageOpen size={16} strokeWidth={2} />}  accent="#6B7280" sub="playCount=0" />
@@ -467,10 +486,12 @@ export default function QRDashboard({ stats, loading, error, codes = [], actor =
           {/* ── Scan Metrics ── */}
           <div>
             <p style={{ fontSize: 10, fontWeight: 800, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 1.5, margin: '0 0 10px' }}>Scan Metrics</p>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(130px,1fr))', gap: 10 }}>
-              <KpiCard label="Today"      value={stats.scannedToday}       icon={<ScanLine size={16} strokeWidth={2} />}   accent={RED}      sub="real-time" />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: 10 }}>
+              <KPICard label="Today"      value={stats.scannedToday}       icon={<ScanLine size={16} strokeWidth={2} />}   accent={RED}      trendPct={scanTrendPct} />
               <KpiCard label="This Week"  value={stats.scannedThisWeek}    icon={<BarChart2 size={16} strokeWidth={2} />}  accent="#0891B2"  sub="last 7 days" />
               <KpiCard label="This Month" value={stats.scannedThisMonth}   icon={<TrendingUp size={16} strokeWidth={2} />} accent="#7C3AED"  sub="last 30 days" />
+              <KpiCard label="Avg Usage Rate" value={`${avgUsageRatePct}%`} icon={<Activity size={16} strokeWidth={2} />}  accent="#0EA5E9"  sub="plays used / max" />
+              <KpiCard label="Success Rate"   value={`${successRatePct}%`}  icon={<CheckCircle2 size={16} strokeWidth={2} />} accent={SAFE}  sub="QR still usable" />
             </div>
           </div>
 

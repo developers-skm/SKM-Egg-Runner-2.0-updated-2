@@ -3,10 +3,16 @@ import QRCode from 'qrcode';
 import {
   Search, Eye, Download, Printer, Copy, PauseCircle, PlayCircle,
   X, CheckCircle2, QrCode as QrCodeIcon, RefreshCw, ChevronLeft, ChevronRight,
-  Filter,
+  Filter, Archive, Trash2, FolderInput, Tag, Gift, Bookmark, BookmarkPlus, X as XIcon,
+  Rows3, Rows2, Rows4, Columns3,
 } from 'lucide-react';
-import type { QRCodeRecord } from '../../types/qr/qrManagementTypes';
-import { fetchAllQRCodes, setQRActive, syncGameUrlFromFirestore } from '../../services/qr/qrManagementService';
+import type { QRCodeRecord, SavedQRFilter } from '../../types/qr/qrManagementTypes';
+import {
+  fetchAllQRCodes, setQRActive, syncGameUrlFromFirestore,
+  bulkSetActiveByIds, bulkDeleteByIds, bulkMoveToBatch, exportCSV, writeOpLog,
+  getSavedFilters, saveFilter, deleteFilter,
+} from '../../services/qr/qrManagementService';
+import EmptyState from './shared/EmptyState';
 
 const RED = '#D71920';
 
@@ -257,6 +263,97 @@ function TypeBadge({ type }: { type: string }) {
   return <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, background: m.bg, color: m.color, fontWeight: 700, border: `1px solid ${m.border}`, whiteSpace: 'nowrap' }}>{type}</span>;
 }
 
+// ─── Floating Bulk Action Toolbar (§6) ───────────────────────────────────────
+// Campaign/Reward "assignment" has no field to persist to (schema is frozen —
+// no campaignId/rewardId on qrCodes docs). Those two actions only write a
+// qrOperationLogs entry as a reference note for the admin to act on elsewhere.
+
+interface BulkToolbarProps {
+  count: number;
+  busy: boolean;
+  onEnable: () => void;
+  onDisable: () => void;
+  onArchive: () => void;
+  onDelete: () => void;
+  onPrint: () => void;
+  onExport: () => void;
+  onMoveBatch: () => void;
+  onAssignCampaign: () => void;
+  onAssignReward: () => void;
+  onClear: () => void;
+}
+
+function BulkToolbarBtn({ icon, label, onClick, danger }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 5, padding: '7px 11px', borderRadius: 8,
+        fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none', whiteSpace: 'nowrap',
+        background: hover ? (danger ? '#FEF2F2' : 'rgba(255,255,255,0.12)') : 'transparent',
+        color: danger ? '#FCA5A5' : '#fff',
+      }}
+    >{icon}{label}</button>
+  );
+}
+
+function BulkToolbar({
+  count, busy, onEnable, onDisable, onArchive, onDelete, onPrint, onExport,
+  onMoveBatch, onAssignCampaign, onAssignReward, onClear,
+}: BulkToolbarProps) {
+  return (
+    <div style={{
+      position: 'sticky', top: 0, zIndex: 30,
+      display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap',
+      background: '#1A1A1A', borderRadius: 12, padding: '8px 12px', marginBottom: 12,
+      boxShadow: '0 4px 16px rgba(0,0,0,0.18)', opacity: busy ? 0.6 : 1,
+      pointerEvents: busy ? 'none' : 'auto',
+    }}>
+      <span style={{ fontSize: 11, fontWeight: 800, color: '#fff', padding: '0 8px 0 2px', whiteSpace: 'nowrap' }}>
+        {count} selected
+      </span>
+      <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.15)', margin: '0 2px' }} />
+      <BulkToolbarBtn icon={<PlayCircle size={13} />}   label="Enable"   onClick={onEnable} />
+      <BulkToolbarBtn icon={<PauseCircle size={13} />}  label="Disable"  onClick={onDisable} />
+      <BulkToolbarBtn icon={<Archive size={13} />}      label="Archive"  onClick={onArchive} />
+      <BulkToolbarBtn icon={<Printer size={13} />}      label="Print"    onClick={onPrint} />
+      <BulkToolbarBtn icon={<Download size={13} />}     label="Export"   onClick={onExport} />
+      <BulkToolbarBtn icon={<FolderInput size={13} />}  label="Move Batch" onClick={onMoveBatch} />
+      <BulkToolbarBtn icon={<Tag size={13} />}          label="Assign Campaign" onClick={onAssignCampaign} />
+      <BulkToolbarBtn icon={<Gift size={13} />}         label="Assign Reward"   onClick={onAssignReward} />
+      <BulkToolbarBtn icon={<Trash2 size={13} />}       label="Delete"   onClick={onDelete} danger />
+      <div style={{ marginLeft: 'auto' }}>
+        <button onClick={onClear} style={{ width: 24, height: 24, borderRadius: 7, border: 'none', background: 'rgba(255,255,255,0.1)', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <X size={13} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Destructive bulk confirm ────────────────────────────────────────────────
+
+function BulkConfirmModal({ title, message, confirmLabel, onConfirm, onCancel }: {
+  title: string; message: string; confirmLabel: string; onConfirm: () => void; onCancel: () => void;
+}) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 10300, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+      onClick={e => { if (e.target === e.currentTarget) onCancel(); }}>
+      <div style={{ background: '#fff', borderRadius: 16, padding: 22, width: '100%', maxWidth: 360, boxShadow: '0 20px 50px rgba(0,0,0,0.2)' }}>
+        <p style={{ fontSize: 14, fontWeight: 800, color: '#1A1A1A', margin: 0 }}>{title}</p>
+        <p style={{ fontSize: 12, color: '#6B7280', margin: '8px 0 18px' }}>{message}</p>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={onCancel} style={{ flex: 1, padding: '10px 0', borderRadius: 10, border: '1px solid #E5E7EB', background: '#F3F4F6', color: '#374151', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
+          <button onClick={onConfirm} style={{ flex: 1, padding: '10px 0', borderRadius: 10, border: 'none', background: '#DC2626', color: '#fff', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Input style ──────────────────────────────────────────────────────────────
 
 const inputStyle: React.CSSProperties = {
@@ -268,9 +365,25 @@ const inputStyle: React.CSSProperties = {
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 250];
 
+// ─── Density mode + column visibility (§15, localStorage-persisted) ─────────
+
+type Density = 'compact' | 'comfortable' | 'spacious';
+const DENSITY_KEY = 'qr_search_density';
+const DENSITY_PADDING: Record<Density, string> = {
+  compact:     '5px 12px',
+  comfortable: '10px 12px',
+  spacious:    '15px 12px',
+};
+
+const ALL_COLUMNS = ['Type', 'Status', 'Batch', 'Max', 'Used', 'Remaining', 'Created', 'Last Scan'] as const;
+type ColumnName = typeof ALL_COLUMNS[number];
+const COLUMNS_KEY = 'qr_search_visible_columns';
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function QRSearch() {
+interface Props { actor?: string; onNavigate?: (tab: string) => void; }
+
+export default function QRSearch({ actor = 'Admin', onNavigate }: Props) {
   // Master list — loaded once from Firestore on mount
   const [allCodes,   setAllCodes]   = useState<QRCodeRecord[]>([]);
   const [loading,    setLoading]    = useState(true);
@@ -289,6 +402,40 @@ export default function QRSearch() {
   const [toggling,    setToggling]    = useState<string | null>(null);
   const [preview,     setPreview]     = useState<{ qr: QRCodeRecord; dataUrl: string } | null>(null);
   const [loadingQr,   setLoadingQr]   = useState<string | null>(null);
+
+  // Row selection (§6 bulk operations toolbar)
+  const [selected,   setSelected]   = useState<Set<string>>(new Set());
+  const [bulkBusy,   setBulkBusy]   = useState(false);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+
+  // Saved filters (§9) — localStorage-backed, no Firestore
+  const [savedFilters, setSavedFilters] = useState<SavedQRFilter[]>(() => getSavedFilters());
+  const [showSaveInput, setShowSaveInput] = useState(false);
+  const [saveNameInput, setSaveNameInput] = useState('');
+
+  // Density mode + column visibility (§15)
+  const [density, setDensity] = useState<Density>(() => {
+    try { return (localStorage.getItem(DENSITY_KEY) as Density) || 'comfortable'; } catch { return 'comfortable'; }
+  });
+  const [visibleColumns, setVisibleColumns] = useState<Set<ColumnName>>(() => {
+    try {
+      const raw = localStorage.getItem(COLUMNS_KEY);
+      return raw ? new Set(JSON.parse(raw)) : new Set(ALL_COLUMNS);
+    } catch { return new Set(ALL_COLUMNS); }
+  });
+  const [showColumnPicker, setShowColumnPicker] = useState(false);
+
+  useEffect(() => { try { localStorage.setItem(DENSITY_KEY, density); } catch { /* ignore */ } }, [density]);
+  useEffect(() => { try { localStorage.setItem(COLUMNS_KEY, JSON.stringify([...visibleColumns])); } catch { /* ignore */ } }, [visibleColumns]);
+
+  const toggleColumn = (col: ColumnName) => {
+    setVisibleColumns(s => {
+      const next = new Set(s);
+      if (next.has(col)) next.delete(col); else next.add(col);
+      return next;
+    });
+  };
+  const cellPad = DENSITY_PADDING[density];
 
   // ── Load all codes on mount ───────────────────────────────────────────────
   const loadAll = useCallback(async () => {
@@ -329,12 +476,91 @@ export default function QRSearch() {
 
   // Reset to page 0 whenever filter changes
   useEffect(() => { setPage(0); }, [searchText, statusFilter, typeFilter, pageSize]);
+  useEffect(() => { setSelected(new Set()); }, [searchText, statusFilter, typeFilter]);
 
   const totalPages  = Math.max(1, Math.ceil(filtered.length / pageSize));
   const paginated   = filtered.slice(page * pageSize, (page + 1) * pageSize);
   const hasFilters  = searchText !== '' || statusFilter !== '' || typeFilter !== '';
 
   const clearFilters = () => { setSearchText(''); setStatusFilter(''); setTypeFilter(''); };
+
+  // ── Saved filters ─────────────────────────────────────────────────────────
+  const handleApplyPreset = (preset: SavedQRFilter) => {
+    setSearchText(preset.filters.qrId ?? '');
+    setStatusFilter((preset.filters.status ?? '') as any);
+    setTypeFilter(preset.filters.type ?? '');
+  };
+  const handleSaveCurrentFilter = () => {
+    const name = saveNameInput.trim();
+    if (!name) return;
+    const updated = saveFilter(name, { qrId: searchText, batch: '', status: statusFilter, type: typeFilter as any });
+    setSavedFilters(updated);
+    setSaveNameInput('');
+    setShowSaveInput(false);
+  };
+  const handleDeletePreset = (id: string) => setSavedFilters(deleteFilter(id));
+
+  // ── Bulk selection ────────────────────────────────────────────────────────
+  const toggleRow = (id: string) => {
+    setSelected(s => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const toggleAllOnPage = () => {
+    setSelected(s => {
+      const next = new Set(s);
+      const allSelected = paginated.every(qr => next.has(qr.id));
+      paginated.forEach(qr => allSelected ? next.delete(qr.id) : next.add(qr.id));
+      return next;
+    });
+  };
+  const clearSelection = () => setSelected(new Set());
+  const selectedCodes = useMemo(() => allCodes.filter(c => selected.has(c.id)), [allCodes, selected]);
+
+  const runBulk = async (label: string, fn: () => Promise<number>) => {
+    setBulkBusy(true);
+    try {
+      const n = await fn();
+      await writeOpLog(label, 'mixed', n, actor, { qrIds: [...selected] });
+      await loadAll();
+      clearSelection();
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const handleBulkEnable  = () => runBulk('enable',  () => bulkSetActiveByIds([...selected], true));
+  const handleBulkDisable = () => runBulk('disable', () => bulkSetActiveByIds([...selected], false));
+  const handleBulkArchive = () => runBulk('archive', () => bulkSetActiveByIds([...selected], false));
+  const handleBulkDelete  = () => runBulk('delete',  () => bulkDeleteByIds([...selected]));
+  const handleBulkExport  = () => {
+    exportCSV(selectedCodes);
+    writeOpLog('export', 'mixed', selectedCodes.length, actor, { qrIds: [...selected] }).catch(() => {});
+  };
+  const handleBulkPrint = () => {
+    // Hands off to the Print Center tab, which already builds real print sheets — avoids duplicating that logic here.
+    writeOpLog('print_requested', 'mixed', selectedCodes.length, actor, { qrIds: [...selected] }).catch(() => {});
+    onNavigate?.('print');
+  };
+  // Campaign/Reward assignment: no field to persist to (schema frozen) — logged for reference only.
+  const handleBulkAssignCampaign = () => {
+    writeOpLog('campaign_assign_requested', 'mixed', selectedCodes.length, actor, {
+      qrIds: [...selected], reason: 'Logged for reference — no campaign system integration yet',
+    }).catch(() => {});
+  };
+  const handleBulkAssignReward = () => {
+    writeOpLog('reward_assign_requested', 'mixed', selectedCodes.length, actor, {
+      qrIds: [...selected], reason: 'Logged for reference — no reward system integration yet',
+    }).catch(() => {});
+  };
+  const handleBulkMoveBatch = () => {
+    const newBatch = window.prompt('Move selected QR codes to batch (name):');
+    if (!newBatch) return;
+    const newBatchId = `BATCH-${Date.now()}`;
+    runBulk('batch_move', () => bulkMoveToBatch([...selected], newBatch.trim(), newBatchId));
+  };
 
   // ── Row actions ───────────────────────────────────────────────────────────
   const handleToggle = async (code: string, currentActive: boolean) => {
@@ -368,15 +594,67 @@ export default function QRSearch() {
             {loading ? 'Loading QR codes…' : `${allCodes.length} QR codes · ${filtered.length} shown`}
           </p>
         </div>
-        <button
-          onClick={loadAll}
-          disabled={loading}
-          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 9, border: '1px solid #E5E7EB', background: '#F3F4F6', color: '#374151', fontSize: 11, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer' }}
-        >
-          <RefreshCw size={13} style={{ animation: loading ? 'srchspin 0.9s linear infinite' : 'none' }} />
-          Refresh
-        </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {/* Density mode */}
+          <div style={{ display: 'flex', border: '1px solid #E5E7EB', borderRadius: 9, overflow: 'hidden' }}>
+            {([
+              { key: 'compact' as Density,     icon: <Rows4 size={13} /> },
+              { key: 'comfortable' as Density, icon: <Rows3 size={13} /> },
+              { key: 'spacious' as Density,    icon: <Rows2 size={13} /> },
+            ]).map(d => (
+              <button key={d.key} onClick={() => setDensity(d.key)} title={d.key} style={{
+                padding: '7px 9px', border: 'none', cursor: 'pointer',
+                background: density === d.key ? RED : '#F9FAFB',
+                color: density === d.key ? '#fff' : '#6B7280',
+              }}>{d.icon}</button>
+            ))}
+          </div>
+
+          {/* Column visibility */}
+          <div style={{ position: 'relative' }}>
+            <button onClick={() => setShowColumnPicker(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderRadius: 9, border: '1px solid #E5E7EB', background: '#F3F4F6', color: '#374151', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+              <Columns3 size={13} /> Columns
+            </button>
+            {showColumnPicker && (
+              <div style={{ position: 'absolute', right: 0, top: '110%', zIndex: 40, background: '#fff', border: '1px solid #E5E7EB', borderRadius: 10, padding: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: 150 }}>
+                {ALL_COLUMNS.map(col => (
+                  <label key={col} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 6px', fontSize: 11, fontWeight: 600, color: '#374151', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={visibleColumns.has(col)} onChange={() => toggleColumn(col)} />
+                    {col}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={loadAll}
+            disabled={loading}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 9, border: '1px solid #E5E7EB', background: '#F3F4F6', color: '#374151', fontSize: 11, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer' }}
+          >
+            <RefreshCw size={13} style={{ animation: loading ? 'srchspin 0.9s linear infinite' : 'none' }} />
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {/* Bulk operations toolbar — appears when rows are selected */}
+      {selected.size > 0 && (
+        <BulkToolbar
+          count={selected.size}
+          busy={bulkBusy}
+          onEnable={handleBulkEnable}
+          onDisable={handleBulkDisable}
+          onArchive={handleBulkArchive}
+          onDelete={() => setConfirmBulkDelete(true)}
+          onPrint={handleBulkPrint}
+          onExport={handleBulkExport}
+          onMoveBatch={handleBulkMoveBatch}
+          onAssignCampaign={handleBulkAssignCampaign}
+          onAssignReward={handleBulkAssignReward}
+          onClear={clearSelection}
+        />
+      )}
 
       {/* Summary bar — updates as filters change */}
       {!loading && !loadError && <SummaryBar codes={filtered} />}
@@ -444,6 +722,13 @@ export default function QRSearch() {
             {PAGE_SIZE_OPTIONS.map(n => <option key={n} value={n}>{n} rows</option>)}
           </select>
 
+          {/* Save current filter */}
+          {hasFilters && !showSaveInput && (
+            <button onClick={() => setShowSaveInput(true)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '9px 13px', borderRadius: 9, border: '1px solid #E5E7EB', background: '#F9FAFB', color: '#374151', fontSize: 11, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              <BookmarkPlus size={12} /> Save Filter
+            </button>
+          )}
+
           {/* Clear filters */}
           {hasFilters && (
             <button onClick={clearFilters} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '9px 13px', borderRadius: 9, border: '1px solid #FECACA', background: '#FEF2F2', color: '#DC2626', fontSize: 11, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
@@ -452,6 +737,39 @@ export default function QRSearch() {
           )}
         </div>
 
+        {/* Save filter name input */}
+        {showSaveInput && (
+          <div style={{ padding: '10px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input
+              autoFocus
+              style={{ ...inputStyle, flex: '0 1 220px' }}
+              placeholder="Filter name (e.g. Unused QR)"
+              value={saveNameInput}
+              onChange={e => setSaveNameInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleSaveCurrentFilter(); if (e.key === 'Escape') setShowSaveInput(false); }}
+            />
+            <button onClick={handleSaveCurrentFilter} style={{ padding: '9px 14px', borderRadius: 9, border: 'none', background: RED, color: '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>Save</button>
+            <button onClick={() => setShowSaveInput(false)} style={{ padding: '9px 14px', borderRadius: 9, border: '1px solid #E5E7EB', background: '#F9FAFB', color: '#374151', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
+          </div>
+        )}
+
+        {/* Saved filter chips */}
+        {savedFilters.length > 0 && (
+          <div style={{ padding: '10px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <Bookmark size={12} color="#9CA3AF" />
+            {savedFilters.map(preset => (
+              <span key={preset.id} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 4px 4px 10px', borderRadius: 20, background: '#F3F4F6', border: '1px solid #E5E7EB' }}>
+                <button onClick={() => handleApplyPreset(preset)} style={{ border: 'none', background: 'none', fontSize: 10, fontWeight: 700, color: '#374151', cursor: 'pointer', padding: 0 }}>
+                  {preset.name}
+                </button>
+                <button onClick={() => handleDeletePreset(preset.id)} style={{ width: 16, height: 16, borderRadius: '50%', border: 'none', background: 'transparent', color: '#9CA3AF', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <XIcon size={10} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
         {/* ── Table ── */}
         {loadError ? (
           <div style={{ padding: '40px 0', textAlign: 'center' }}>
@@ -459,13 +777,23 @@ export default function QRSearch() {
             <button onClick={loadAll} style={{ marginTop: 12, padding: '8px 18px', borderRadius: 9, border: '1px solid #E5E7EB', background: '#F3F4F6', color: '#374151', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Retry</button>
           </div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
+          <div style={{ overflowX: 'auto', maxHeight: 640, overflowY: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 720 }}>
               <thead>
-                <tr style={{ background: '#F9FAFB', borderBottom: '1px solid #E5E7EB' }}>
-                  {['QR Code ID', 'Type', 'Status', 'Batch', 'Max', 'Used', 'Remaining', 'Created', 'Last Scan', 'Actions'].map(h => (
+                <tr style={{ background: '#F9FAFB', borderBottom: '1px solid #E5E7EB', position: 'sticky', top: 0, zIndex: 5 }}>
+                  <th style={{ padding: '10px 12px', width: 32, background: '#F9FAFB', position: 'sticky', left: 0, zIndex: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={paginated.length > 0 && paginated.every(qr => selected.has(qr.id))}
+                      onChange={toggleAllOnPage}
+                      style={{ cursor: 'pointer' }}
+                    />
+                  </th>
+                  <th style={{ padding: '10px 12px', textAlign: 'left', color: '#6B7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, fontSize: 9, whiteSpace: 'nowrap' }}>QR Code ID</th>
+                  {ALL_COLUMNS.filter(c => visibleColumns.has(c)).map(h => (
                     <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: '#6B7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, fontSize: 9, whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
+                  <th style={{ padding: '10px 12px', textAlign: 'left', color: '#6B7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, fontSize: 9, whiteSpace: 'nowrap' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -473,16 +801,14 @@ export default function QRSearch() {
                   Array.from({ length: 8 }).map((_, i) => <SkeletonRow key={i} />)
                 ) : paginated.length === 0 ? (
                   <tr>
-                    <td colSpan={10} style={{ padding: '52px 0', textAlign: 'center' }}>
-                      <QrCodeIcon size={36} color="#E5E7EB" style={{ marginBottom: 12, display: 'block', margin: '0 auto 12px' }} />
-                      <p style={{ color: '#9CA3AF', fontSize: 13, fontWeight: 600, margin: 0 }}>
-                        {hasFilters ? 'No QR codes match your filters.' : 'No QR codes found.'}
-                      </p>
-                      {hasFilters && (
-                        <button onClick={clearFilters} style={{ marginTop: 10, padding: '6px 14px', borderRadius: 8, border: '1px solid #E5E7EB', background: '#F3F4F6', color: '#374151', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
-                          Clear filters
-                        </button>
-                      )}
+                    <td colSpan={visibleColumns.size + 3}>
+                      <EmptyState
+                        icon={<QrCodeIcon size={24} strokeWidth={1.6} />}
+                        title={hasFilters ? 'No QR codes match your filters' : 'No QR codes found'}
+                        message={hasFilters ? 'Try adjusting or clearing your filters.' : 'Generate QR codes to see them here.'}
+                        actionLabel={hasFilters ? 'Clear filters' : undefined}
+                        onAction={hasFilters ? clearFilters : undefined}
+                      />
                     </td>
                   </tr>
                 ) : (
@@ -495,50 +821,62 @@ export default function QRSearch() {
                         onMouseEnter={e => (e.currentTarget.style.background = '#FAFAFA')}
                         onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                       >
+                        <td style={{ padding: cellPad }}>
+                          <input
+                            type="checkbox"
+                            checked={selected.has(qr.id)}
+                            onChange={() => toggleRow(qr.id)}
+                            style={{ cursor: 'pointer' }}
+                          />
+                        </td>
+
                         {/* QR Code ID */}
-                        <td style={{ padding: '10px 12px' }}>
+                        <td style={{ padding: cellPad }}>
                           <span style={{ fontFamily: 'monospace', fontWeight: 800, color: '#1A1A1A', fontSize: 11 }}>{qr.code}</span>
                         </td>
 
-                        {/* Type */}
-                        <td style={{ padding: '10px 12px' }}><TypeBadge type={qr.type} /></td>
+                        {visibleColumns.has('Type') && <td style={{ padding: cellPad }}><TypeBadge type={qr.type} /></td>}
+                        {visibleColumns.has('Status') && <td style={{ padding: cellPad }}><StatusBadge qr={qr} /></td>}
 
-                        {/* Status */}
-                        <td style={{ padding: '10px 12px' }}><StatusBadge qr={qr} /></td>
+                        {visibleColumns.has('Batch') && (
+                          <td style={{ padding: cellPad, color: '#6B7280', fontSize: 11, whiteSpace: 'nowrap' }}>
+                            {qr.batch || '—'}
+                          </td>
+                        )}
 
-                        {/* Batch */}
-                        <td style={{ padding: '10px 12px', color: '#6B7280', fontSize: 11, whiteSpace: 'nowrap' }}>
-                          {qr.batch || '—'}
-                        </td>
+                        {visibleColumns.has('Max') && (
+                          <td style={{ padding: cellPad, color: '#374151', fontWeight: 700, textAlign: 'center' }}>
+                            {qr.maxPlays >= 999999 ? '∞' : qr.maxPlays}
+                          </td>
+                        )}
 
-                        {/* Max plays */}
-                        <td style={{ padding: '10px 12px', color: '#374151', fontWeight: 700, textAlign: 'center' }}>
-                          {qr.maxPlays >= 999999 ? '∞' : qr.maxPlays}
-                        </td>
+                        {visibleColumns.has('Used') && (
+                          <td style={{ padding: cellPad, textAlign: 'center' }}>
+                            <span style={{ fontWeight: 700, color: qr.playCount > 0 ? RED : '#9CA3AF' }}>{qr.playCount}</span>
+                          </td>
+                        )}
 
-                        {/* Used */}
-                        <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                          <span style={{ fontWeight: 700, color: qr.playCount > 0 ? RED : '#9CA3AF' }}>{qr.playCount}</span>
-                        </td>
+                        {visibleColumns.has('Remaining') && (
+                          <td style={{ padding: cellPad, textAlign: 'center' }}>
+                            {remaining === null ? (
+                              <span style={{ fontWeight: 700, color: '#16A34A' }}>∞</span>
+                            ) : (
+                              <span style={{ fontWeight: 700, color: remaining === 0 ? '#F97316' : '#16A34A' }}>{remaining}</span>
+                            )}
+                          </td>
+                        )}
 
-                        {/* Remaining */}
-                        <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                          {remaining === null ? (
-                            <span style={{ fontWeight: 700, color: '#16A34A' }}>∞</span>
-                          ) : (
-                            <span style={{ fontWeight: 700, color: remaining === 0 ? '#F97316' : '#16A34A' }}>{remaining}</span>
-                          )}
-                        </td>
+                        {visibleColumns.has('Created') && (
+                          <td style={{ padding: cellPad, color: '#6B7280', whiteSpace: 'nowrap', fontSize: 11 }}>
+                            {fmtDate(qr.createdAt)}
+                          </td>
+                        )}
 
-                        {/* Created */}
-                        <td style={{ padding: '10px 12px', color: '#6B7280', whiteSpace: 'nowrap', fontSize: 11 }}>
-                          {fmtDate(qr.createdAt)}
-                        </td>
-
-                        {/* Last scan */}
-                        <td style={{ padding: '10px 12px', color: '#9CA3AF', whiteSpace: 'nowrap', fontSize: 11 }}>
-                          {fmtDate(qr.lastScannedAt)}
-                        </td>
+                        {visibleColumns.has('Last Scan') && (
+                          <td style={{ padding: cellPad, color: '#9CA3AF', whiteSpace: 'nowrap', fontSize: 11 }}>
+                            {fmtDate(qr.lastScannedAt)}
+                          </td>
+                        )}
 
                         {/* Actions */}
                         <td style={{ padding: '8px 12px' }}>
@@ -638,6 +976,17 @@ export default function QRSearch() {
           </div>
         )}
       </div>
+
+      {/* Bulk delete confirm */}
+      {confirmBulkDelete && (
+        <BulkConfirmModal
+          title={`Delete ${selected.size} QR code${selected.size === 1 ? '' : 's'}?`}
+          message="This permanently removes the selected QR codes from Firestore. This cannot be undone."
+          confirmLabel="Delete"
+          onCancel={() => setConfirmBulkDelete(false)}
+          onConfirm={() => { setConfirmBulkDelete(false); handleBulkDelete(); }}
+        />
+      )}
 
       {/* QR Preview Modal */}
       {preview && (

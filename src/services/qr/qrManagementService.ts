@@ -10,12 +10,17 @@ import {
   query,
   where,
   orderBy,
+  limit,
+  startAfter,
   serverTimestamp,
   Timestamp,
   writeBatch,
   getCountFromServer,
   onSnapshot,
   type Unsubscribe,
+  type QueryDocumentSnapshot,
+  type DocumentData,
+  type QueryConstraint,
 } from 'firebase/firestore';
 import { db } from '../firebase/firebase';
 import type {
@@ -24,6 +29,11 @@ import type {
   QRCodeType,
   QRSearchFilters,
   QRAnalyticsData,
+  QRBatchSummary,
+  LiveActivityEvent,
+  SavedQRFilter,
+  SmartWarning,
+  QRCodesPageFilters,
 } from '../../types/qr/qrManagementTypes';
 
 const COLLECTION       = 'qrCodes';
@@ -683,6 +693,57 @@ export async function bulkDeleteByType(type: QRCodeType): Promise<number> {
   return count;
 }
 
+// ── Bulk enable/disable by specific doc IDs (used by the selection toolbar) ──
+
+export async function bulkSetActiveByIds(ids: string[], active: boolean): Promise<number> {
+  if (!ids.length) return 0;
+  let count = 0;
+  for (let i = 0; i < ids.length; i += 499) {
+    const chunk = ids.slice(i, i + 499);
+    const b = writeBatch(db);
+    chunk.forEach(id => b.update(doc(db, COLLECTION, id), { active }));
+    await b.commit();
+    count += chunk.length;
+  }
+  return count;
+}
+
+// ── Bulk move to a different batch (by doc IDs) ──────────────────────────────
+// `batch`/`batchId` are original, non-frozen fields — an honest move updates
+// them directly rather than merely logging intent.
+
+export async function bulkMoveToBatch(ids: string[], batchName: string, batchId: string): Promise<number> {
+  if (!ids.length) return 0;
+  let count = 0;
+  for (let i = 0; i < ids.length; i += 499) {
+    const chunk = ids.slice(i, i + 499);
+    const b = writeBatch(db);
+    chunk.forEach(id => b.update(doc(db, COLLECTION, id), { batch: batchName, batchId }));
+    await b.commit();
+    count += chunk.length;
+  }
+  return count;
+}
+
+// ── Bulk enable/disable by batchId (used by Batch Cards "Archive" action) ────
+// "Archive" reuses the existing `active` field (schema is frozen — no new
+// `archived` field). Archiving a batch simply disables every QR in it.
+
+export async function bulkSetActiveByBatchId(batchId: string, active: boolean): Promise<number> {
+  const snap = await getDocs(query(collection(db, COLLECTION), where('batchId', '==', batchId)));
+  if (snap.empty) return 0;
+
+  let count = 0;
+  for (let i = 0; i < snap.docs.length; i += 499) {
+    const chunk = snap.docs.slice(i, i + 499);
+    const b = writeBatch(db);
+    chunk.forEach(d => b.update(d.ref, { active }));
+    await b.commit();
+    count += chunk.length;
+  }
+  return count;
+}
+
 // ── Bulk delete by specific doc IDs ──────────────────────────────────────────
 
 export async function bulkDeleteByIds(ids: string[]): Promise<number> {
@@ -760,12 +821,12 @@ export async function writeOpLog(
   });
 }
 
-export async function fetchOpLogs(limit = 100): Promise<OpLog[]> {
+export async function fetchOpLogs(limitCount = 100): Promise<OpLog[]> {
   try {
     const snap = await getDocs(
       query(collection(db, 'qrOperationLogs'), orderBy('ts', 'desc'))
     );
-    return snap.docs.slice(0, limit).map(d => {
+    return snap.docs.slice(0, limitCount).map(d => {
       const data = d.data();
       return {
         id:          d.id,
@@ -786,4 +847,295 @@ export async function fetchOpLogs(limit = 100): Promise<OpLog[]> {
   } catch {
     return [];
   }
+}
+
+// ── Batch Summaries (aggregated from qrCodes docs — no dedicated collection) ─
+// Groups the existing per-QR `batchId`/`batch` fields client-side. Reuses the
+// same active/disabled/exhausted derivation as computeStatsFromSnap() so a
+// batch's status rollup stays consistent with the dashboard's definitions.
+
+export async function fetchBatchSummaries(): Promise<QRBatchSummary[]> {
+  const snap = await getDocs(collection(db, COLLECTION));
+  const groups = new Map<string, {
+    batchName: string; prefix: string; type: QRCodeType;
+    qrCount: number; activeCount: number; disabledCount: number; exhaustedCount: number;
+    usedCount: number; consumedPlays: number; totalPlays: number; createdAt: Date;
+  }>();
+
+  snap.forEach(d => {
+    const data = d.data();
+    const batchId: string = data.batchId || data.batch || 'UNBATCHED';
+    const isActive: boolean = data.active ?? true;
+    const playCount: number = data.playCount ?? 0;
+    const maxPlays: number = data.maxPlays ?? 2;
+    const createdAt: Date = (data.createdAt as Timestamp)?.toDate() ?? new Date();
+
+    let g = groups.get(batchId);
+    if (!g) {
+      g = {
+        batchName: data.batch ?? batchId,
+        prefix: data.prefix ?? '',
+        type: (data.type ?? 'Regular') as QRCodeType,
+        qrCount: 0, activeCount: 0, disabledCount: 0, exhaustedCount: 0,
+        usedCount: 0, consumedPlays: 0, totalPlays: 0, createdAt,
+      };
+      groups.set(batchId, g);
+    }
+
+    g.qrCount++;
+    g.consumedPlays += playCount;
+    g.totalPlays += maxPlays;
+    if (playCount > 0) g.usedCount++;
+    if (createdAt < g.createdAt) g.createdAt = createdAt;
+
+    if (!isActive) g.disabledCount++;
+    else if (playCount >= maxPlays) g.exhaustedCount++;
+    else g.activeCount++;
+  });
+
+  const summaries: QRBatchSummary[] = [];
+  groups.forEach((g, batchId) => {
+    const status: QRBatchSummary['status'] =
+      g.disabledCount === g.qrCount ? 'disabled' :
+      g.disabledCount === 0 ? 'active' : 'mixed';
+
+    summaries.push({
+      batchId,
+      batchName: g.batchName,
+      prefix: g.prefix,
+      type: g.type,
+      qrCount: g.qrCount,
+      activeCount: g.activeCount,
+      disabledCount: g.disabledCount,
+      exhaustedCount: g.exhaustedCount,
+      consumedPlays: g.consumedPlays,
+      totalPlays: g.totalPlays,
+      completionPct: g.totalPlays > 0 ? Math.round((g.consumedPlays / g.totalPlays) * 100) : 0,
+      usagePct: g.qrCount > 0 ? Math.round((g.usedCount / g.qrCount) * 100) : 0,
+      createdAt: g.createdAt,
+      status,
+    });
+  });
+
+  return summaries.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+}
+
+// ── Smart Warnings ─────────────────────────────────────────────────────────────
+// Derived entirely from fetchBatchSummaries() — no new data capture required.
+
+export function computeSmartWarnings(batches: QRBatchSummary[]): SmartWarning[] {
+  const warnings: SmartWarning[] = [];
+
+  batches.forEach(b => {
+    if (b.consumedPlays === 0 && b.qrCount > 0) {
+      warnings.push({
+        id: `unused-${b.batchId}`,
+        kind: 'unused_batch',
+        message: `${b.batchName} has ${b.qrCount} QR code${b.qrCount === 1 ? '' : 's'} with zero scans`,
+        batchId: b.batchId,
+        severity: 'info',
+      });
+    }
+    if (b.totalPlays > 0 && b.completionPct >= 90 && b.completionPct < 100) {
+      warnings.push({
+        id: `almost-${b.batchId}`,
+        kind: 'almost_consumed',
+        message: `${b.batchName} is ${b.completionPct}% consumed`,
+        batchId: b.batchId,
+        severity: 'warning',
+      });
+    }
+  });
+
+  const nameCounts = new Map<string, string[]>();
+  batches.forEach(b => {
+    const key = b.batchName.trim().toLowerCase();
+    if (!key) return;
+    nameCounts.set(key, [...(nameCounts.get(key) ?? []), b.batchId]);
+  });
+  nameCounts.forEach((ids, name) => {
+    if (ids.length > 1) {
+      warnings.push({
+        id: `dup-${name}`,
+        kind: 'duplicate_batch_name',
+        message: `${ids.length} batches are named "${name}"`,
+        severity: 'warning',
+      });
+    }
+  });
+
+  return warnings;
+}
+
+export function detectDuplicateBatchNames(batches: QRBatchSummary[]): string[] {
+  return computeSmartWarnings(batches)
+    .filter(w => w.kind === 'duplicate_batch_name')
+    .map(w => w.message);
+}
+
+// ── Live Activity Feed ────────────────────────────────────────────────────────
+// Two bounded onSnapshot listeners (recent scans + recent admin ops), merged
+// and re-sorted client-side. Mirrors the subscribeDashboardStats pattern.
+// Debounced so two near-simultaneous snapshot events don't cause double re-sorts.
+
+export function subscribeLiveActivity(onChange: (events: LiveActivityEvent[]) => void): Unsubscribe {
+  const FEED_LIMIT = 20;
+  let scanEvents: LiveActivityEvent[] = [];
+  let opEvents: LiveActivityEvent[] = [];
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const emit = () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      const merged = [...scanEvents, ...opEvents]
+        .sort((a, b) => b.ts.getTime() - a.ts.getTime())
+        .slice(0, FEED_LIMIT);
+      onChange(merged);
+    }, 300);
+  };
+
+  const scanQuery = query(
+    collection(db, COLLECTION),
+    orderBy('lastScannedAt', 'desc'),
+    limit(FEED_LIMIT),
+  );
+  const unsubScans = onSnapshot(scanQuery, (snap) => {
+    scanEvents = snap.docs
+      .filter(d => d.data().lastScannedAt)
+      .map(d => {
+        const data = d.data();
+        const ts = (data.lastScannedAt as Timestamp).toDate();
+        return {
+          id: `scan-${d.id}-${ts.getTime()}`,
+          kind: 'scan' as const,
+          message: `${data.code ?? d.id} scanned`,
+          code: data.code ?? d.id,
+          ts,
+        };
+      });
+    emit();
+  }, (err) => console.error('[Live Activity] scan listener error:', err?.message));
+
+  const opQuery = query(
+    collection(db, 'qrOperationLogs'),
+    orderBy('ts', 'desc'),
+    limit(FEED_LIMIT),
+  );
+  const unsubOps = onSnapshot(opQuery, (snap) => {
+    opEvents = snap.docs.map(d => {
+      const data = d.data();
+      const ts = (data.ts as Timestamp)?.toDate() ?? new Date();
+      return {
+        id: `op-${d.id}`,
+        kind: 'admin_op' as const,
+        message: `${data.actor ?? 'Admin'} ${data.operation ?? 'updated'} ${data.batchName ? data.batchName : `${data.count ?? 0} QR${(data.count ?? 0) === 1 ? '' : 's'}`}`,
+        actor: data.actor ?? 'Admin',
+        ts,
+      };
+    });
+    emit();
+  }, (err) => console.error('[Live Activity] op listener error:', err?.message));
+
+  return () => { unsubScans(); unsubOps(); if (debounceTimer) clearTimeout(debounceTimer); };
+}
+
+// ── Saved Filters (localStorage-backed, no Firestore) ─────────────────────────
+
+const SAVED_FILTERS_KEY = 'qr_saved_filters';
+
+export function getSavedFilters(): SavedQRFilter[] {
+  try {
+    const raw = localStorage.getItem(SAVED_FILTERS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveFilter(name: string, filters: QRSearchFilters): SavedQRFilter[] {
+  const existing = getSavedFilters();
+  const entry: SavedQRFilter = { id: `filter-${Date.now()}`, name, filters };
+  const updated = [...existing, entry];
+  try { localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(updated)); } catch { /* ignore */ }
+  return updated;
+}
+
+export function deleteFilter(id: string): SavedQRFilter[] {
+  const updated = getSavedFilters().filter(f => f.id !== id);
+  try { localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(updated)); } catch { /* ignore */ }
+  return updated;
+}
+
+// ── Cursor-based pagination (additive — existing fetchAllQRCodes untouched) ──
+
+export interface QRCodesPageResult {
+  docs:       QRCodeRecord[];
+  nextCursor: QueryDocumentSnapshot<DocumentData> | null;
+  hasMore:    boolean;
+}
+
+export async function fetchQRCodesPage(
+  pageSize: number,
+  cursor?: QueryDocumentSnapshot<DocumentData> | null,
+  filters?: QRCodesPageFilters,
+): Promise<QRCodesPageResult> {
+  const clauses: QueryConstraint[] = [];
+  if (filters?.type)    clauses.push(where('type', '==', filters.type));
+  if (filters?.batchId) clauses.push(where('batchId', '==', filters.batchId));
+  if (filters?.active !== undefined) clauses.push(where('active', '==', filters.active));
+
+  let q = query(
+    collection(db, COLLECTION),
+    ...clauses,
+    orderBy('createdAt', 'desc'),
+    limit(pageSize + 1),
+  );
+  if (cursor) {
+    q = query(
+      collection(db, COLLECTION),
+      ...clauses,
+      orderBy('createdAt', 'desc'),
+      startAfter(cursor),
+      limit(pageSize + 1),
+    );
+  }
+
+  const snap = await getDocs(q);
+  const hasMore = snap.docs.length > pageSize;
+  const pageDocs = hasMore ? snap.docs.slice(0, pageSize) : snap.docs;
+  const today = todayStr();
+
+  const docs: QRCodeRecord[] = pageDocs.map(d => {
+    const data = d.data();
+    return {
+      id:            d.id,
+      code:          data.code ?? d.id,
+      type:          data.type ?? 'Regular',
+      prefix:        data.prefix ?? '',
+      batch:         data.batch ?? '',
+      maxPlays:      data.maxPlays ?? 2,
+      playCount:     data.playCount ?? 0,
+      active:        data.active ?? true,
+      createdAt:     (data.createdAt as Timestamp)?.toDate() ?? new Date(),
+      lastScannedAt: data.lastScannedAt ? (data.lastScannedAt as Timestamp).toDate() : undefined,
+      scansToday:    (data.dailyScans ?? {})[today] ?? 0,
+    };
+  });
+
+  return {
+    docs,
+    nextCursor: pageDocs.length > 0 ? pageDocs[pageDocs.length - 1] : null,
+    hasMore,
+  };
+}
+
+export async function getQRCodesCountEstimate(filters?: QRCodesPageFilters): Promise<number> {
+  const clauses: QueryConstraint[] = [];
+  if (filters?.type)    clauses.push(where('type', '==', filters.type));
+  if (filters?.batchId) clauses.push(where('batchId', '==', filters.batchId));
+  if (filters?.active !== undefined) clauses.push(where('active', '==', filters.active));
+
+  const q = query(collection(db, COLLECTION), ...clauses);
+  const snap = await getCountFromServer(q);
+  return snap.data().count;
 }

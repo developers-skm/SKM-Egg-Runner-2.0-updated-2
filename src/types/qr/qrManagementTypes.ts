@@ -40,6 +40,7 @@ export interface QRSearchFilters {
   qrId: string;
   batch: string;
   status: '' | QRCodeStatus;
+  type?: '' | QRCodeType;
 }
 
 export interface QRAnalyticsData {
@@ -49,4 +50,64 @@ export interface QRAnalyticsData {
 
 export interface GoldenQRAction {
   type: 'pause' | 'resume' | 'disable';
+}
+
+// ── Batch Cards (aggregated from qrCodes docs, no dedicated collection) ──────
+
+export interface QRBatchSummary {
+  batchId:        string;
+  batchName:      string;
+  prefix:         string;
+  type:           QRCodeType;
+  qrCount:        number;
+  activeCount:    number;
+  disabledCount:  number;
+  exhaustedCount: number;
+  consumedPlays:  number;
+  totalPlays:     number;
+  completionPct:  number;   // consumedPlays / totalPlays
+  usagePct:       number;   // (qrCount - unusedCount) / qrCount
+  createdAt:      Date;     // earliest createdAt among docs in the batch
+  status:         'active' | 'disabled' | 'mixed';
+}
+
+// ── Live Activity Feed ────────────────────────────────────────────────────────
+
+export type LiveActivityKind = 'scan' | 'admin_op';
+
+export interface LiveActivityEvent {
+  id:        string;
+  kind:      LiveActivityKind;
+  message:   string;
+  code?:     string;
+  actor?:    string;
+  ts:        Date;
+}
+
+// ── Saved Filters (localStorage-backed) ───────────────────────────────────────
+
+export interface SavedQRFilter {
+  id:      string;
+  name:    string;
+  filters: QRSearchFilters;
+}
+
+// ── Smart Warnings ────────────────────────────────────────────────────────────
+
+export type SmartWarningKind = 'unused_batch' | 'almost_consumed' | 'duplicate_batch_name';
+
+export interface SmartWarning {
+  id:       string;
+  kind:     SmartWarningKind;
+  message:  string;
+  batchId?: string;
+  severity: 'info' | 'warning';
+}
+
+// ── Cursor-based pagination ───────────────────────────────────────────────────
+
+export interface QRCodesPageFilters {
+  type?:     QRCodeType;
+  batchId?:  string;
+  active?:   boolean;
 }

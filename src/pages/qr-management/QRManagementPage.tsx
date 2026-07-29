@@ -4,6 +4,7 @@ import {
   QrCode, RefreshCw, ArrowLeft,
   LayoutDashboard, Plus, Search, Layers3,
   BarChart3, Activity, Printer, Trash2, Settings, Menu, ScanSearch,
+  Package, PanelRightClose, PanelRightOpen, FileBarChart2,
 } from 'lucide-react';
 import { subscribeDashboardStats, fetchAllQRCodes, EMPTY_STATS, subscribeProteinScansToday } from '../../services/qr/qrManagementService';
 import type { QRDashboardStats, QRCodeRecord } from '../../types/qr/qrManagementTypes';
@@ -19,21 +20,26 @@ import QROperationLogs from '../../components/qr-management/QROperationLogs';
 import QRPrintCenter   from '../../components/qr-management/QRPrintCenter';
 import QRSettings      from '../../components/qr-management/QRSettings';
 import QRTracker       from '../../components/qr-management/QRTracker';
+import QRBatchCards    from '../../components/qr-management/QRBatchCards';
+import QRActivityFeed  from '../../components/qr-management/QRActivityFeed';
+import QRReportCenter  from '../../components/qr-management/QRReportCenter';
 
 const RED = '#D71920';
 
 const SIDEBAR_EXPANDED_W  = 260;
 const SIDEBAR_COLLAPSED_W = 72;
 const SIDEBAR_MOBILE_W    = 280;
-const TOPBAR_H            = 56;
-const STORAGE_KEY         = 'qr_sidebar_collapsed';
+const FEED_PANEL_W        = 280;
+const TOPBAR_H             = 56;
+const STORAGE_KEY          = 'qr_sidebar_collapsed';
+const FEED_STORAGE_KEY     = 'qr_feed_collapsed';
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
 
 type TabId =
   | 'dashboard' | 'generator' | 'search'
   | 'bulk'      | 'analytics' | 'tracker' | 'activity' | 'print'
-  | 'delete'    | 'settings';
+  | 'delete'    | 'settings'  | 'batches' | 'report';
 
 interface Tab {
   id:     TabId;
@@ -46,8 +52,10 @@ const TABS: Tab[] = [
   { id: 'dashboard', label: 'Dashboard',    icon: <LayoutDashboard size={17} strokeWidth={2} /> },
   { id: 'generator', label: 'Generator',    icon: <Plus            size={17} strokeWidth={2} /> },
   { id: 'search',    label: 'Search',       icon: <Search          size={17} strokeWidth={2} /> },
+  { id: 'batches',   label: 'Batches',      icon: <Package         size={17} strokeWidth={2} /> },
   { id: 'bulk',      label: 'Bulk Actions', icon: <Layers3         size={17} strokeWidth={2} /> },
   { id: 'analytics', label: 'Analytics',    icon: <BarChart3       size={17} strokeWidth={2} /> },
+  { id: 'report',    label: 'Reports',      icon: <FileBarChart2   size={17} strokeWidth={2} /> },
   { id: 'tracker',   label: 'QR Tracker',   icon: <ScanSearch      size={17} strokeWidth={2} /> },
   { id: 'activity',  label: 'Activity',     icon: <Activity        size={17} strokeWidth={2} /> },
   { id: 'print',     label: 'Print',        icon: <Printer         size={17} strokeWidth={2} /> },
@@ -59,8 +67,10 @@ const TAB_TITLES: Record<TabId, { title: string; subtitle: string }> = {
   dashboard: { title: 'Dashboard',     subtitle: 'Live system overview and QR statistics' },
   generator: { title: 'QR Generator',  subtitle: 'Create single, bulk, or Golden QR codes' },
   search:    { title: 'QR Search',     subtitle: 'Find and manage individual QR codes' },
+  batches:   { title: 'Batches',       subtitle: 'Batch cards, usage heat map, and lifecycle overview' },
   bulk:      { title: 'Bulk Actions',  subtitle: 'Large-scale QR operations and data export' },
   analytics: { title: 'Analytics',     subtitle: 'Scan trends, usage rates and performance reports' },
+  report:    { title: 'Report Center', subtitle: 'Daily, weekly, monthly, and custom-range reports' },
   tracker:   { title: 'QR Tracker',    subtitle: 'Full lifecycle tracking and per-QR inspection' },
   activity:  { title: 'Activity Logs', subtitle: 'Complete audit trail of all admin operations' },
   print:     { title: 'Print Center',  subtitle: 'Generate A4 PDF print sheets for packaging' },
@@ -173,9 +183,17 @@ export default function QRManagementPage({ onBack }: Props) {
   });
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  const [feedCollapsed, setFeedCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem(FEED_STORAGE_KEY) === 'true'; } catch { return false; }
+  });
+
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, String(desktopCollapsed)); } catch { /* ignore */ }
   }, [desktopCollapsed]);
+
+  useEffect(() => {
+    try { localStorage.setItem(FEED_STORAGE_KEY, String(feedCollapsed)); } catch { /* ignore */ }
+  }, [feedCollapsed]);
 
   useEffect(() => {
     if (!isMobile) setMobileOpen(false);
@@ -231,7 +249,8 @@ export default function QRManagementPage({ onBack }: Props) {
     switch (activeTab) {
       case 'dashboard': return <QRDashboard stats={stats} loading={loadingStats} error={statsError} codes={codes} actor={actor} proteinScansToday={proteinScansToday} onNavigate={(tab) => navigate(tab as TabId)} onRefresh={refresh} />;
       case 'generator': return <QRGenerator onGenerated={refresh} />;
-      case 'search':    return <QRSearch />;
+      case 'search':    return <QRSearch actor={actor} onNavigate={(tab) => navigate(tab as TabId)} />;
+      case 'batches':   return <QRBatchCards actor={actor} onNavigate={(tab) => navigate(tab as TabId)} onOpenBatch={() => navigate('search')} />;
       case 'bulk':      return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
           <QRBulkExport codes={codes} actor={actor} />
@@ -239,6 +258,7 @@ export default function QRManagementPage({ onBack }: Props) {
         </div>
       );
       case 'analytics': return <QRAnalytics />;
+      case 'report':    return <QRReportCenter actor={actor} />;
       case 'tracker':   return <QRTracker codes={codes} onRefresh={refresh} actor={actor} />;
       case 'activity':  return <QROperationLogs refreshKey={refreshKey} />;
       case 'print':     return <QRPrintCenter codes={codes} actor={actor} />;
@@ -357,6 +377,23 @@ export default function QRManagementPage({ onBack }: Props) {
         >
           <RefreshCw size={14} strokeWidth={2} style={{ animation: loadingStats ? 'qrSpin 1s linear infinite' : 'none' }} />
         </button>
+
+        {!isMobile && (
+          <button
+            onClick={() => setFeedCollapsed(v => !v)}
+            title={feedCollapsed ? 'Show live activity' : 'Hide live activity'}
+            style={{
+              background: '#F3F4F6', border: '1px solid #E5E7EB', color: '#374151',
+              borderRadius: 8, width: 32, height: 32,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer', flexShrink: 0, transition: 'background 150ms',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.background = '#E5E7EB')}
+            onMouseLeave={e => (e.currentTarget.style.background = '#F3F4F6')}
+          >
+            {feedCollapsed ? <PanelRightOpen size={16} strokeWidth={2} /> : <PanelRightClose size={16} strokeWidth={2} />}
+          </button>
+        )}
       </div>
 
       {/* ── Body: sidebar + content ── */}
@@ -495,6 +532,20 @@ export default function QRManagementPage({ onBack }: Props) {
             {renderTab()}
           </div>
         </div>
+
+        {/* ══ LIVE ACTIVITY FEED (right panel) ══ */}
+        {!isMobile && (
+          <div style={{
+            width: feedCollapsed ? 0 : FEED_PANEL_W, flexShrink: 0,
+            transition: 'width 250ms ease-in-out', overflow: 'hidden',
+            borderLeft: feedCollapsed ? 'none' : '1px solid #E5E7EB',
+            background: '#FFFFFF',
+          }}>
+            <div style={{ width: FEED_PANEL_W, height: '100%' }}>
+              <QRActivityFeed />
+            </div>
+          </div>
+        )}
       </div>
 
       <style>{`@keyframes qrSpin { to { transform: rotate(360deg); } }`}</style>
