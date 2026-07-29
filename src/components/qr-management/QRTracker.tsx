@@ -382,6 +382,14 @@ function QRDetailPanel({
               { label: 'Created',     value: fmtDate(qr.createdAt) },
               { label: 'Last Scanned',value: fmtDate(qr.lastScannedAt) },
               { label: 'URL',         value: qr.url ?? '—', copy: !!qr.url },
+              { label: 'Campaign',    value: qr.campaignName ?? '—' },
+              { label: 'Reward',      value: qr.rewardName ?? '—' },
+              { label: 'Assigned By', value: qr.campaignAssignedBy || qr.rewardAssignedBy || '—' },
+              { label: 'Assigned Date', value: (() => {
+                  const dates = [qr.campaignAssignedAt, qr.rewardAssignedAt].filter(Boolean) as Date[];
+                  if (!dates.length) return '—';
+                  return fmtDate(new Date(Math.max(...dates.map(d => d.getTime()))));
+                })() },
             ].map(row => (
               <div key={row.label} style={{ display: 'flex', alignItems: 'center', padding: '9px 16px', borderBottom: '1px solid #F3F4F6', gap: 8 }}>
                 <span style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', minWidth: 100, flexShrink: 0 }}>{row.label}</span>

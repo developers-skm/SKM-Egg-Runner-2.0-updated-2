@@ -13,6 +13,10 @@ import {
   getSavedFilters, saveFilter, deleteFilter,
 } from '../../services/qr/qrManagementService';
 import EmptyState from './shared/EmptyState';
+import AssignCampaignModal from './shared/AssignCampaignModal';
+import AssignRewardModal from './shared/AssignRewardModal';
+import { fetchAllCampaigns } from '../../services/protein/rewardCampaignService';
+import { getRewardCatalog } from '../../services/protein/rewardCouponService';
 
 const RED = '#D71920';
 
@@ -393,6 +397,10 @@ export default function QRSearch({ actor = 'Admin', onNavigate }: Props) {
   const [searchText,  setSearchText]  = useState('');
   const [statusFilter,setStatusFilter]= useState<'' | 'active' | 'disabled' | 'exhausted'>('');
   const [typeFilter,  setTypeFilter]  = useState('');
+  const [campaignFilter, setCampaignFilter] = useState('');
+  const [rewardFilter,   setRewardFilter]   = useState('');
+  const [campaignOptions, setCampaignOptions] = useState<{ id: string; name: string }[]>([]);
+  const [rewardOptions,   setRewardOptions]   = useState<{ id: string; name: string }[]>([]);
 
   // Pagination
   const [pageSize,    setPageSize]    = useState(100);
@@ -407,6 +415,8 @@ export default function QRSearch({ actor = 'Admin', onNavigate }: Props) {
   const [selected,   setSelected]   = useState<Set<string>>(new Set());
   const [bulkBusy,   setBulkBusy]   = useState(false);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const [showAssignCampaign, setShowAssignCampaign] = useState(false);
+  const [showAssignReward,   setShowAssignReward]   = useState(false);
 
   // Saved filters (§9) — localStorage-backed, no Firestore
   const [savedFilters, setSavedFilters] = useState<SavedQRFilter[]>(() => getSavedFilters());
@@ -453,6 +463,12 @@ export default function QRSearch({ actor = 'Admin', onNavigate }: Props) {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
+  // Campaign/Reward filter option lists — loaded once, independent of QR codes
+  useEffect(() => {
+    fetchAllCampaigns().then(list => setCampaignOptions(list.map(c => ({ id: c.id, name: c.name })))).catch(() => {});
+    getRewardCatalog().then(list => setRewardOptions(list.map(r => ({ id: r.id, name: r.productName })))).catch(() => {});
+  }, []);
+
   // ── Client-side filtering (instant, no Firestore round-trip) ─────────────
   const filtered = useMemo(() => {
     const q = searchText.trim().toLowerCase();
@@ -470,30 +486,35 @@ export default function QRSearch({ actor = 'Admin', onNavigate }: Props) {
       }
       // Type filter
       if (typeFilter && qr.type.toLowerCase() !== typeFilter.toLowerCase()) return false;
+      // Campaign / Reward filters
+      if (campaignFilter && qr.campaignId !== campaignFilter) return false;
+      if (rewardFilter && qr.rewardId !== rewardFilter) return false;
       return true;
     });
-  }, [allCodes, searchText, statusFilter, typeFilter]);
+  }, [allCodes, searchText, statusFilter, typeFilter, campaignFilter, rewardFilter]);
 
   // Reset to page 0 whenever filter changes
-  useEffect(() => { setPage(0); }, [searchText, statusFilter, typeFilter, pageSize]);
-  useEffect(() => { setSelected(new Set()); }, [searchText, statusFilter, typeFilter]);
+  useEffect(() => { setPage(0); }, [searchText, statusFilter, typeFilter, campaignFilter, rewardFilter, pageSize]);
+  useEffect(() => { setSelected(new Set()); }, [searchText, statusFilter, typeFilter, campaignFilter, rewardFilter]);
 
   const totalPages  = Math.max(1, Math.ceil(filtered.length / pageSize));
   const paginated   = filtered.slice(page * pageSize, (page + 1) * pageSize);
-  const hasFilters  = searchText !== '' || statusFilter !== '' || typeFilter !== '';
+  const hasFilters  = searchText !== '' || statusFilter !== '' || typeFilter !== '' || campaignFilter !== '' || rewardFilter !== '';
 
-  const clearFilters = () => { setSearchText(''); setStatusFilter(''); setTypeFilter(''); };
+  const clearFilters = () => { setSearchText(''); setStatusFilter(''); setTypeFilter(''); setCampaignFilter(''); setRewardFilter(''); };
 
   // ── Saved filters ─────────────────────────────────────────────────────────
   const handleApplyPreset = (preset: SavedQRFilter) => {
     setSearchText(preset.filters.qrId ?? '');
     setStatusFilter((preset.filters.status ?? '') as any);
     setTypeFilter(preset.filters.type ?? '');
+    setCampaignFilter(preset.filters.campaignId ?? '');
+    setRewardFilter(preset.filters.rewardId ?? '');
   };
   const handleSaveCurrentFilter = () => {
     const name = saveNameInput.trim();
     if (!name) return;
-    const updated = saveFilter(name, { qrId: searchText, batch: '', status: statusFilter, type: typeFilter as any });
+    const updated = saveFilter(name, { qrId: searchText, batch: '', status: statusFilter, type: typeFilter as any, campaignId: campaignFilter, rewardId: rewardFilter });
     setSavedFilters(updated);
     setSaveNameInput('');
     setShowSaveInput(false);
@@ -544,17 +565,8 @@ export default function QRSearch({ actor = 'Admin', onNavigate }: Props) {
     writeOpLog('print_requested', 'mixed', selectedCodes.length, actor, { qrIds: [...selected] }).catch(() => {});
     onNavigate?.('print');
   };
-  // Campaign/Reward assignment: no field to persist to (schema frozen) — logged for reference only.
-  const handleBulkAssignCampaign = () => {
-    writeOpLog('campaign_assign_requested', 'mixed', selectedCodes.length, actor, {
-      qrIds: [...selected], reason: 'Logged for reference — no campaign system integration yet',
-    }).catch(() => {});
-  };
-  const handleBulkAssignReward = () => {
-    writeOpLog('reward_assign_requested', 'mixed', selectedCodes.length, actor, {
-      qrIds: [...selected], reason: 'Logged for reference — no reward system integration yet',
-    }).catch(() => {});
-  };
+  const handleBulkAssignCampaign = () => setShowAssignCampaign(true);
+  const handleBulkAssignReward = () => setShowAssignReward(true);
   const handleBulkMoveBatch = () => {
     const newBatch = window.prompt('Move selected QR codes to batch (name):');
     if (!newBatch) return;
@@ -709,6 +721,30 @@ export default function QRSearch({ actor = 'Admin', onNavigate }: Props) {
             <option value="Golden">Golden</option>
             <option value="Campaign">Campaign</option>
             <option value="Developer">Developer</option>
+          </select>
+
+          {/* Campaign filter */}
+          <select
+            style={{ ...inputStyle, cursor: 'pointer', flex: '0 0 auto', minWidth: 140 }}
+            value={campaignFilter}
+            onChange={e => setCampaignFilter(e.target.value)}
+            onFocus={e => (e.target.style.borderColor = RED)}
+            onBlur={e  => (e.target.style.borderColor = '#E5E7EB')}
+          >
+            <option value="">All Campaigns</option>
+            {campaignOptions.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+
+          {/* Reward filter */}
+          <select
+            style={{ ...inputStyle, cursor: 'pointer', flex: '0 0 auto', minWidth: 140 }}
+            value={rewardFilter}
+            onChange={e => setRewardFilter(e.target.value)}
+            onFocus={e => (e.target.style.borderColor = RED)}
+            onBlur={e  => (e.target.style.borderColor = '#E5E7EB')}
+          >
+            <option value="">All Rewards</option>
+            {rewardOptions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
 
           {/* Rows per page */}
@@ -985,6 +1021,26 @@ export default function QRSearch({ actor = 'Admin', onNavigate }: Props) {
           confirmLabel="Delete"
           onCancel={() => setConfirmBulkDelete(false)}
           onConfirm={() => { setConfirmBulkDelete(false); handleBulkDelete(); }}
+        />
+      )}
+
+      {/* Assign Campaign / Assign Reward modals */}
+      {showAssignCampaign && (
+        <AssignCampaignModal
+          selectedIds={[...selected]}
+          selectedCodes={selectedCodes}
+          actor={actor}
+          onClose={() => setShowAssignCampaign(false)}
+          onComplete={() => { loadAll(); clearSelection(); }}
+        />
+      )}
+      {showAssignReward && (
+        <AssignRewardModal
+          selectedIds={[...selected]}
+          selectedCodes={selectedCodes}
+          actor={actor}
+          onClose={() => setShowAssignReward(false)}
+          onComplete={() => { loadAll(); clearSelection(); }}
         />
       )}
 

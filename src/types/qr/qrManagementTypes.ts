@@ -13,6 +13,17 @@ export interface QRCodeRecord {
   createdAt: Date;
   lastScannedAt?: Date;
   scansToday: number;
+  // Campaign assignment (optional — absent on unassigned QR docs)
+  campaignId?: string;
+  campaignName?: string;
+  campaignAssignedAt?: Date;
+  campaignAssignedBy?: string;
+  // Reward assignment (optional — absent on unassigned QR docs)
+  rewardId?: string;
+  rewardName?: string;
+  rewardType?: string;
+  rewardAssignedAt?: Date;
+  rewardAssignedBy?: string;
 }
 
 export interface QRDashboardStats {
@@ -41,6 +52,8 @@ export interface QRSearchFilters {
   batch: string;
   status: '' | QRCodeStatus;
   type?: '' | QRCodeType;
+  campaignId?: string;
+  rewardId?: string;
 }
 
 export interface QRAnalyticsData {

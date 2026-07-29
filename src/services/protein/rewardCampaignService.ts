@@ -102,6 +102,14 @@ export async function getUpcomingCampaign(afterEndAt: Timestamp): Promise<Reward
   return upcoming[0] ?? null;
 }
 
+/** Returns every campaign document regardless of date window or active flag — used by QR Management's Assign Campaign picker, which needs the full list rather than just "the current one". */
+export async function fetchAllCampaigns(): Promise<RewardCampaign[]> {
+  const snap = await getDocs(collection(db, CAMPAIGNS_COL));
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as RewardCampaign))
+    .sort((a, b) => b.startAt.toMillis() - a.startAt.toMillis());
+}
+
 export async function getCampaignHistory(uid: string, take = 20): Promise<CampaignHistoryEntry[]> {
   const colRef = collection(db, HISTORY_COL, uid, 'periods');
   const q = query(colRef, orderBy('archivedAt', 'desc'), limit(take));

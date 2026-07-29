@@ -5,6 +5,7 @@ import {
   Plus, Printer, Download, RefreshCw, Activity, Zap,
   ArrowUpRight, Layers3, Clock, ChevronRight,
   Wifi, Server, Key, Link2, HardDrive,
+  Megaphone, Gift, CircleSlash,
 } from 'lucide-react';
 import type { QRDashboardStats, QRCodeRecord } from '../../types/qr/qrManagementTypes';
 import QRQuickActionBar from './QRQuickActionBar';
@@ -480,6 +481,16 @@ export default function QRDashboard({ stats, loading, error, codes = [], actor =
               <KpiCard label="Unused"          value={stats.unusedQR}        icon={<PackageOpen size={16} strokeWidth={2} />}  accent="#6B7280" sub="playCount=0" />
               <KpiCard label="Golden QR"       value={stats.goldenQR}        icon={<ShieldCheck size={16} strokeWidth={2} />}  accent="#D97706" />
               <KpiCard label="Developer QR"    value={stats.developerQR}     icon={<Code2 size={16} strokeWidth={2} />}        accent="#4F46E5" />
+            </div>
+          </div>
+
+          {/* ── Assignments ── */}
+          <div>
+            <p style={{ fontSize: 10, fontWeight: 800, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 1.5, margin: '0 0 10px' }}>Assignments</p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: 10 }}>
+              <KpiCard label="Campaigns Assigned" value={codes.filter(c => !!c.campaignId).length} icon={<Megaphone size={16} strokeWidth={2} />} accent="#7C3AED" sub="QR codes linked" onClick={() => onNavigate?.('search')} />
+              <KpiCard label="Rewards Assigned"   value={codes.filter(c => !!c.rewardId).length}   icon={<Gift size={16} strokeWidth={2} />}       accent="#D97706" sub="QR codes linked" onClick={() => onNavigate?.('search')} />
+              <KpiCard label="Unassigned QR"      value={codes.filter(c => !c.campaignId && !c.rewardId).length} icon={<CircleSlash size={16} strokeWidth={2} />} accent="#9CA3AF" sub="no campaign or reward" onClick={() => onNavigate?.('search')} />
             </div>
           </div>
 

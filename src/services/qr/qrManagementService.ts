@@ -432,6 +432,15 @@ export async function fetchAllQRCodes(): Promise<QRCodeRecord[]> {
       createdAt:     (data.createdAt as Timestamp)?.toDate() ?? new Date(),
       lastScannedAt: data.lastScannedAt ? (data.lastScannedAt as Timestamp).toDate() : undefined,
       scansToday:    (data.dailyScans ?? {})[today] ?? 0,
+      campaignId:         data.campaignId || undefined,
+      campaignName:       data.campaignName || undefined,
+      campaignAssignedAt: data.campaignAssignedAt ? (data.campaignAssignedAt as Timestamp).toDate() : undefined,
+      campaignAssignedBy: data.campaignAssignedBy || undefined,
+      rewardId:           data.rewardId || undefined,
+      rewardName:         data.rewardName || undefined,
+      rewardType:         data.rewardType || undefined,
+      rewardAssignedAt:   data.rewardAssignedAt ? (data.rewardAssignedAt as Timestamp).toDate() : undefined,
+      rewardAssignedBy:   data.rewardAssignedBy || undefined,
     };
   });
 }
@@ -450,7 +459,9 @@ export async function searchQRCodes(filters: QRSearchFilters): Promise<QRCodeRec
       if (filters.status === 'exhausted') return qr.active && qr.playCount >= qr.maxPlays;
       return true;
     })();
-    return idMatch && batchMatch && statusMatch;
+    const campaignMatch = !filters.campaignId || qr.campaignId === filters.campaignId;
+    const rewardMatch   = !filters.rewardId   || qr.rewardId === filters.rewardId;
+    return idMatch && batchMatch && statusMatch && campaignMatch && rewardMatch;
   });
 }
 
@@ -725,6 +736,65 @@ export async function bulkMoveToBatch(ids: string[], batchName: string, batchId:
   return count;
 }
 
+// ── Bulk assign campaign / reward (by doc IDs) ────────────────────────────────
+// Same chunked writeBatch pattern as bulkMoveToBatch — writes real, honest
+// fields (no fabricated relationships). onProgress mirrors generateQRCodes'
+// signature so the assignment modals can reuse the same progress-bar UI.
+
+export async function bulkAssignCampaign(
+  ids: string[],
+  campaignId: string,
+  campaignName: string,
+  assignedBy: string,
+  onProgress?: (done: number, total: number) => void,
+): Promise<number> {
+  if (!ids.length) return 0;
+  let count = 0;
+  for (let i = 0; i < ids.length; i += 499) {
+    const chunk = ids.slice(i, i + 499);
+    const b = writeBatch(db);
+    chunk.forEach(id => b.update(doc(db, COLLECTION, id), {
+      campaignId,
+      campaignName,
+      campaignAssignedAt: serverTimestamp(),
+      campaignAssignedBy: assignedBy,
+    }));
+    await b.commit();
+    count += chunk.length;
+    onProgress?.(count, ids.length);
+    await new Promise<void>(r => setTimeout(r, 0));
+  }
+  return count;
+}
+
+export async function bulkAssignReward(
+  ids: string[],
+  rewardId: string,
+  rewardName: string,
+  rewardType: string,
+  assignedBy: string,
+  onProgress?: (done: number, total: number) => void,
+): Promise<number> {
+  if (!ids.length) return 0;
+  let count = 0;
+  for (let i = 0; i < ids.length; i += 499) {
+    const chunk = ids.slice(i, i + 499);
+    const b = writeBatch(db);
+    chunk.forEach(id => b.update(doc(db, COLLECTION, id), {
+      rewardId,
+      rewardName,
+      rewardType,
+      rewardAssignedAt: serverTimestamp(),
+      rewardAssignedBy: assignedBy,
+    }));
+    await b.commit();
+    count += chunk.length;
+    onProgress?.(count, ids.length);
+    await new Promise<void>(r => setTimeout(r, 0));
+  }
+  return count;
+}
+
 // ── Bulk enable/disable by batchId (used by Batch Cards "Archive" action) ────
 // "Archive" reuses the existing `active` field (schema is frozen — no new
 // `archived` field). Archiving a batch simply disables every QR in it.
@@ -776,14 +846,22 @@ export interface OpLog {
   status?:       'success' | 'failed';
   browser?:      string;
   device?:       string;
+  campaignId?:   string;
+  campaignName?: string;
+  rewardId?:     string;
+  rewardName?:   string;
 }
 
 export interface WriteOpLogOptions {
-  reason?:     string;
-  batchName?:  string;
-  qrIds?:      string[];
-  durationMs?: number;
-  status?:     'success' | 'failed';
+  reason?:       string;
+  batchName?:    string;
+  qrIds?:        string[];
+  durationMs?:   number;
+  status?:       'success' | 'failed';
+  campaignId?:   string;
+  campaignName?: string;
+  rewardId?:     string;
+  rewardName?:   string;
 }
 
 function getBrowserInfo(): { browser: string; device: string } {
@@ -816,6 +894,10 @@ export async function writeOpLog(
     qrIds:       opts.qrIds      ?? [],
     durationMs:  opts.durationMs ?? 0,
     status:      opts.status     ?? 'success',
+    campaignId:   opts.campaignId   ?? '',
+    campaignName: opts.campaignName ?? '',
+    rewardId:     opts.rewardId     ?? '',
+    rewardName:   opts.rewardName   ?? '',
     browser,
     device,
   });
@@ -840,6 +922,10 @@ export async function fetchOpLogs(limitCount = 100): Promise<OpLog[]> {
         qrIds:       data.qrIds      ?? [],
         durationMs:  data.durationMs ?? 0,
         status:      data.status     ?? 'success',
+        campaignId:   data.campaignId   ?? '',
+        campaignName: data.campaignName ?? '',
+        rewardId:     data.rewardId     ?? '',
+        rewardName:   data.rewardName   ?? '',
         browser:     data.browser    ?? '',
         device:      data.device     ?? '',
       };
@@ -1119,6 +1205,15 @@ export async function fetchQRCodesPage(
       createdAt:     (data.createdAt as Timestamp)?.toDate() ?? new Date(),
       lastScannedAt: data.lastScannedAt ? (data.lastScannedAt as Timestamp).toDate() : undefined,
       scansToday:    (data.dailyScans ?? {})[today] ?? 0,
+      campaignId:         data.campaignId || undefined,
+      campaignName:       data.campaignName || undefined,
+      campaignAssignedAt: data.campaignAssignedAt ? (data.campaignAssignedAt as Timestamp).toDate() : undefined,
+      campaignAssignedBy: data.campaignAssignedBy || undefined,
+      rewardId:           data.rewardId || undefined,
+      rewardName:         data.rewardName || undefined,
+      rewardType:         data.rewardType || undefined,
+      rewardAssignedAt:   data.rewardAssignedAt ? (data.rewardAssignedAt as Timestamp).toDate() : undefined,
+      rewardAssignedBy:   data.rewardAssignedBy || undefined,
     };
   });
 
