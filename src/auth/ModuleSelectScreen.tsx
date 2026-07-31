@@ -4,8 +4,9 @@ import { Html5Qrcode } from 'html5-qrcode';
 import { validateQR } from '../services/qr/qrService';
 import { SettingsModal } from '../frontend/modals/SettingsModal';
 import NotificationBell from '../components/notifications/NotificationBell';
-import { isDeveloperModeEnabled, subscribeDeveloperMode } from '../services/dev/devModeService';
+import { isDeveloperModeEnabled, setDeveloperModeEnabled, subscribeDeveloperMode } from '../services/dev/devModeService';
 import { isDevUser } from '../services/protein/devTestCenterService';
+import { addDebugLog } from '../liveConfig';
 import { useAuth } from './AuthProvider';
 
 interface ModuleSelectScreenProps {
@@ -477,7 +478,17 @@ export default function ModuleSelectScreen({ onSelectGame, onSelectTracker, onSe
 
   useEffect(() => subscribeDeveloperMode(setDeveloperModeOn), []);
 
+  // Clear the pending tap-reset timer on unmount so it never fires against an
+  // unmounted component.
+  useEffect(() => () => {
+    if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
+  }, []);
+
   const handleSecretTap = () => {
+    // Gate or panel already up — ignore further taps rather than re-triggering
+    // a second access check or a duplicate panel.
+    if (showGate || showDevPanel) return;
+
     tapCountRef.current += 1;
     if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
     tapTimerRef.current = setTimeout(() => { tapCountRef.current = 0; }, TAP_INTERVAL);
@@ -518,6 +529,43 @@ export default function ModuleSelectScreen({ onSelectGame, onSelectTracker, onSe
 
   const handleQRCancel = () => setShowQRModal(false);
 
+  // "Testing Game — Unlimited" (Dev Panel → TESTING tab). Re-verifies the
+  // Firestore developer role at click time (never trusts that the panel is
+  // merely open), then reuses the existing Developer Mode bypass — the same
+  // mechanism handleSelectGame already uses above — to launch without QR.
+  // No QR document is read, written, or consumed anywhere in this path.
+  const [unlimitedLaunchState, setUnlimitedLaunchState] = useState<'idle' | 'checking' | 'launching' | 'denied'>('idle');
+  const unlimitedLaunchRef = useRef(false);
+
+  const handleStartUnlimitedTestGame = async () => {
+    if (unlimitedLaunchRef.current) return; // guard against double-click / repeated launch
+    unlimitedLaunchRef.current = true;
+    setUnlimitedLaunchState('checking');
+
+    const uid = user?.uid;
+    const authorized = uid ? await isDevUser(uid) : false;
+
+    if (!authorized) {
+      setUnlimitedLaunchState('denied');
+      unlimitedLaunchRef.current = false;
+      addDebugLog('SECURITY', 'Unlimited test-game launch denied — account is not a developer.');
+      return;
+    }
+
+    setUnlimitedLaunchState('launching');
+    setDeveloperModeEnabled(true); // existing bypass — App.tsx re-checks isDevUser before honoring it
+    addDebugLog('TEST', 'Unlimited developer testing enabled — launching Egg Runner without QR.');
+
+    setShowDevPanel(false);
+    localStorage.setItem(LAST_MODULE_KEY, 'game');
+    setVisible(false);
+    setTimeout(() => {
+      onSelectGame();
+      unlimitedLaunchRef.current = false;
+      setUnlimitedLaunchState('idle');
+    }, 300);
+  };
+
   // Rewards' "Play Game" lands here with autoStartGame — run the exact same
   // QR-gated entry as tapping the Egg Runner card, once, instead of requiring
   // an extra manual tap. Never bypasses handleSelectGame's QR modal / dev-mode logic.
@@ -543,7 +591,6 @@ export default function ModuleSelectScreen({ onSelectGame, onSelectTracker, onSe
           fontFamily: 'system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
           overflowY: 'auto',
         }}
-        onClick={handleSecretTap}
       >
         {/* ── Subtle background grid texture ── */}
         <div style={{
@@ -572,10 +619,14 @@ export default function ModuleSelectScreen({ onSelectGame, onSelectTracker, onSe
           padding: '36px 24px 20px',
           display: 'flex', alignItems: 'center', gap: 12,
         }}>
+          {/* Hidden dev-panel trigger: the logo absorbs 12 rapid taps within TAP_INTERVAL.
+              Not a functional control, so it's the safe place for a tap counter that
+              must never fire from normal card/button interactions. */}
           <img
             src="/THUMBS_POSE__Egg_-removebg-preview.png"
             alt="SKM"
-            style={{ width: 38, height: 38, objectFit: 'contain', filter: 'drop-shadow(0 2px 6px rgba(215,25,32,0.5))', flexShrink: 0 }}
+            onClick={handleSecretTap}
+            style={{ width: 38, height: 38, objectFit: 'contain', filter: 'drop-shadow(0 2px 6px rgba(215,25,32,0.5))', flexShrink: 0, cursor: 'default' }}
           />
           <div style={{ flex: 1 }}>
             <p style={{ fontSize: 9, fontWeight: 800, letterSpacing: 3, textTransform: 'uppercase', color: 'rgba(215,25,32,0.8)', margin: 0, fontFamily: 'monospace' }}>
@@ -744,6 +795,8 @@ export default function ModuleSelectScreen({ onSelectGame, onSelectTracker, onSe
           onToggleSound={() => {}}
           onToggleMusic={() => {}}
           onStartGame={() => {}}
+          onLaunchUnlimitedTest={handleStartUnlimitedTestGame}
+          unlimitedLaunchState={unlimitedLaunchState}
           initialView="DEV_PANEL"
           onNavigateQR={onSelectQR ? () => { setShowDevPanel(false); onSelectQR(); } : undefined}
         />

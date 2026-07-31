@@ -69,6 +69,12 @@ interface SettingsModalProps {
   setMissions?: React.Dispatch<React.SetStateAction<any[]>>;
   fps?: number;
   onNavigateQR?: () => void;
+  /** "Testing Game — Unlimited" launch (Dev Panel → TESTING tab), driven by the caller's
+   *  handleStartUnlimitedTestGame. Kept separate from onStartGame (which means "restart the
+   *  currently running game") so this button never gets triggered by other TESTING actions
+   *  like Apply Difficulty / Spawn Stage that reuse onStartGame for restart semantics. */
+  onLaunchUnlimitedTest?: () => void;
+  unlimitedLaunchState?: 'idle' | 'checking' | 'launching' | 'denied';
 }
 
 const ENCODED_DEV_NAME = "REVWRUxPUEVS"; // base64 for "DEVELOPER"
@@ -103,6 +109,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   setMissions,
   fps = 60,
   onNavigateQR,
+  onLaunchUnlimitedTest,
+  unlimitedLaunchState = 'idle',
 }) => {
   const { user } = useAuth();
   const [view, setView] = useState<SettingsView>(initialView);
@@ -1795,6 +1803,42 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${developerModeOn ? 'translate-x-5' : ''}`}
                         />
                       </span>
+                    </button>
+                  </div>
+
+                  {/* TESTING GAME — UNLIMITED — one-click QR-free launch for verified developers.
+                      Re-checks isDevUser at click time (in the caller); this button only
+                      reflects that check's state, it never decides authorization itself. */}
+                  <div className="space-y-2">
+                    <span className="text-[10px] font-black text-white font-mono uppercase tracking-wider block border-b border-slate-850 pb-1 mt-1">
+                      Instant Launch
+                    </span>
+                    <button
+                      id="btn_launch_unlimited_test_game"
+                      onClick={() => { soundManager.playClick(); onLaunchUnlimitedTest?.(); }}
+                      disabled={unlimitedLaunchState === 'checking' || unlimitedLaunchState === 'launching'}
+                      className={`w-full flex flex-col items-start px-3 py-2.5 rounded-xl border cursor-pointer transition text-left ${
+                        unlimitedLaunchState === 'denied'
+                          ? 'bg-red-950/40 border-red-600/60'
+                          : 'bg-emerald-950/30 border-emerald-600/50 hover:border-emerald-500/70'
+                      } ${(unlimitedLaunchState === 'checking' || unlimitedLaunchState === 'launching') ? 'opacity-60 cursor-not-allowed' : ''}`}
+                    >
+                      <span className={`text-xs font-black font-mono uppercase tracking-wider ${unlimitedLaunchState === 'denied' ? 'text-red-300' : 'text-emerald-300'}`}>
+                        🚀 {unlimitedLaunchState === 'checking'
+                          ? 'Checking Developer Access…'
+                          : unlimitedLaunchState === 'launching'
+                          ? 'Launching Test Game…'
+                          : 'Testing Game — Unlimited'}
+                      </span>
+                      <span className="text-[8.5px] text-slate-500 font-mono mt-0.5">
+                        Launch Egg Runner without QR verification or play-attempt limits.
+                        Developer accounts only.
+                      </span>
+                      {unlimitedLaunchState === 'denied' && (
+                        <span className="text-[8.5px] text-red-400 font-mono mt-1 font-bold">
+                          Access denied — this account is not a developer.
+                        </span>
+                      )}
                     </button>
                   </div>
 

@@ -32,7 +32,10 @@
       "Bash(taskkill //PID 21040 //F)",
       "Bash(npx tsc *)",
       "Bash(cat > *)",
-      "Bash(node \"C:\\\\Users\\\\it-web1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--PROJECTS-SKM-Egg-Runner-2-0-updated-2\\\\d26ece03-12ae-4a7c-bd03-d6a9fe2367f0\\\\scratchpad\\\\guard_devtestcenter.js\")"
+      "Bash(node \"C:\\\\Users\\\\it-web1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--PROJECTS-SKM-Egg-Runner-2-0-updated-2\\\\d26ece03-12ae-4a7c-bd03-d6a9fe2367f0\\\\scratchpad\\\\guard_devtestcenter.js\")",
+      "WebFetch(domain:quaternius.com)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3000/models/Big%20Tree.glb)",
+      "Bash(taskkill //F //PID 19116)"
     ],
     "additionalDirectories": [
       "\\tmp\\tsrepro"

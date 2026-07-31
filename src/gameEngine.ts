@@ -8,6 +8,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { ThemeType, PowerUpType } from './types';
 import { soundManager } from './audio';
 import { getActiveLiveConfig, addDebugLog } from './liveConfig';
+import { FARM_ASSETS } from './game/assets/farmAssetRegistry';
 
 export interface EngineCallbacks {
   onScore: (score: number) => void;
@@ -1310,17 +1311,17 @@ export class SKMRunnerEngine {
       // 3. Spawning theme-specific scenery based on the theme of this chunk!
       switch (theme) {
         case 'POULTRY_FARM': {
-          // Double density layout (Front Z and Back Z)
-          const offsets = [-11 + rand() * 5, 7 + rand() * 5];
+          // Triple density layout (Front Z, Mid Z and Back Z)
+          const offsets = [-14 + rand() * 4, -2 + rand() * 4, 10 + rand() * 4];
           offsets.forEach((zOffset) => {
             // LHS
             if (rand() < 0.35) {
               const coops = this.createBarnMesh(rand);
-              coops.position.set(-this.roadWidth / 2 - 5.5, 0.3, zOffset);
+              coops.position.set(-this.roadWidth / 2 - 13.0, 0.3, zOffset);
               proceduralGroup.add(coops);
             } else if (rand() < 0.7) {
               const storage = this.createIndustrialSilosMesh(rand);
-              storage.position.set(-this.roadWidth / 2 - 4.5, 0.2, zOffset);
+              storage.position.set(-this.roadWidth / 2 - 11.0, 0.2, zOffset);
               proceduralGroup.add(storage);
             } else {
               const workers = this.createHumanoidMesh('#1e3a8a', '#1d4ed8', true); // Worker
@@ -1330,19 +1331,28 @@ export class SKMRunnerEngine {
             }
 
             // RHS
-            if (rand() < 0.45) {
+            const rhsRoll = rand();
+            if (rhsRoll < 0.25) {
               const pen = this.createChickenPenMesh(rand);
-              pen.position.set(this.roadWidth / 2 + 4.5, 0, zOffset);
+              pen.position.set(this.roadWidth / 2 + 7.5, 0, zOffset);
               proceduralGroup.add(pen);
-            } else if (rand() < 0.8) {
+            } else if (rhsRoll < 0.5) {
               const sacks = this.createFeedBagsMesh();
               sacks.position.set(this.roadWidth / 2 + 2.8, 0, zOffset);
               sacks.rotation.y = rand() * 0.5;
               proceduralGroup.add(sacks);
-            } else {
+            } else if (rhsRoll < 0.65) {
               const research = this.createResearchCenterMesh(rand);
-              research.position.set(this.roadWidth / 2 + 5.5, 0.2, zOffset);
+              research.position.set(this.roadWidth / 2 + 8.5, 0.2, zOffset);
               proceduralGroup.add(research);
+            } else if (rhsRoll < 0.85) {
+              const coopsR = this.createBarnMesh(rand);
+              coopsR.position.set(this.roadWidth / 2 + 13.0, 0.3, zOffset);
+              proceduralGroup.add(coopsR);
+            } else {
+              const storageR = this.createIndustrialSilosMesh(rand);
+              storageR.position.set(this.roadWidth / 2 + 11.0, 0.2, zOffset);
+              proceduralGroup.add(storageR);
             }
           });
           break;
@@ -1384,8 +1394,7 @@ export class SKMRunnerEngine {
             // LHS
             if (rand() < 0.45) {
               const silosMax = this.createIndustrialSilosMesh(rand);
-              silosMax.scale.set(1.3, 1.5, 1.3); // giant grain silo
-              silosMax.position.set(-this.roadWidth / 2 - 5.5, 0.3, zOffset);
+              silosMax.position.set(-this.roadWidth / 2 - 11.0, 0.3, zOffset);
               proceduralGroup.add(silosMax);
             } else {
               const strawHay = this.createHayBaleMesh();
@@ -2005,6 +2014,11 @@ export class SKMRunnerEngine {
 
   private createHayBaleMesh(): THREE.Group {
     const bale = new THREE.Group();
+
+    if (this.attachFarmAsset('hayBale', bale)) {
+      return bale;
+    }
+
     const strawMat = new THREE.MeshStandardMaterial({ color: '#f59e0b', roughness: 0.95 });
     
     const cyl = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 1.3, 12), strawMat);
@@ -2347,6 +2361,11 @@ export class SKMRunnerEngine {
   private createRoadsideFenceMesh(rand: () => number): THREE.Group {
     const fence = new THREE.Group();
     fence.name = 'fence_decor';
+
+    if (this.attachFarmAsset('woodenFence', fence)) {
+      return fence;
+    }
+
     const postMat = new THREE.MeshStandardMaterial({ color: '#5c2d18', roughness: 0.9 });
     const railMat = new THREE.MeshStandardMaterial({ color: '#7c2d12', roughness: 0.95 });
 
@@ -2470,6 +2489,21 @@ export class SKMRunnerEngine {
 
   private createBarnMesh(rand: () => number): THREE.Group {
     const barn = new THREE.Group();
+
+    // ── GLB barn model ─────────────────────────────────────────────────────
+    // Ventilator fan stays procedural and is always attached (small, animated by name lookup).
+    const fanPivot = new THREE.Group();
+    fanPivot.name = 'barn_vent_fan';
+    fanPivot.position.set(0, 3.5, 2.9);
+    const fanBlade = new THREE.Mesh(this.geoCache['box'], new THREE.MeshStandardMaterial({ color: '#1e293b' }));
+    fanBlade.scale.set(0.12, 1.4, 0.18);
+    fanPivot.add(fanBlade);
+    barn.add(fanPivot);
+
+    if (this.attachFarmAsset('barn', barn, rand)) {
+      return barn;
+    }
+
     const style = Math.floor(rand() * 5); // 5 distinct styles!
 
     if (style === 0) {
@@ -2557,15 +2591,7 @@ export class SKMRunnerEngine {
       barn.add(steepRoof);
     }
 
-    // Ventilator fan on side
-    const fanPivot = new THREE.Group();
-    fanPivot.name = 'barn_vent_fan';
-    fanPivot.position.set(0, 3.5, 2.9);
-    const fanBlade = new THREE.Mesh(this.geoCache['box'], new THREE.MeshStandardMaterial({ color: '#1e293b' }));
-    fanBlade.scale.set(0.12, 1.4, 0.18);
-    fanPivot.add(fanBlade);
-    barn.add(fanPivot);
-
+    barn.scale.set(0.6, 0.6, 0.6); // Shrink to a background-scale structure so it reads as environment, not a wall crowding the road
     return barn;
   }
 
@@ -2817,7 +2843,15 @@ export class SKMRunnerEngine {
 
   private createWindmillMesh(rand: () => number): THREE.Group {
     const windmill = new THREE.Group();
-    
+
+    // ── GLB windmill model ────────────────────────────────────────────────
+    // The GLB is a traditional tower windmill with its own built-in sail geometry,
+    // so it fully replaces the procedural turbine (including its spinning-fan rig,
+    // which has no matching pivot on the GLB's mesh).
+    if (this.attachFarmAsset('windmillTower', windmill, rand)) {
+      return windmill;
+    }
+
     // Sleek aerodynamic tower structure
     const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 1.1, 7.5, 10), new THREE.MeshStandardMaterial({ color: '#f1f5f9', roughness: 0.55 }));
     tower.position.y = 3.75;
@@ -2954,6 +2988,11 @@ export class SKMRunnerEngine {
 
   private createIndustrialSilosMesh(rand: () => number): THREE.Group {
     const industrial = new THREE.Group();
+
+    if (this.attachFarmAsset('silo', industrial, rand)) {
+      return industrial;
+    }
+
     const silo = new THREE.Mesh(this.geoCache['silo'], this.matCache['decor_steel_pbr']);
     silo.scale.set(0.65, 0.65, 0.65);
     silo.position.set(0, 3.1, 0);
@@ -3069,6 +3108,11 @@ export class SKMRunnerEngine {
 
   private createChickenPenMesh(rand: () => number): THREE.Group {
     const pen = new THREE.Group();
+
+    if (this.attachFarmAsset('chickenCoop', pen, rand)) {
+      return pen;
+    }
+
     const penPostMat = new THREE.MeshStandardMaterial({ color: '#78350f', roughness: 0.95 });
     const barH = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.4, 2.8), penPostMat);
     barH.position.set(0, 0.4, 0);
@@ -5222,10 +5266,36 @@ export class SKMRunnerEngine {
     return p;
   }
 
+  // Attach a decorative farm GLB (from FARM_ASSETS) into `target`, applying its registry
+  // scale/rotation/shadow settings. Returns true if the cached model was available and attached
+  // synchronously; false if not yet loaded (caller should keep its procedural fallback — the GLB
+  // is preloaded in preloadTreeGLB so it is normally already cached by the time chunks decorate).
+  private attachFarmAsset(assetId: string, target: THREE.Group, randRotation?: () => number): boolean {
+    const asset = FARM_ASSETS[assetId];
+    if (!asset || !this.glbCache.has(asset.url)) return false;
+    const clone = this.glbCache.get(asset.url)!.clone();
+    clone.scale.setScalar(asset.scale);
+    clone.position.y += asset.yOffset || 0;
+    clone.rotation.y = asset.rotationY !== undefined ? asset.rotationY : (randRotation ? (randRotation() - 0.5) * Math.PI * 2 : 0);
+    clone.traverse(c => {
+      if ((c as THREE.Mesh).isMesh) {
+        c.castShadow = asset.castShadow !== false;
+        c.receiveShadow = asset.receiveShadow !== false;
+      }
+    });
+    target.add(clone);
+    return true;
+  }
+
   // Preload the tree GLB at startup so first spawn is instant
   private preloadTreeGLB(): void {
-    this.loadGLB('/models/Big Tree.glb').catch(() => {});
-    this.loadGLB('/models/Forklift.glb').catch(() => {});
+    this.loadGLB('/models/farm/big-tree.glb').catch(() => {});
+    this.loadGLB('/models/farm/forklift.glb').catch(() => {});
+    // Decorative farm props: loaded asynchronously, never blocking startup/first frame.
+    // Each createXMesh() below renders its existing procedural fallback until its GLB resolves.
+    Object.values(FARM_ASSETS).forEach(asset => {
+      this.loadGLB(asset.url).catch(() => {});
+    });
   }
 
   private createObstacle(lane: number, zPos: number, specialType?: string): any {
@@ -5362,6 +5432,7 @@ export class SKMRunnerEngine {
           ropeCirc.position.set(r * 0.5, 0.45, 0);
           hayGroup.add(ropeCirc);
         }
+        hayGroup.scale.set(0.55, 0.55, 0.55); // Shrink to match the obstacle's actual collision hitbox size
         mesh.add(hayGroup);
       } else if (type === 'TRACTOR') {
         // Detailed farmers heavy tractor obstacle
@@ -5497,7 +5568,7 @@ export class SKMRunnerEngine {
         mesh.add(truckGroup);
       } else if (type === 'FORKLIFT') {
         // ── GLB forklift model ────────────────────────────────────────────────
-        const FORKLIFT_GLB_URL = '/models/Forklift.glb';
+        const FORKLIFT_GLB_URL = '/models/farm/forklift.glb';
         const FORKLIFT_SCALE = 2.0; // maxDim-normalized model scaled to match other vehicle obstacles
         if (this.glbCache.has(FORKLIFT_GLB_URL)) {
           // Already loaded — use clone directly
@@ -5904,6 +5975,7 @@ export class SKMRunnerEngine {
         stripe.position.y = 0.65;
         coneGroup.add(stripe);
 
+        coneGroup.scale.set(0.55, 0.55, 0.55); // Shrink to a small roadside pylon, matching its narrow collision hitbox
         mesh.add(coneGroup);
       } else if (type === 'BARRICADE') {
         const barryGroup = new THREE.Group();
@@ -6503,7 +6575,7 @@ export class SKMRunnerEngine {
         mesh.add(potGroup);
       } else if (type === 'FALLEN_TREE') {
         // ── GLB tree model ─────────────────────────────────────────────────────
-        const GLB_URL = '/models/Big Tree.glb';
+        const GLB_URL = '/models/farm/big-tree.glb';
         const FALLEN_SCALE = 3.1; // maxDim-normalized model; matches prior raw-model visual size
         if (this.glbCache.has(GLB_URL)) {
           // Already loaded — use clone directly
@@ -6591,7 +6663,7 @@ export class SKMRunnerEngine {
         mesh.add(bridgeGroup);
       } else if (type === 'TREE_ROOT') {
         // ── GLB tree model (smaller scale for root obstacle) ────────────────────
-        const GLB_URL = '/models/Big Tree.glb';
+        const GLB_URL = '/models/farm/big-tree.glb';
         const ROOT_SCALE = 1.9; // maxDim-normalized model; matches prior raw-model visual size
         if (this.glbCache.has(GLB_URL)) {
           const glbClone = this.glbCache.get(GLB_URL)!.clone();
@@ -10927,11 +10999,15 @@ export class SKMRunnerEngine {
     // - 3600m–4800m: Highway Area (RAINY_SEASON)
     // - 4800m+: City Area (CITY_DISTRICT)
     const segments = [
-      { start: 0, end: 1000, theme: 'POULTRY_FARM' as ThemeType },
-      { start: 1000, end: 2000, theme: 'NIGHT_FARM' as ThemeType },
-      { start: 2000, end: 3000, theme: 'RIVER_AREA' as ThemeType },
-      { start: 3000, end: 4000, theme: 'VILLAGE_ROADS' as ThemeType },
-      { start: 4000, end: Infinity, theme: 'CITY_DISTRICT' as ThemeType },
+      { start: 0, end: 400, theme: 'POULTRY_FARM' as ThemeType },
+      { start: 400, end: 800, theme: 'CORN_FIELDS' as ThemeType },
+      { start: 800, end: 1200, theme: 'WHEAT_FIELDS' as ThemeType },
+      { start: 1200, end: 1800, theme: 'RIVER_AREA' as ThemeType },
+      { start: 1800, end: 2400, theme: 'VILLAGE_ROADS' as ThemeType },
+      { start: 2400, end: 3000, theme: 'SKM_FACTORY' as ThemeType },
+      { start: 3000, end: 3600, theme: 'WAREHOUSE' as ThemeType },
+      { start: 3600, end: 4800, theme: 'RAINY_SEASON' as ThemeType },
+      { start: 4800, end: Infinity, theme: 'CITY_DISTRICT' as ThemeType },
     ];
 
     let activeIdx = 0;
