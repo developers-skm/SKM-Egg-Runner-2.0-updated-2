@@ -93,9 +93,9 @@ export const HapticService = {
     fire(50);
   },
 
-  /** Success pattern — short double-pulse for a positive completion event. */
+  /** Success pattern — premium confirmation pulse for a positive completion event. */
   success(): void {
-    fire([15, 60, 25]);
+    fire([60, 40, 120]);
   },
 
   /** Warning pattern — a single firmer pulse, distinct from success/error. */

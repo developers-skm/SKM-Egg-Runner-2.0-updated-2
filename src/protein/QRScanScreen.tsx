@@ -262,9 +262,8 @@ export default function QRScanScreen({ user, onScanSuccess, onOpenWallet }: QRSc
           protein: directResult.protein, consumedDirectly: true, goalJustMet: directResult.goalJustMet,
           eggsStored: walletSummary.walletEggsStored, capacity: WALLET_CAPACITY, todayProteinAfter,
         });
+        HapticService.success();
         setPhase('success');
-        if (streakMilestoneHit || directResult.goalJustMet) HapticService.success();
-        else HapticService.light();
 
         notifyProteinAdded(user.uid, directResult.protein, (todayStats?.totalProtein ?? 0) + directResult.protein)
           .catch(err => logBackgroundFailure('handleScan:notifyProteinAdded', err));
@@ -344,8 +343,8 @@ export default function QRScanScreen({ user, onScanSuccess, onOpenWallet }: QRSc
         eggsStored: summary.walletEggsStored, capacity: WALLET_CAPACITY,
         todayProteinAfter: todayStats?.totalProtein ?? 0,
       });
-      setPhase('success');
       HapticService.success();
+      setPhase('success');
 
       notifyWalletEggStored(user.uid, summary.walletEggsStored, WALLET_CAPACITY).catch(err => logBackgroundFailure('handleScan:notifyWalletEggStored', err));
 
@@ -792,6 +791,7 @@ export default function QRScanScreen({ user, onScanSuccess, onOpenWallet }: QRSc
               eggsStored: WALLET_CAPACITY, capacity: WALLET_CAPACITY,
               todayProteinAfter: todayStats?.totalProtein ?? 0,
             });
+            HapticService.success();
             setPhase('success');
           }}
           onCancel={() => { setFullModal(null); reset(); }}
