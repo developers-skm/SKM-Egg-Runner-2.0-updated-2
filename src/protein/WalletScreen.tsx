@@ -303,7 +303,7 @@ export default function WalletScreen({ user, refreshKey, onScanQR }: WalletScree
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p style={{ fontSize: 12, fontWeight: 700, color: '#1A1A1A', margin: 0 }}>{item.eggType}</p>
                       <p style={{ fontSize: 10, color: '#bbb', margin: 0 }}>
-                        QR {item.qrId} · Stored {formatDate(item.storedAt)}
+                        Stored {formatDate(item.storedAt)}
                       </p>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
