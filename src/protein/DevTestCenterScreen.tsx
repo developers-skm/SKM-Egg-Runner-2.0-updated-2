@@ -7,6 +7,7 @@ import {
   AlertTriangle, User as UserIcon, BarChart3, Trash2, Heart, Sparkles, Activity,
 } from 'lucide-react';
 import { runHealthChecks, type HealthCheckResult } from '../services/health/systemHealthService';
+import { getWalletAdminKpis, type WalletAdminKpis } from '../services/protein/proteinWalletService';
 import {
   getDevEnvSnapshot, type DevEnvSnapshot,
   getDevDebugSnapshot, type DevDebugSnapshot,
@@ -181,6 +182,11 @@ export default function DevTestCenterScreen({ user, onBack, onDataChanged }: Dev
         {/* ── System Health Monitor ── */}
         {matches('system health monitor firestore auth notification reward qr game cloud functions') && (
           <SystemHealthPanel uid={user.uid} />
+        )}
+
+        {/* ── Protein Wallet KPIs (cross-user, developer-only) ── */}
+        {matches('wallet kpi protein wallet fill consumption replacement expiry healthy admin analytics') && (
+          <WalletKpiPanel />
         )}
 
         {/* ── User Progress ── */}
@@ -630,6 +636,73 @@ function SystemHealthPanel({ uid }: { uid: string }) {
               ))}
               {lastRun && <p style={{ fontSize: 9, color: DEV.textFaint, margin: '8px 0 0', textAlign: 'center' }}>Last run {lastRun}</p>}
             </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WalletKpiPanel() {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [kpis, setKpis] = useState<WalletAdminKpis | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [lastRun, setLastRun] = useState<string | null>(null);
+
+  const run = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await getWalletAdminKpis();
+      setKpis(result);
+      setLastRun(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    } catch (e: unknown) {
+      setError((e as Error).message ?? String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ background: DEV.surface, borderRadius: 18, border: `1px solid ${DEV.border}`, overflow: 'hidden' }}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px',
+        background: DEV.surface2, border: 'none', cursor: 'pointer', textAlign: 'left',
+      }}>
+        <Egg size={14} color={DEV.accent} />
+        <p style={{ fontSize: 12, fontWeight: 900, color: DEV.text, margin: 0, flex: 1 }}>Protein Wallet KPIs</p>
+        <ChevronDown size={14} color={DEV.textSoft} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 200ms' }} />
+      </button>
+      {open && (
+        <div style={{ padding: '12px 14px 14px' }}>
+          <button
+            onClick={run}
+            disabled={loading}
+            style={{
+              width: '100%', padding: '10px 14px', borderRadius: 12, marginBottom: 10,
+              border: `1px solid ${DEV.accent}44`, background: `${DEV.accent}18`, color: DEV.accent,
+              fontWeight: 800, fontSize: 12, cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.6 : 1,
+            }}
+          >
+            {loading ? 'Computing…' : 'Compute Wallet KPIs'}
+          </button>
+
+          {error && <p style={{ fontSize: 10.5, color: DEV.red, margin: '0 0 10px' }}>{error}</p>}
+
+          {kpis && (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <DebugTile label="Users w/ Wallet" value={String(kpis.usersWithWallet)} />
+                <DebugTile label="Avg Wallet Fill" value={`${kpis.averageWalletFill}%`} highlight />
+                <DebugTile label="Avg Daily Consumption" value={String(kpis.averageDailyConsumption)} />
+                <DebugTile label="Replacement Rate" value={`${kpis.replacementRate}%`} />
+                <DebugTile label="Expiry Rate" value={`${kpis.expiryRate}%`} status={kpis.expiryRate > 20 ? 'error' : undefined} />
+                <DebugTile label="Healthy Wallet %" value={`${kpis.healthyWalletPercentage}%`} status={kpis.healthyWalletPercentage >= 50 ? 'connected' : undefined} />
+                <DebugTile label="Avg Eggs Stored" value={String(kpis.averageEggsStored)} />
+              </div>
+              {lastRun && <p style={{ fontSize: 9, color: DEV.textFaint, margin: '10px 0 0', textAlign: 'center' }}>Last computed {lastRun}</p>}
+            </>
           )}
         </div>
       )}

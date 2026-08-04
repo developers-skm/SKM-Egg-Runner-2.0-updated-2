@@ -403,6 +403,27 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ── PROTEIN WALLET (Smart Egg Bank) ───────────────────────
+    // Scanning an SKM QR stores an egg here instead of immediately awarding
+    // protein — the qrCodes.proteinConsumed claim (see the qrCodes rule
+    // block above) still happens at store time, so QR anti-fraud is
+    // unchanged. Only consuming a stored egg (via proteinWalletService.ts)
+    // awards protein/streak/points, which happens in a separate write to
+    // daily_stats/users/rewardWallet/userSummary, not here.
+    // One-way status transitions only: stored -> consumed | expired | replaced.
+    match /proteinWallet/{uid}/items/{itemId} {
+      allow read:   if isOwner(uid) || isDeveloper();
+      allow create: if isOwner(uid)
+                    && request.resource.data.uid == uid
+                    && request.resource.data.status == 'stored';
+      allow update: if isOwner(uid)
+                    && resource.data.status == 'stored'
+                    && request.resource.data.status in ['consumed', 'expired', 'replaced']
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['status', 'consumedAt', 'replacedAt', 'replacedByQrId']);
+      allow delete: if false;
+    }
+
     // Coupon status only ever moves one-way: available -> used, or
     // available -> expired (see rewardCouponService.ts markCouponUsed /
     // getUserCoupons). Previously any owner update was allowed, which let a

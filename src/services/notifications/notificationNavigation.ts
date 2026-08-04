@@ -132,6 +132,14 @@ export function resolveNavTarget(n: AppNotification): NavTarget | null {
     case 'protein_milestone':
       return { screen: 'PROTEIN_TRACKER', tab: 'stats' };
 
+    // ── Protein Wallet → Wallet screen ──
+    case 'wallet_egg_stored':
+    case 'wallet_full':
+    case 'wallet_replaced':
+    case 'wallet_health':
+    case 'wallet_expiry_warning':
+      return { screen: 'PROTEIN_TRACKER', tab: 'wallet' };
+
     // ── Unknown / unmapped type → let the caller open Notification Details only ──
     default:
       return null;

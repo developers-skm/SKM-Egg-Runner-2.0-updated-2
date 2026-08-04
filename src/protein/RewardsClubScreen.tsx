@@ -18,7 +18,7 @@ import {
   buildRequirementProgress, allRequirementsMet, overallRequirementPct,
   type RewardCatalogItem, type RewardCoupon, type CouponStatus, type RequirementProgress,
 } from '../services/protein/rewardCouponService';
-import { getTodayStats, getLifetimeEggScanCount, getStreakInfo } from '../services/protein/proteinTrackerService';
+import { getTodayStats, getLifetimeEggScanCount, getLifetimeWalletConsumed, getStreakInfo } from '../services/protein/proteinTrackerService';
 import { getActivePromoEvent, type PromoEvent } from '../services/protein/promoEventService';
 import {
   getActiveCampaign, getUpcomingCampaign, checkAndRotateCampaign, getCampaignHistory,
@@ -160,6 +160,7 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, onPlayGame, 
   const [couponFilter, setCouponFilter] = useState<CouponFilterTab>('available');
   const [highestStage, setHighestStage] = useState<GameStage>('EGG');
   const [lifetimeEggScans, setLifetimeEggScans] = useState(0);
+  const [lifetimeWalletConsumed, setLifetimeWalletConsumed] = useState(0);
   const [currentProteinStreak, setCurrentProteinStreak] = useState(0);
   const [activeCampaign, setActiveCampaign] = useState<RewardCampaign | null>(null);
   const [upcomingCampaign, setUpcomingCampaign] = useState<RewardCampaign | null>(null);
@@ -174,7 +175,7 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, onPlayGame, 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [w, cat, cp, tx, today, gameStats, eggScans, streak, campaign] = await Promise.all([
+      const [w, cat, cp, tx, today, gameStats, eggScans, walletConsumed, streak, campaign] = await Promise.all([
         getRewardWallet(user.uid),
         getRewardCatalog(),
         getUserCoupons(user.uid),
@@ -182,6 +183,7 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, onPlayGame, 
         getTodayStats(user.uid),
         getGameStats(user.uid),
         getLifetimeEggScanCount(user.uid),
+        getLifetimeWalletConsumed(user.uid),
         getStreakInfo(user.uid),
         getActiveCampaign(),
       ]);
@@ -191,6 +193,7 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, onPlayGame, 
       setTodayGoal(today?.goal ?? 0);
       setHighestStage(gameStats.highestStage);
       setLifetimeEggScans(eggScans);
+      setLifetimeWalletConsumed(walletConsumed);
       setCurrentProteinStreak(streak.currentStreak);
 
       // ── Seasonal campaign rotation — lazy, client-side, mirrors coupon expiry ──
@@ -199,6 +202,7 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, onPlayGame, 
         const progressCtx = {
           lifetimeEggScans: eggScans, currentPoints: w.currentPoints, highestStage: gameStats.highestStage,
           currentProteinStreak: streak.currentStreak, lifetimeFoodLogs: eggScans,
+          lifetimeWalletConsumed: walletConsumed,
         };
         const progress = buildCampaignProgress(campaign, progressCtx);
         const pct = campaignCompletionPct(progress);
@@ -425,6 +429,7 @@ export default function RewardsClubScreen({ user, onBack, onScanQR, onPlayGame, 
             wallet={wallet}
             highestStage={highestStage}
             lifetimeEggScans={lifetimeEggScans}
+            lifetimeWalletConsumed={lifetimeWalletConsumed}
             currentProteinStreak={currentProteinStreak}
             coupons={coupons}
             activeCampaign={activeCampaign}
@@ -1328,7 +1333,7 @@ const REWARD_FILTER_TABS: { key: RewardFilterTab; label: string }[] = [
   { key: 'locked',    label: 'Locked' },
 ];
 
-function RewardsTab({ catalog, categories, categoryFilter, onCategoryChange, wallet, highestStage, lifetimeEggScans, currentProteinStreak, coupons, activeCampaign, onSelect, onScanQR, onPlayGame }: {
+function RewardsTab({ catalog, categories, categoryFilter, onCategoryChange, wallet, highestStage, lifetimeEggScans, lifetimeWalletConsumed, currentProteinStreak, coupons, activeCampaign, onSelect, onScanQR, onPlayGame }: {
   catalog: RewardCatalogItem[];
   categories: string[];
   categoryFilter: string;
@@ -1336,6 +1341,7 @@ function RewardsTab({ catalog, categories, categoryFilter, onCategoryChange, wal
   wallet: RewardWallet;
   highestStage: GameStage;
   lifetimeEggScans: number;
+  lifetimeWalletConsumed: number;
   currentProteinStreak: number;
   coupons: RewardCoupon[];
   activeCampaign: RewardCampaign | null;
@@ -1396,6 +1402,7 @@ function RewardsTab({ catalog, categories, categoryFilter, onCategoryChange, wal
           campaign={activeCampaign}
           wallet={wallet}
           lifetimeEggScans={lifetimeEggScans}
+          lifetimeWalletConsumed={lifetimeWalletConsumed}
           highestStage={highestStage}
           currentProteinStreak={currentProteinStreak}
           onPlayGame={onPlayGame}
@@ -1410,6 +1417,7 @@ function RewardsTab({ catalog, categories, categoryFilter, onCategoryChange, wal
             campaign={activeCampaign}
             wallet={wallet}
             lifetimeEggScans={lifetimeEggScans}
+            lifetimeWalletConsumed={lifetimeWalletConsumed}
             highestStage={highestStage}
             currentProteinStreak={currentProteinStreak}
             coupons={coupons}
@@ -1502,10 +1510,11 @@ function RewardsTab({ catalog, categories, categoryFilter, onCategoryChange, wal
 // — no reward/game/protein calculation happens in this component.
 // ─────────────────────────────────────────────────────────────
 
-function CampaignHero({ campaign, wallet, lifetimeEggScans, highestStage, currentProteinStreak, coupons, onPlayGame, onScanQR, onViewRewards }: {
+function CampaignHero({ campaign, wallet, lifetimeEggScans, lifetimeWalletConsumed, highestStage, currentProteinStreak, coupons, onPlayGame, onScanQR, onViewRewards }: {
   campaign: RewardCampaign;
   wallet: RewardWallet;
   lifetimeEggScans: number;
+  lifetimeWalletConsumed: number;
   highestStage: GameStage;
   currentProteinStreak: number;
   coupons: RewardCoupon[];
@@ -1519,9 +1528,9 @@ function CampaignHero({ campaign, wallet, lifetimeEggScans, highestStage, curren
   const progress = useMemo(
     () => buildCampaignProgress(campaign, {
       lifetimeEggScans, currentPoints: wallet.currentPoints, highestStage,
-      currentProteinStreak, lifetimeFoodLogs: lifetimeEggScans,
+      currentProteinStreak, lifetimeFoodLogs: lifetimeEggScans, lifetimeWalletConsumed,
     }),
-    [campaign, lifetimeEggScans, wallet.currentPoints, highestStage, currentProteinStreak],
+    [campaign, lifetimeEggScans, lifetimeWalletConsumed, wallet.currentPoints, highestStage, currentProteinStreak],
   );
   const pct = campaignCompletionPct(progress);
   const claimedCount = coupons.filter(c => c.status !== 'expired').length;
@@ -1693,10 +1702,11 @@ function CampaignHero({ campaign, wallet, lifetimeEggScans, highestStage, curren
 // Same single useCountdown timer pattern, minimal footprint.
 // ─────────────────────────────────────────────────────────────
 
-function StickyCampaignBar({ campaign, wallet, lifetimeEggScans, highestStage, currentProteinStreak, onPlayGame, onScanQR }: {
+function StickyCampaignBar({ campaign, wallet, lifetimeEggScans, lifetimeWalletConsumed, highestStage, currentProteinStreak, onPlayGame, onScanQR }: {
   campaign: RewardCampaign;
   wallet: RewardWallet;
   lifetimeEggScans: number;
+  lifetimeWalletConsumed: number;
   highestStage: GameStage;
   currentProteinStreak: number;
   onPlayGame?: () => void;
@@ -1707,9 +1717,9 @@ function StickyCampaignBar({ campaign, wallet, lifetimeEggScans, highestStage, c
   const progress = useMemo(
     () => buildCampaignProgress(campaign, {
       lifetimeEggScans, currentPoints: wallet.currentPoints, highestStage,
-      currentProteinStreak, lifetimeFoodLogs: lifetimeEggScans,
+      currentProteinStreak, lifetimeFoodLogs: lifetimeEggScans, lifetimeWalletConsumed,
     }),
-    [campaign, lifetimeEggScans, wallet.currentPoints, highestStage, currentProteinStreak],
+    [campaign, lifetimeEggScans, lifetimeWalletConsumed, wallet.currentPoints, highestStage, currentProteinStreak],
   );
   const pct = campaignCompletionPct(progress);
   const allMet = progress.every(p => p.met);

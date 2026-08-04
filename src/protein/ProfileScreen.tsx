@@ -39,6 +39,7 @@ import { useNavigation, type NavTarget } from '../context/NavigationContext';
 import HighlightCard from './HighlightCard';
 import { HapticService } from '../services/audio/hapticService';
 import { playUiClick } from '../services/audio/chickSound';
+import { getWalletSummary, getWalletHealthScore, WALLET_CAPACITY, type WalletSummary } from '../services/protein/proteinWalletService';
 
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
@@ -51,6 +52,7 @@ interface ProfileScreenProps {
   onLogout: () => Promise<void>;
   onDataDeleted: () => void;
   onBackToMenu: () => void;
+  onOpenWallet?: () => void;
   /** Set by ProteinTrackerScreen when a tapped notification targets this screen. */
   navTarget?: NavTarget | null;
 }
@@ -65,7 +67,7 @@ interface ExtendedProfile {
   phone: string;
 }
 
-export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToMenu, navTarget }: ProfileScreenProps) {
+export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToMenu, onOpenWallet, navTarget }: ProfileScreenProps) {
   const { consumeTarget } = useNavigation();
   const [view,        setView]        = useState<View>('profile');
   const [showHealthProfile, setShowHealthProfile] = useState(false);
@@ -75,6 +77,7 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
   const [healthGoalKey, setHealthGoalKey] = useState(0);
   const [streak,      setStreak]      = useState<StreakInfo>({ currentStreak: 0, bestStreak: 0, lastActiveDate: '' });
   const [settings,    setSettings]    = useState<TrackerSettings | null>(null);
+  const [walletSummary, setWalletSummary] = useState<WalletSummary | null>(null);
   const [userDoc,     setUserDoc]     = useState<Record<string, unknown>>({});
   const [claimed,     setClaimed]     = useState<Set<number>>(new Set());
   const [loading,     setLoading]     = useState(true);
@@ -103,16 +106,18 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [si, stg, snap, cl, dates, devRole] = await Promise.all([
+      const [si, stg, snap, cl, dates, devRole, ws] = await Promise.all([
         getStreakInfo(user.uid),
         getTrackerSettings(user.uid),
         getDoc(doc(db, 'users', user.uid)),
         getClaimedStickers(user.uid),
         getClaimedWithDates(user.uid),
         isDevUser(user.uid),
+        getWalletSummary(user.uid),
       ]);
       setStreak(si); setSettings(stg); setClaimed(cl); setClaimedDates(dates);
       setIsDevRole(devRole);
+      setWalletSummary(ws);
       if (snap.exists()) setUserDoc(snap.data());
     } catch (e) { console.error('[Profile]', e); }
     finally { setLoading(false); }
@@ -151,6 +156,10 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
   const joinedDate = user.metadata.creationTime
     ? new Date(user.metadata.creationTime).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
     : '—';
+  const walletHealth = getWalletHealthScore(walletSummary?.walletEggsStored ?? 0);
+  const profileNextExpiryDays = walletSummary?.walletNextExpiryAt
+    ? Math.max(0, Math.ceil((walletSummary.walletNextExpiryAt.toMillis() - Date.now()) / 86400000))
+    : null;
 
   const handleSaveProfile = async () => {
     const name = profile.playerName.trim();
@@ -935,6 +944,39 @@ export default function ProfileScreen({ user, onLogout, onDataDeleted, onBackToM
               </div>
               <style>{`@keyframes dev-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }`}</style>
             </div>
+          )}
+
+          {/* Protein Wallet card */}
+          {onOpenWallet && (
+            <button
+              onClick={onOpenWallet}
+              style={{
+                width: '100%', marginTop: 14, textAlign: 'left', border: 'none', cursor: 'pointer',
+                background: 'linear-gradient(135deg,#D71920,#B31217)', borderRadius: 20, padding: '16px 18px',
+                boxShadow: '0 6px 20px rgba(215,25,32,0.3)', display: 'flex', alignItems: 'center', gap: 14,
+                position: 'relative', overflow: 'hidden',
+              }}
+            >
+              <div style={{ position: 'absolute', top: -30, right: -30, width: 110, height: 110, borderRadius: '50%', background: 'rgba(255,255,255,0.07)', pointerEvents: 'none' }} />
+              <div style={{ width: 44, height: 44, borderRadius: 13, background: 'rgba(255,255,255,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <EggIcon size={22} color="#fff" />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <p style={{ fontSize: 14, fontWeight: 900, color: '#fff', margin: 0 }}>Protein Wallet</p>
+                  <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.85)' }}>
+                    {'★'.repeat(walletHealth.stars)}{'☆'.repeat(5 - walletHealth.stars)}
+                  </span>
+                </div>
+                <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', margin: '2px 0 0', fontWeight: 600 }}>
+                  {walletSummary?.walletEggsStored ?? 0}/{WALLET_CAPACITY} Eggs Stored · {walletSummary?.walletProteinAvailable ?? 0}g Available
+                  {profileNextExpiryDays !== null ? ` · Next Expiry ${profileNextExpiryDays}d` : ''}
+                </p>
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+                View <ChevronRightIcon size={14} color="#fff" />
+              </span>
+            </button>
           )}
 
           {/* Health Profile card */}

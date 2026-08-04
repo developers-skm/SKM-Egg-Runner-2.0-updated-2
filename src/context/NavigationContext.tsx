@@ -26,7 +26,7 @@ export type NavScreen = 'PROTEIN_TRACKER';
 // Tabs inside ProteinTrackerScreen (mirrors ProteinTrackerScreen's own `Tab`
 // type — duplicated here rather than imported to keep this context free of
 // a dependency on a screen component).
-export type NavTab = 'dashboard' | 'scan' | 'log' | 'stats' | 'profile' | 'streaks' | 'rewards';
+export type NavTab = 'dashboard' | 'scan' | 'log' | 'stats' | 'profile' | 'streaks' | 'rewards' | 'wallet';
 
 export interface NavTarget {
   screen: NavScreen;

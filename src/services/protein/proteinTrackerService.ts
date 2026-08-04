@@ -239,15 +239,21 @@ export async function addRewards(uid: string, xp: number, coins: number): Promis
 }
 
 // ─────────────────────────────────────────────────────────────
-// PROCESS EGG SCAN — atomic QR-scan pipeline
+// AWARD WALLET CONSUMPTION — atomic consume-time award pipeline
 // ─────────────────────────────────────────────────────────────
 //
-// Single Firestore transaction spanning every doc a genuine scan touches:
-// qrCodes (ownership claim), protein_logs (new entry), daily_stats, users
-// (streak), rewardWallet (points + membership), userSummary, and the
-// specific tracker_challenges docs the scan can affect. Either the whole
-// set commits together or none of it does — the QR is only ever marked
-// consumed if every dependent update succeeds in the same transaction.
+// Called by proteinWalletService.consumeNextWalletEgg() once a stored egg
+// has been identified as the one to consume (FIFO-oldest, not expired).
+// This function owns every doc a genuine award touches: protein_logs (new
+// entry), daily_stats, users (streak), rewardWallet (points + membership),
+// userSummary, and the specific tracker_challenges docs a consumption can
+// affect. Either the whole set commits together or none of it does.
+//
+// This function does NOT touch qrCodes or proteinWallet/{uid}/items — the
+// QR ownership claim happens once, at store time, in
+// proteinWalletService.storeEggInWallet(); this function only runs the
+// reward-side effects that used to fire immediately on scan (see the old
+// processEggScan, now split in two: store vs. award).
 //
 // XP/coins (tracker_rewards, a separate progression currency from reward
 // points) are intentionally NOT awarded here — achievements/challenge
@@ -255,26 +261,27 @@ export async function addRewards(uid: string, xp: number, coins: number): Promis
 // per-scan XP/coins were a duplicate of the reward-points system and have
 // been removed from the scan path (see rewardWallet/{uid} instead).
 
-export type ProcessEggScanResult =
-  | {
-      ok: true;
-      entry: ProteinLogEntry;
-      streak: StreakInfo;
-      prevStreak: number;
-      goalJustMet: boolean;
-      pointsEarned: number;
-      wallet: RewardWalletV2;
-      tierChanged: boolean;
-    }
-  | { ok: false; reason: 'consumed_by_self' | 'consumed_by_other' }
-  | { ok: false; reason: 'error'; message: string };
+export interface AwardWalletConsumptionResult {
+  entry: ProteinLogEntry;
+  streak: StreakInfo;
+  prevStreak: number;
+  goalJustMet: boolean;
+  pointsEarned: number;
+  wallet: RewardWalletV2;
+  tierChanged: boolean;
+}
 
 const SCAN_CHALLENGE_IDS = ['daily_scan', 'weekly_eggs', 'weekly_protein', 'daily_goal', 'monthly_goal', 'monthly_streak'];
 
-export async function processEggScan(uid: string, qrCode: string): Promise<ProcessEggScanResult> {
-  startTimer('processEggScan');
+/**
+ * Runs the full streak/points/challenge/stats award transaction for one
+ * consumed wallet egg. Caller (proteinWalletService) is responsible for
+ * having already verified this is the day's first consumption — this
+ * function always awards; it does not itself gate on "once per day".
+ */
+export async function awardWalletConsumption(uid: string, qrCode: string): Promise<AwardWalletConsumptionResult> {
+  startTimer('awardWalletConsumption');
   const dateKey  = todayKey();
-  const qrRef    = doc(db, 'qrCodes', qrCode);
   const userRef  = doc(db, 'users', uid);
   const statsRef = doc(db, 'daily_stats', uid, 'days', dateKey);
   const walletRef = doc(db, 'rewardWallet', uid);
@@ -287,17 +294,10 @@ export async function processEggScan(uid: string, qrCode: string): Promise<Proce
 
     const result = await runTransaction(db, async (tx) => {
       // ── Reads (all before any write, per Firestore transaction rules) ──
-      const qrSnap       = await tx.get(qrRef);
       const userSnap      = await tx.get(userRef);
       const statsSnap      = await tx.get(statsRef);
       const walletSnap      = await tx.get(walletRef);
       const challengeSnaps    = await Promise.all(challengeRefs.map(ref => tx.get(ref)));
-
-      // ── Ownership check — abort with NO writes if already consumed ──
-      if (qrSnap.exists() && qrSnap.data().proteinConsumed === true) {
-        const claimedBy: string = qrSnap.data().proteinConsumedByUID ?? '';
-        return { ok: false as const, reason: claimedBy === uid ? 'consumed_by_self' as const : 'consumed_by_other' as const };
-      }
 
       // ── Compute streak ──
       const userData  = userSnap.exists() ? userSnap.data() : {};
@@ -376,7 +376,6 @@ export async function processEggScan(uid: string, qrCode: string): Promise<Proce
       }
 
       // ── Commit the remaining writes ──
-      tx.set(qrRef, { proteinConsumed: true, proteinConsumedAt: serverTimestamp(), proteinConsumedByUID: uid }, { merge: true });
       tx.set(entryRef, {
         uid, type: 'qr_scan', foodName: 'SKM Egg', protein, calories,
         quantity: 1, meal: getMealByTime(), dateKey, loggedAt: serverTimestamp(), qrCode, category: 'Eggs',
@@ -385,7 +384,7 @@ export async function processEggScan(uid: string, qrCode: string): Promise<Proce
       tx.set(userRef, {
         currentConsumptionStreak: newStreak, bestConsumptionStreak: newBestStreak,
         lastConsumptionDate: dateKey, lifetimeConsumption: increment(1),
-        totalQRCodesScanned: increment(1), updatedAt: serverTimestamp(),
+        lifetimeWalletConsumed: increment(1), updatedAt: serverTimestamp(),
       }, { merge: true });
       tx.set(summaryRef, {
         uid, totalProtein: increment(protein), totalEggs: increment(1),
@@ -401,39 +400,33 @@ export async function processEggScan(uid: string, qrCode: string): Promise<Proce
       };
 
       return {
-        ok: true as const, entry, streak: streakInfo, prevStreak, goalJustMet,
+        entry, streak: streakInfo, prevStreak, goalJustMet,
         pointsEarned, wallet, tierChanged,
       };
     });
 
-    if (!result.ok) {
-      writeAuditLog(uid, 'qr_scan', `QR scan rejected — ${result.reason}`, false);
-      endTimer('processEggScan', 3000);
-      return result;
-    }
-
     // ── Non-transactional, best-effort follow-ups — logged, never swallowed ──
     addRewardTransaction(uid, { type: 'scan', points: POINTS_PER_SCAN, description: 'Egg scan' })
-      .catch(err => logBackgroundFailure('processEggScan:addRewardTransaction:scan', err));
+      .catch(err => logBackgroundFailure('awardWalletConsumption:addRewardTransaction:scan', err));
     if (POINTS_PER_STREAK_MILESTONE[result.streak.currentStreak]) {
       addRewardTransaction(uid, {
         type: 'streak_milestone', points: POINTS_PER_STREAK_MILESTONE[result.streak.currentStreak],
         description: `${result.streak.currentStreak}-day streak bonus`,
-      }).catch(err => logBackgroundFailure('processEggScan:addRewardTransaction:streak', err));
+      }).catch(err => logBackgroundFailure('awardWalletConsumption:addRewardTransaction:streak', err));
     }
     writeAuditLog(uid, 'qr_scan', `+${result.pointsEarned}pts, streak ${result.streak.currentStreak}`, true);
     if (result.tierChanged) {
       writeAuditLog(uid, 'membership_changed', `New tier: ${result.wallet.membership}`, true);
     }
-    endTimer('processEggScan', 3000);
+    endTimer('awardWalletConsumption', 3000);
 
     return result;
   } catch (err: unknown) {
     const e = err as { code?: string; message?: string };
-    console.error('[processEggScan] transaction error:', { uid, qrCode, code: e?.code, message: e?.message });
-    writeAuditLog(uid, 'qr_scan', `QR scan error — ${e?.message ?? 'unknown'}`, false);
-    endTimer('processEggScan', 3000);
-    return { ok: false, reason: 'error', message: e?.message ?? 'Something went wrong. Please try again.' };
+    console.error('[awardWalletConsumption] transaction error:', { uid, qrCode, code: e?.code, message: e?.message });
+    writeAuditLog(uid, 'qr_scan', `Wallet consumption error — ${e?.message ?? 'unknown'}`, false);
+    endTimer('awardWalletConsumption', 3000);
+    throw err;
   }
 }
 
@@ -466,6 +459,27 @@ export async function logManualEntry(
   const challengeUpdates = [updateChallengeProgress(uid, 'protein_logged', totalPro)];
   if (goalJustMet) challengeUpdates.push(updateChallengeProgress(uid, 'goal_met', 1));
   await Promise.all([...challengeUpdates, updateSummaryOnManualEntry(uid, totalPro)]);
+  return { ...entry, id: docRef.id };
+}
+
+/**
+ * Food-Log-only write for a wallet egg consumed after the day's first
+ * consumption already claimed the streak/points/challenge award (see
+ * proteinWalletService.consumeNextWalletEgg). Intentionally does NOT touch
+ * daily_stats, challenges, streak, or userSummary protein totals — only the
+ * first consumption of the day is allowed to affect those, per the wallet's
+ * one-award-per-day rule. This keeps the user's Food Log an honest record
+ * of everything they ate, even eggs that didn't count toward today's goal.
+ */
+export async function logManualEntryFromWallet(uid: string, qrCode: string, protein: number, calories: number): Promise<ProteinLogEntry> {
+  const dateKey = todayKey();
+  const entry: Omit<ProteinLogEntry, 'id'> = {
+    uid, type: 'qr_scan', foodName: 'SKM Egg', protein, calories,
+    quantity: 1, meal: getMealByTime(), dateKey,
+    loggedAt: serverTimestamp() as Timestamp, qrCode, category: 'Eggs',
+  };
+  const colRef = collection(db, 'protein_logs', uid, 'entries');
+  const docRef = await addDoc(colRef, entry);
   return { ...entry, id: docRef.id };
 }
 
@@ -711,6 +725,19 @@ export async function getLifetimeEggScanCount(uid: string): Promise<number> {
   const snap = await getDoc(doc(db, 'users', uid));
   if (!snap.exists()) return 0;
   return snap.data().lifetimeConsumption ?? 0;
+}
+
+/**
+ * Lifetime count of wallet eggs that counted toward a day's first
+ * consumption (see proteinWalletService.consumeNextWalletEgg /
+ * awardWalletConsumption) — distinct from getLifetimeEggScanCount, which
+ * counts scans. Used by the 'proteinConsumed' campaign objective so
+ * campaigns can require consumption, not just storage.
+ */
+export async function getLifetimeWalletConsumed(uid: string): Promise<number> {
+  const snap = await getDoc(doc(db, 'users', uid));
+  if (!snap.exists()) return 0;
+  return snap.data().lifetimeWalletConsumed ?? 0;
 }
 
 // ─────────────────────────────────────────────────────────────

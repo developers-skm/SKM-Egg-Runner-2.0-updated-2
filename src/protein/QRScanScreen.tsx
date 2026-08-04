@@ -14,47 +14,36 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { Html5Qrcode, Html5QrcodeScannerState } from 'html5-qrcode';
 import type { User } from 'firebase/auth';
 import {
-  processEggScan,
   getRecentEntries, getTodayStats, getTrackerSettings,
   PROTEIN_PER_EGG,
   type ProteinLogEntry, type DailyStats, type TrackerSettings,
 } from '../services/protein/proteinTrackerService';
+import { storeEggInWallet, getWalletSummary, WALLET_CAPACITY, type WalletEggItem } from '../services/protein/proteinWalletService';
 import { CameraIcon, EggIcon, CheckCircleIcon, AlertIcon } from './Icons';
 import { playChickSuccess, resumeAudioContext } from '../services/audio/chickSound';
 import { HapticService } from '../services/audio/hapticService';
-import {
-  notifyProteinAdded, notifyProteinGoalComplete,
-  notifyDuplicateEgg, notifyStreakMilestone, notifyProteinMilestone,
-  notifyRewardPointsEarned, notifyMembershipTierUp,
-} from '../services/notifications/notificationService';
-import { recordStreakDay } from '../services/protein/eggStreakService';
-import { type RewardWallet } from '../services/protein/rewardWalletService';
+import { notifyDuplicateEgg, notifyWalletEggStored, notifyWalletFull } from '../services/notifications/notificationService';
 import { logBackgroundFailure } from '../utils/errorHandling';
 import { validateEggForProtein } from '../services/qr/qrService';
-import ScanCelebrationOverlay from './ScanCelebrationOverlay';
+import WalletFullModal from './WalletFullModal';
 
-type Phase = 'idle' | 'opening' | 'scanning' | 'processing' | 'success' | 'duplicate' | 'consumed_other' | 'error';
+type Phase = 'idle' | 'opening' | 'scanning' | 'processing' | 'success' | 'duplicate' | 'consumed_other' | 'wallet_full' | 'error';
 
 interface QRScanScreenProps {
   user: User;
   onScanSuccess: () => void;
+  onOpenWallet?: () => void;
 }
 
 interface ScanResult {
   protein: number;
-  streak: number;
-  streakIsNew: boolean;
-  isMilestone: boolean;
-  todayEggs: number;
-  todayProtein: number;
-  goal: number;
-  pointsEarned: number;
-  wallet: RewardWallet | null;
+  eggsStored: number;
+  capacity: number;
 }
 
 const QR_ELEMENT_ID = 'protein-qr-reader';
 
-export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps) {
+export default function QRScanScreen({ user, onScanSuccess, onOpenWallet }: QRScanScreenProps) {
   const [phase,          setPhase]          = useState<Phase>('idle');
   const [errorMessage,   setErrorMessage]   = useState('');
   const [result,         setResult]         = useState<ScanResult | null>(null);
@@ -63,6 +52,7 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
   const [todayStats,     setTodayStats]     = useState<DailyStats | null>(null);
   const [settings,       setSettings]       = useState<TrackerSettings | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const [fullModal,      setFullModal]      = useState<{ qrCode: string; oldestItem: WalletEggItem } | null>(null);
 
   const scannerRef    = useRef<Html5Qrcode | null>(null);
   const processingRef = useRef(false);
@@ -242,94 +232,52 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
 
       console.log('[QR VALIDATED] accepted:', validation.eggCode);
 
-      // ── Atomic scan pipeline ─────────────────────────────────────────────
-      // One Firestore transaction: QR ownership claim, protein log entry,
-      // daily stats, streak, reward points/membership, summary, and challenge
-      // progress all commit together or not at all. The QR is only ever
-      // marked consumed if every dependent update succeeds.
-      const scanResult = await processEggScan(user.uid, validation.eggCode);
+      // ── Store-only pipeline ───────────────────────────────────────────────
+      // Scanning no longer awards protein/streak/points directly — it only
+      // stores the egg in the Protein Wallet. Those awards now happen when
+      // the user explicitly consumes a stored egg (see WalletScreen).
+      const storeResult = await storeEggInWallet(user.uid, validation.eggCode);
 
-      if (!scanResult.ok) {
-        if (scanResult.reason === 'error') {
-          // A genuine failure (network/permission/etc), not a duplicate.
-          // Surface it honestly instead of masking it as "consumed".
-          console.error('[SCAN] processEggScan error:', scanResult.message);
-          if (mountedRef.current) { setErrorMessage(scanResult.message); setPhase('error'); }
+      if (!storeResult.ok) {
+        if (storeResult.reason === 'error') {
+          console.error('[SCAN] storeEggInWallet error:', storeResult.message);
+          if (mountedRef.current) { setErrorMessage(storeResult.message); setPhase('error'); }
           return;
         }
-        if (scanResult.reason === 'consumed_by_self') {
-          console.warn('[PROTEIN CLAIM] Already claimed by this user:', validation.eggCode);
+        if (storeResult.reason === 'consumed_by_self') {
+          console.warn('[WALLET STORE] Already claimed by this user:', validation.eggCode);
           if (mountedRef.current) setPhase('duplicate');
           notifyDuplicateEgg(user.uid).catch(err => logBackgroundFailure('handleScan:notifyDuplicateEgg', err));
           return;
         }
-        console.warn('[PROTEIN CLAIM] Already claimed by another user:', validation.eggCode);
+        if (storeResult.reason === 'wallet_full') {
+          console.warn('[WALLET STORE] Wallet full — QR left unclaimed:', validation.eggCode);
+          if (mountedRef.current) {
+            setFullModal({ qrCode: validation.eggCode, oldestItem: storeResult.oldestItem });
+            setPhase('wallet_full');
+          }
+          notifyWalletFull(user.uid).catch(err => logBackgroundFailure('handleScan:notifyWalletFull', err));
+          return;
+        }
+        console.warn('[WALLET STORE] Already claimed by another user:', validation.eggCode);
         if (mountedRef.current) setPhase('consumed_other');
         return;
       }
 
-      console.log('[FIREBASE UPDATED] protein_logs + daily_stats + streak + rewardWallet written atomically');
-      const { streak: streakInfo, prevStreak, goalJustMet, pointsEarned, wallet, tierChanged } = scanResult;
-
-      // Record this day in streak history subcollection for calendar view — cosmetic, best-effort
-      recordStreakDay(user.uid).catch(err => logBackgroundFailure('handleScan:recordStreakDay', err));
-
-      const [ts, stg] = await Promise.all([
-        getTodayStats(user.uid),
-        getTrackerSettings(user.uid),
-      ]);
+      console.log('[FIREBASE UPDATED] proteinWallet item stored, qrCodes marked consumed');
+      const item: WalletEggItem = storeResult.item;
+      const summary = await getWalletSummary(user.uid);
 
       // Play chick chirp — only on genuine success, never on error/duplicate
       playChickSuccess();
 
       if (!mountedRef.current) return;
 
-      const todayProtein   = ts?.totalProtein ?? 0;
-      const todayGoal      = stg.dailyGoal;
-      const streakIsNew    = streakInfo.currentStreak > (prevStreak ?? 0);
-      const isMilestone    = [3, 7, 14, 30, 60, 100].includes(streakInfo.currentStreak);
-      const streak         = streakInfo.currentStreak;
-      const goalJustHit    = goalJustMet;
-      const streakMilestoneHit = [3, 7, 14, 30, 60, 100].includes(streak);
-      const lifetimeMs     = [100, 500, 1000, 5000];
-      const proteinMilestoneHit = lifetimeMs.some(m => todayProtein >= m && todayProtein - PROTEIN_PER_EGG < m);
-
-      setResult({
-        protein:      PROTEIN_PER_EGG,
-        streak:       streakInfo.currentStreak,
-        streakIsNew,
-        isMilestone,
-        todayEggs:    ts?.totalEggs ?? 0,
-        todayProtein,
-        goal:         todayGoal,
-        pointsEarned,
-        wallet,
-      });
+      setResult({ protein: item.protein, eggsStored: summary.walletEggsStored, capacity: WALLET_CAPACITY });
       setPhase('success');
+      HapticService.light();
 
-      // navigator.vibrate() plays one pattern at a time — a later call replaces
-      // whatever's still running, so firing several patterns back-to-back here
-      // (base scan, streak, goal, milestone) would just cancel each other and
-      // only the last one would ever be felt. Fire exactly one, picking the
-      // most significant event for this scan, right as the UI reaches 'success'
-      // (the latest point in this handler, minimizing Android Chrome's chance
-      // of the sticky user-activation window having expired).
-      if (streakMilestoneHit || proteinMilestoneHit || goalJustHit) HapticService.success();
-      else if (streakIsNew) HapticService.medium();
-      else HapticService.light();
-
-      // Write Firestore notification docs — Cloud Function / FCM sends
-      // real Android push notification to the device. No in-app popup shown.
-      notifyProteinAdded(user.uid, PROTEIN_PER_EGG, todayProtein).catch(err => logBackgroundFailure('handleScan:notifyProteinAdded', err));
-      if (goalJustHit) notifyProteinGoalComplete(user.uid, todayGoal).catch(err => logBackgroundFailure('handleScan:notifyProteinGoalComplete', err));
-      if (streakMilestoneHit) notifyStreakMilestone(user.uid, streak).catch(err => logBackgroundFailure('handleScan:notifyStreakMilestone', err));
-      if (proteinMilestoneHit) notifyProteinMilestone(user.uid, todayProtein).catch(err => logBackgroundFailure('handleScan:notifyProteinMilestone', err));
-      notifyRewardPointsEarned(user.uid, pointsEarned, wallet.currentPoints).catch(err => logBackgroundFailure('handleScan:notifyRewardPointsEarned', err));
-      if (tierChanged) {
-        notifyMembershipTierUp(user.uid, wallet.membership).catch(err => logBackgroundFailure('handleScan:notifyMembershipTierUp', err));
-        // See rewardWalletService.awardScanPoints for the same activation-window caveat on this haptic pulse.
-        HapticService.heavy();
-      }
+      notifyWalletEggStored(user.uid, summary.walletEggsStored, WALLET_CAPACITY).catch(err => logBackgroundFailure('handleScan:notifyWalletEggStored', err));
 
     } catch (err: unknown) {
       const msg = (err as { message?: string }).message ?? String(err);
@@ -388,13 +336,13 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
             <div style={{ flex: 1 }}>
               <h2 style={{ fontSize: 16, fontWeight: 900, color: '#fff', margin: 0 }}>Scan SKM Egg</h2>
               <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.65)', margin: 0, marginTop: 1 }}>
-                +{PROTEIN_PER_EGG}g protein per egg scan
+                Store now, consume whenever you're ready
               </p>
             </div>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
             <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.75)', fontWeight: 700 }}>
-              Today: {eggs} egg{eggs !== 1 ? 's' : ''} scanned
+              Today: {eggs} egg{eggs !== 1 ? 's' : ''} consumed
             </span>
             <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.75)', fontWeight: 700 }}>
               {consumed}g / {goal}g
@@ -415,8 +363,8 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
         </div>
       )}
 
-      {/* ── IDLE ── */}
-      {phase === 'idle' && (
+      {/* ── IDLE (also the backdrop behind the wallet_full modal) ── */}
+      {(phase === 'idle' || phase === 'wallet_full') && (
         <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 90 }}>
           <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
 
@@ -426,12 +374,12 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
               </div>
               <h3 style={{ fontSize: 18, fontWeight: 900, color: '#1A1A1A', margin: '0 0 6px' }}>Ready to Scan</h3>
               <p style={{ fontSize: 12, color: '#666', margin: '0 0 18px', lineHeight: 1.6 }}>
-                Point your camera at the QR code on any SKM Egg package to log your protein and earn rewards.
+                Point your camera at the QR code on any SKM Egg package to store it in your Protein Wallet.
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 18 }}>
                 {[
-                  { label: '+1 Egg logged',                 bg: '#FCE8E8', color: '#D71920' },
-                  { label: `+${PROTEIN_PER_EGG}g protein`,  bg: '#F0FDF4', color: '#16A34A' },
+                  { label: '+1 Egg stored',                 bg: '#FCE8E8', color: '#D71920' },
+                  { label: `${PROTEIN_PER_EGG}g when consumed`,  bg: '#F0FDF4', color: '#16A34A' },
                 ].map(b => (
                   <div key={b.label} style={{ background: b.bg, borderRadius: 12, padding: '10px 8px' }}>
                     <span style={{ fontSize: 12, fontWeight: 800, color: b.color }}>{b.label}</span>
@@ -523,7 +471,7 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
                 'Purchase any SKM Egg product',
                 'Find the QR code on the packaging',
                 'Tap "Open Camera" and scan the code',
-                'Protein is logged instantly to your daily goal',
+                'Egg is stored in your Protein Wallet — consume it anytime',
               ].map((step, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: i < 3 ? 10 : 0 }}>
                   <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#D71920', color: '#fff', fontSize: 11, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{i + 1}</div>
@@ -640,8 +588,8 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
           <div style={{ width: 56, height: 56, borderRadius: '50%', border: '4px solid #FCE8E8', borderTopColor: '#D71920', animation: 'spin 0.8s linear infinite' }} />
           <div style={{ textAlign: 'center' }}>
-            <p style={{ fontSize: 16, fontWeight: 800, color: '#1A1A1A', margin: '0 0 4px' }}>Logging Egg…</p>
-            <p style={{ fontSize: 12, color: '#bbb', margin: 0 }}>Saving +{PROTEIN_PER_EGG}g protein…</p>
+            <p style={{ fontSize: 16, fontWeight: 800, color: '#1A1A1A', margin: '0 0 4px' }}>Storing Egg…</p>
+            <p style={{ fontSize: 12, color: '#bbb', margin: 0 }}>Adding to your Protein Wallet…</p>
           </div>
         </div>
       )}
@@ -660,73 +608,14 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
               }}>
                 <CheckCircleIcon size={38} color="#fff" />
               </div>
-              <h3 style={{ fontSize: 21, fontWeight: 900, color: '#1A1A1A', margin: '0 0 4px' }}>+{result.protein}g Protein Added!</h3>
-              <p style={{ fontSize: 12, color: '#666', margin: '0 0 12px' }}>
-                Egg recorded successfully.
+              <h3 style={{ fontSize: 21, fontWeight: 900, color: '#1A1A1A', margin: '0 0 4px' }}>Egg Stored in Wallet!</h3>
+              <p style={{ fontSize: 12, color: '#666', margin: '0 0 16px' }}>
+                Consume it whenever you're ready to log protein.
               </p>
 
-              {/* Streak celebration banner */}
-              {result.streakIsNew && (
-                <div style={{
-                  background: result.isMilestone
-                    ? 'linear-gradient(135deg,#D71920,#B31217)'
-                    : 'linear-gradient(135deg,#F59E0B,#D97706)',
-                  borderRadius: 16,
-                  padding: '12px 16px',
-                  marginBottom: 12,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  animation: 'popIn 0.5s cubic-bezier(0.34,1.56,0.64,1)',
-                }}>
-                  <span style={{ fontSize: 28 }}>
-                    {result.isMilestone
-                      ? (result.streak >= 30 ? '👑' : result.streak >= 14 ? '🔥🔥' : result.streak >= 7 ? '🔥' : '🐣')
-                      : '🔥'}
-                  </span>
-                  <div style={{ textAlign: 'left' }}>
-                    <p style={{ fontSize: 13, fontWeight: 900, color: '#fff', margin: 0 }}>
-                      {result.isMilestone ? `${result.streak}-Day Milestone!` : `${result.streak}-Day Streak!`}
-                    </p>
-                    <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.8)', margin: '2px 0 0' }}>
-                      {result.isMilestone
-                        ? 'You hit a major milestone! Amazing!'
-                        : 'Keep going — streak extended!'}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 14 }}>
-                <RBox label="Protein Added" value={`+${result.protein}g`} color="#D71920" bg="#FCE8E8" />
-                <RBox label="Day Streak"    value={`${result.streak}d`}   color="#22C55E" bg="#F0FDF4" />
-              </div>
-              <div style={{ background: '#F8F8F8', borderRadius: 14, padding: '12px 14px', marginBottom: 14, textAlign: 'left' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 800, color: '#1A1A1A' }}>Today's Progress</span>
-                  <span style={{ fontSize: 12, fontWeight: 900, color: '#D71920' }}>{result.todayProtein}g / {result.goal}g</span>
-                </div>
-                <div style={{ height: 8, background: '#E8E8E8', borderRadius: 4, overflow: 'hidden', marginBottom: 5 }}>
-                  <div style={{
-                    height: '100%',
-                    width: `${Math.min(100, Math.round((result.todayProtein / result.goal) * 100))}%`,
-                    background: result.todayProtein >= result.goal ? '#22C55E' : 'linear-gradient(90deg,#D71920,#B31217)',
-                    borderRadius: 4, transition: 'width 800ms ease',
-                  }} />
-                </div>
-                {result.todayProtein >= result.goal ? (
-                  <p style={{ fontSize: 11, color: '#16A34A', margin: 0, fontWeight: 700 }}>Daily goal reached! Great work.</p>
-                ) : (
-                  <p style={{ fontSize: 11, color: '#666', margin: 0 }}>
-                    {Math.max(0, Math.ceil((result.goal - result.todayProtein) / PROTEIN_PER_EGG))} more egg{Math.ceil((result.goal - result.todayProtein) / PROTEIN_PER_EGG) !== 1 ? 's' : ''} to reach today's goal
-                  </p>
-                )}
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 18 }}>
-                <EggIcon size={15} color="#D71920" />
-                <span style={{ fontSize: 13, fontWeight: 800, color: '#1A1A1A' }}>
-                  {result.todayEggs} egg{result.todayEggs !== 1 ? 's' : ''} scanned today
-                </span>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 18 }}>
+                <RBox label="Protein Value" value={`+${result.protein}g`} color="#D71920" bg="#FCE8E8" />
+                <RBox label="Eggs Stored"   value={`${result.eggsStored}/${result.capacity}`} color="#22C55E" bg="#F0FDF4" />
               </div>
               <div style={{ display: 'flex', gap: 10 }}>
                 <button onClick={scanAnother} style={{
@@ -734,14 +623,39 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
                   background: 'linear-gradient(135deg,#D71920,#B31217)', color: '#fff', fontWeight: 900, fontSize: 13,
                   boxShadow: '0 4px 16px rgba(215,25,32,0.4)',
                 }}>Scan Another</button>
-                <button onClick={onScanSuccess} style={{
-                  flex: 1, padding: '13px 0', borderRadius: 15, border: '1.5px solid #E8E8E8', cursor: 'pointer',
-                  background: '#F5F5F5', color: '#666', fontWeight: 700, fontSize: 13,
-                }}>Done</button>
+                {onOpenWallet ? (
+                  <button onClick={onOpenWallet} style={{
+                    flex: 1, padding: '13px 0', borderRadius: 15, border: '1.5px solid #E8E8E8', cursor: 'pointer',
+                    background: '#F5F5F5', color: '#666', fontWeight: 700, fontSize: 13,
+                  }}>Open Wallet</button>
+                ) : (
+                  <button onClick={onScanSuccess} style={{
+                    flex: 1, padding: '13px 0', borderRadius: 15, border: '1.5px solid #E8E8E8', cursor: 'pointer',
+                    background: '#F5F5F5', color: '#666', fontWeight: 700, fontSize: 13,
+                  }}>Done</button>
+                )}
               </div>
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── WALLET FULL — 5/5 stored, QR untouched, user can scan again later ──
+          Falls back to the idle screen underneath (reset() already ran via
+          stopScanner in handleScan), with the choice modal on top. */}
+      {phase === 'wallet_full' && fullModal && (
+        <WalletFullModal
+          uid={user.uid}
+          qrCode={fullModal.qrCode}
+          oldestItem={fullModal.oldestItem}
+          onConsume={() => { setFullModal(null); (onOpenWallet ?? onScanSuccess)(); }}
+          onReplaced={() => {
+            setFullModal(null);
+            setResult({ protein: PROTEIN_PER_EGG, eggsStored: WALLET_CAPACITY, capacity: WALLET_CAPACITY });
+            setPhase('success');
+          }}
+          onCancel={() => { setFullModal(null); reset(); }}
+        />
       )}
 
       {/* ── DUPLICATE — same user scanned again ── */}
@@ -851,22 +765,6 @@ export default function QRScanScreen({ user, onScanSuccess }: QRScanScreenProps)
             </div>
           </div>
         </div>
-      )}
-
-      {/* ── CELEBRATION OVERLAY — shown only on genuine success ── */}
-      {phase === 'success' && result && (
-        <ScanCelebrationOverlay
-          streak={result.streak}
-          protein={result.protein}
-          todayEggs={result.todayEggs}
-          goal={result.goal}
-          todayProtein={result.todayProtein}
-          isMilestone={result.isMilestone}
-          pointsEarned={result.pointsEarned}
-          wallet={result.wallet}
-          playVictory={true}
-          onDismiss={onScanSuccess}
-        />
       )}
 
       <style>{`

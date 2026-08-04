@@ -14,6 +14,7 @@ import {
 } from './Icons';
 import { useNavigation, type NavTarget } from '../context/NavigationContext';
 import HighlightCard from './HighlightCard';
+import { getWalletSummary, getWalletHealthScore, WALLET_CAPACITY, type WalletSummary } from '../services/protein/proteinWalletService';
 
 interface DashboardScreenProps {
   user: User;
@@ -21,12 +22,13 @@ interface DashboardScreenProps {
   onViewAnalytics: () => void;
   onViewLog: () => void;
   onViewStreaks: () => void;
+  onOpenWallet: () => void;
   refreshKey: number;
   /** Set by ProteinTrackerScreen when a tapped notification targets this screen. */
   navTarget?: NavTarget | null;
 }
 
-export default function DashboardScreen({ user, onScanQR, onViewAnalytics, onViewLog, onViewStreaks, refreshKey, navTarget }: DashboardScreenProps) {
+export default function DashboardScreen({ user, onScanQR, onViewAnalytics, onViewLog, onViewStreaks, onOpenWallet, refreshKey, navTarget }: DashboardScreenProps) {
   const { consumeTarget } = useNavigation();
   const highlightToday = navTarget?.entityId === 'today-protein-card';
   const highlightGoal  = navTarget?.entityId === 'today-goal-card';
@@ -40,21 +42,24 @@ export default function DashboardScreen({ user, onScanQR, onViewAnalytics, onVie
   const [settings,   setSettings]   = useState<TrackerSettings | null>(null);
   const [recent,     setRecent]     = useState<ProteinLogEntry[]>([]);
   const [personalGoal, setPersonalGoal] = useState<number | null>(null);
+  const [walletSummary, setWalletSummary] = useState<WalletSummary | null>(null);
   const [loading,    setLoading]    = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ts, si, wd, stg, rc, hp] = await Promise.all([
+      const [ts, si, wd, stg, rc, hp, ws] = await Promise.all([
         getTodayStats(user.uid),
         getStreakInfo(user.uid),
         getWeeklyData(user.uid),
         getTrackerSettings(user.uid),
         getRecentEntries(user.uid, 5),
         getHealthProfile(user.uid),
+        getWalletSummary(user.uid),
       ]);
       setTodayStats(ts); setStreak(si); setWeekData(wd); setSettings(stg); setRecent(rc);
       setPersonalGoal(hp ? effectiveDailyGoal(hp) : null);
+      setWalletSummary(ws);
     } catch (e) { console.error('[Dashboard]', e); }
     finally { setLoading(false); }
   }, [user.uid]);
@@ -71,6 +76,10 @@ export default function DashboardScreen({ user, onScanQR, onViewAnalytics, onVie
   const R         = 52;
   const circumf   = 2 * Math.PI * R;
   const dashOffset = circumf - (circumf * pct) / 100;
+  const walletHealth = getWalletHealthScore(walletSummary?.walletEggsStored ?? 0);
+  const nextExpiryDays = walletSummary?.walletNextExpiryAt
+    ? Math.max(0, Math.ceil((walletSummary.walletNextExpiryAt.toMillis() - Date.now()) / 86400000))
+    : null;
   const maxBar    = Math.max(...weekData.map(d => d.totalProtein), goal, 1);
 
   if (loading) return <SkeletonLoader />;
@@ -199,6 +208,31 @@ export default function DashboardScreen({ user, onScanQR, onViewAnalytics, onVie
           </div>
         </button>
 
+        {/* ── Protein Wallet Card ── */}
+        <button onClick={onOpenWallet} style={{
+          width: '100%', marginTop: 12, textAlign: 'left', border: 'none', cursor: 'pointer',
+          background: '#fff', borderRadius: 20, padding: '14px 16px',
+          boxShadow: '0 2px 10px rgba(0,0,0,0.06)',
+          display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <div style={{ width: 40, height: 40, borderRadius: 12, background: '#FCE8E8', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <EggIcon size={19} color="#D71920" />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <p style={{ fontSize: 12, fontWeight: 900, color: '#1A1A1A', margin: 0 }}>Protein Wallet</p>
+              <span style={{ fontSize: 9, color: '#D71920' }}>
+                {'★'.repeat(walletHealth.stars)}{'☆'.repeat(5 - walletHealth.stars)}
+              </span>
+            </div>
+            <p style={{ fontSize: 10, color: '#bbb', margin: '2px 0 0' }}>
+              {walletSummary?.walletEggsStored ?? 0}/{WALLET_CAPACITY} Eggs · {walletSummary?.walletProteinAvailable ?? 0}g Available
+              {nextExpiryDays !== null ? ` · Expires in ${nextExpiryDays}d` : ''}
+            </p>
+          </div>
+          <ChevronRightIcon size={16} color="#D71920" />
+        </button>
+
         {/* ── Quick Actions ── */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 12 }}>
           <QuickAction icon={<CameraIcon size={20} color="#fff" />}       label="Scan QR"    sub="Scan SKM Egg"   primary onClick={onScanQR} />
@@ -236,6 +270,39 @@ export default function DashboardScreen({ user, onScanQR, onViewAnalytics, onVie
             })}
           </div>
         </div>
+
+        {/* ── Wallet Balance Mini Graph ── */}
+        {walletSummary && walletSummary.walletWeekBalanceSamples.length > 0 && (
+          <div style={{ background: '#fff', borderRadius: 20, padding: 16, marginTop: 12, boxShadow: '0 2px 10px rgba(0,0,0,0.06)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <p style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A', margin: 0 }}>Last 7 Days — Wallet Balance</p>
+              <button onClick={onOpenWallet} style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', color: '#D71920', fontWeight: 700, fontSize: 11 }}>
+                Details <ChevronRightIcon size={13} color="#D71920" />
+              </button>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 56 }}>
+              {walletSummary.walletWeekBalanceSamples.map(s => {
+                const maxBalance = Math.max(...walletSummary.walletWeekBalanceSamples.map(x => x.balance), WALLET_CAPACITY, 1);
+                const barH = Math.max(4, Math.round((s.balance / maxBalance) * 48));
+                const isToday = s.date === todayKey();
+                const dayLabel = new Date(s.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' });
+                return (
+                  <div key={s.date} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                    <div style={{ width: '100%', height: 48, display: 'flex', alignItems: 'flex-end' }}>
+                      <div style={{
+                        width: '100%', height: barH, borderRadius: '4px 4px 0 0',
+                        background: s.balance > 0 ? 'linear-gradient(180deg,#D71920,#B31217)' : '#F0F0F0',
+                        outline: isToday ? '2px solid #D71920' : 'none', outlineOffset: 1,
+                        transition: 'height 400ms ease',
+                      }} />
+                    </div>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: isToday ? '#D71920' : '#ccc' }}>{dayLabel} {s.balance}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* ── Recent Activity ── */}
         {recent.length > 0 && (

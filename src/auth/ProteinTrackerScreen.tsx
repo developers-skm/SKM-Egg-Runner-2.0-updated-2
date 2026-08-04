@@ -9,10 +9,11 @@ import AnalyticsScreen   from '../protein/AnalyticsScreen';
 import ProfileScreen     from '../protein/ProfileScreen';
 import EggStreakScreen   from '../protein/EggStreakScreen';
 import RewardsClubScreen from '../protein/RewardsClubScreen';
+import WalletScreen      from '../protein/WalletScreen';
 import { HomeIcon, CameraIcon, FoodLogIcon, AnalyticsIcon, GiftIcon } from '../protein/Icons';
 import NotificationBell from '../components/notifications/NotificationBell';
 
-type Tab = 'dashboard' | 'scan' | 'log' | 'stats' | 'profile' | 'streaks' | 'rewards';
+type Tab = 'dashboard' | 'scan' | 'log' | 'stats' | 'profile' | 'streaks' | 'rewards' | 'wallet';
 
 interface ProteinTrackerScreenProps {
   onBack: () => void;
@@ -168,10 +169,12 @@ export default function ProteinTrackerScreen({ onBack, onPlayGame }: ProteinTrac
             onViewAnalytics={() => setTab('stats')}
             onViewLog={() => setTab('log')}
             onViewStreaks={() => setTab('streaks')}
+            onOpenWallet={() => setTab('wallet')}
             navTarget={pendingTarget?.tab === 'dashboard' ? pendingTarget : null}
           />
         )}
-        {tab === 'scan'    && <QRScanScreen      user={typedUser} onScanSuccess={handleScanSuccess} />}
+        {tab === 'scan'    && <QRScanScreen      user={typedUser} onScanSuccess={handleScanSuccess} onOpenWallet={() => setTab('wallet')} />}
+        {tab === 'wallet'  && <WalletScreen      user={typedUser} refreshKey={refreshKey} onScanQR={() => setTab('scan')} />}
         {tab === 'log'     && <ConsumptionScreen  user={typedUser} refreshKey={refreshKey} onScanQR={() => setTab('scan')} />}
         {tab === 'stats'   && (
           <AnalyticsScreen
@@ -203,6 +206,7 @@ export default function ProteinTrackerScreen({ onBack, onPlayGame }: ProteinTrac
             onLogout={handleLogout}
             onDataDeleted={() => {}}
             onBackToMenu={onBack}
+            onOpenWallet={() => setTab('wallet')}
             navTarget={pendingTarget?.tab === 'profile' ? pendingTarget : null}
           />
         )}

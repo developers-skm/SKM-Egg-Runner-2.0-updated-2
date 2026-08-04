@@ -6,6 +6,7 @@ import {
   type WeeklyData, type TrackerSettings, type StreakInfo,
 } from '../services/protein/proteinTrackerService';
 import { getUserSummary, syncSummaryFromDailyStats, type UserSummary } from '../services/protein/userSummaryService';
+import { getWalletSummary, getWalletWeeklyStats, type WalletSummary } from '../services/protein/proteinWalletService';
 import { AnalyticsIcon, TrendUpIcon, TargetIcon, FlameIcon, ZapIcon } from './Icons';
 import { startTimer, endTimer } from '../utils/perfTimer';
 import { useNavigation, type NavTarget } from '../context/NavigationContext';
@@ -47,6 +48,7 @@ export default function AnalyticsScreen({ user, refreshKey, navTarget }: Analyti
   const [streak,   setStreak]   = useState<StreakInfo>({ currentStreak: 0, bestStreak: 0, lastActiveDate: '' });
   const [data,     setData]     = useState<WeeklyData[]>([]);
   const [chartsReady, setChartsReady] = useState(false);
+  const [walletSummary, setWalletSummary] = useState<WalletSummary | null>(null);
 
   // Phase 1 — load summary doc (single read, Firestore-cached)
   const loadSummary = useCallback(async () => {
@@ -68,6 +70,8 @@ export default function AnalyticsScreen({ user, refreshKey, navTarget }: Analyti
       setSummary(sumResult);
       setSettings(stg);
       setStreak(si);
+
+      getWalletSummary(user.uid).then(setWalletSummary).catch(err => console.error('[Analytics:wallet]', err));
     } catch (e) { console.error('[Analytics:summary]', e); }
     endTimer('[Stats] total-phase1');
     console.log('[Stats] >>> Phase 1 complete — stat cards should now be visible');
@@ -148,6 +152,8 @@ export default function AnalyticsScreen({ user, refreshKey, navTarget }: Analyti
   const goalsMet30  = summary?.goalsMetThisMonth ?? 0;
   const maxBar      = useMemo(() => Math.max(...data.map(d => d.totalProtein), goal, 1), [data, goal]);
   const bestDay     = useMemo(() => data.reduce((b, d) => d.totalProtein > b.totalProtein ? d : b, data[0] ?? { totalProtein: 0, dayLabel: '—' }), [data]);
+
+  const walletStats = useMemo(() => walletSummary ? getWalletWeeklyStats(walletSummary) : null, [walletSummary]);
 
   // Insights — generated from summary (no extra reads)
   const insights: string[] = [];
@@ -373,6 +379,24 @@ export default function AnalyticsScreen({ user, refreshKey, navTarget }: Analyti
           </div>
         )}
 
+        {/* Weekly Wallet Analytics — from userSummary's wallet fields, no extra collection reads */}
+        {walletStats && (
+          <div style={{ background: '#fff', borderRadius: 20, padding: 18, margin: '12px 16px 0', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
+            <p style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A', margin: '0 0 14px' }}>This Week — Protein Wallet</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+              <WalletStatTile label="Stored" value={walletStats.stored} trend={walletStats.storedTrend} />
+              <WalletStatTile label="Consumed" value={walletStats.consumed} trend={walletStats.consumedTrend} />
+              <WalletStatTile label="Expired" value={walletStats.expired} trend={walletStats.expiredTrend} invertTrend />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <WalletStatRow label="Average Wallet Balance" value={`${walletStats.avgBalance} eggs`} />
+              <WalletStatRow label="Highest Wallet Balance" value={`${walletStats.highestBalance} eggs`} />
+              <WalletStatRow label="Lowest Wallet Balance" value={`${walletStats.lowestBalance} eggs`} />
+              <WalletStatRow label="Weekly Consumption Rate" value={`${walletStats.consumptionRate}%`} />
+            </div>
+          </div>
+        )}
+
         {/* Summary — from summary doc + chart data */}
         <HighlightCard active={highlightSummary} glowColor="#EAB308" style={{ background: '#fff', padding: 18, margin: '12px 16px 0', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
           <p style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A', margin: '0 0 12px' }}>Summary</p>
@@ -397,6 +421,33 @@ export default function AnalyticsScreen({ user, refreshKey, navTarget }: Analyti
         </HighlightCard>
 
       </div>
+    </div>
+  );
+}
+
+function trendArrow(trend: 'up' | 'down' | 'flat', invert = false): { symbol: string; color: string } {
+  const effective = invert ? (trend === 'up' ? 'down' : trend === 'down' ? 'up' : 'flat') : trend;
+  if (effective === 'up') return { symbol: '▲', color: '#16A34A' };
+  if (effective === 'down') return { symbol: '▼', color: '#DC2626' };
+  return { symbol: '—', color: '#999' };
+}
+
+function WalletStatTile({ label, value, trend, invertTrend }: { label: string; value: number; trend: 'up' | 'down' | 'flat'; invertTrend?: boolean }) {
+  const arrow = trendArrow(trend, invertTrend);
+  return (
+    <div style={{ background: '#F8F8F8', borderRadius: 14, padding: '10px 8px', textAlign: 'center' }}>
+      <p style={{ fontSize: 18, fontWeight: 900, color: '#1A1A1A', margin: 0, lineHeight: 1 }}>{value}</p>
+      <p style={{ fontSize: 9, fontWeight: 700, color: '#bbb', textTransform: 'uppercase', letterSpacing: 0.3, margin: '4px 0 2px' }}>{label}</p>
+      <span style={{ fontSize: 10, fontWeight: 800, color: arrow.color }}>{arrow.symbol}</span>
+    </div>
+  );
+}
+
+function WalletStatRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+      <span style={{ fontSize: 11.5, color: '#666' }}>{label}</span>
+      <span style={{ fontSize: 11.5, fontWeight: 800, color: '#1A1A1A' }}>{value}</span>
     </div>
   );
 }

@@ -32,7 +32,7 @@ import type { GameStage } from '../game/gameStatsService';
 const CAMPAIGNS_COL = 'rewardCampaigns';
 const HISTORY_COL   = 'campaignHistory';
 
-export type CampaignObjectiveKind = 'eggScans' | 'points' | 'stage' | 'proteinStreak' | 'foodLogs';
+export type CampaignObjectiveKind = 'eggScans' | 'points' | 'stage' | 'proteinStreak' | 'foodLogs' | 'proteinConsumed';
 
 export interface CampaignObjective {
   kind:   CampaignObjectiveKind;
@@ -264,11 +264,12 @@ export function formatCampaignCountdown(remainingMs: number): string {
 }
 
 export const OBJECTIVE_DISPLAY: Record<CampaignObjectiveKind, { icon: string; defaultLabel: string }> = {
-  eggScans:      { icon: '🥚', defaultLabel: 'Egg Scans' },
-  points:        { icon: '⭐', defaultLabel: 'Reward Points' },
-  stage:         { icon: '🎮', defaultLabel: 'Game Progress' },
-  proteinStreak: { icon: '🔥', defaultLabel: 'Protein Streak' },
-  foodLogs:      { icon: '📝', defaultLabel: 'Food Logs' },
+  eggScans:        { icon: '🥚', defaultLabel: 'Egg Scans' },
+  points:          { icon: '⭐', defaultLabel: 'Reward Points' },
+  stage:           { icon: '🎮', defaultLabel: 'Game Progress' },
+  proteinStreak:   { icon: '🔥', defaultLabel: 'Protein Streak' },
+  foodLogs:        { icon: '📝', defaultLabel: 'Food Logs' },
+  proteinConsumed: { icon: '🍽️', defaultLabel: 'Eggs Consumed' },
 };
 
 const STAGE_ORDER: GameStage[] = ['EGG', 'CHICK', 'ADULT', 'STAGE2'];
@@ -300,6 +301,8 @@ export interface CampaignProgressContext {
   currentProteinStreak: number;
   /** This app's food log entries are the same event as an egg scan — reuses lifetimeEggScans, never a separate counter. */
   lifetimeFoodLogs: number;
+  /** Wallet eggs that counted toward a day's first consumption — distinct from lifetimeEggScans (which counts storage/scans, not consumption). See proteinTrackerService.getLifetimeWalletConsumed. */
+  lifetimeWalletConsumed: number;
 }
 
 /** Builds live per-objective progress for a campaign. Pure — reads nothing, purely derives from ctx. */
@@ -315,6 +318,8 @@ export function buildCampaignProgress(campaign: RewardCampaign, ctx: CampaignPro
         return { kind: obj.kind, icon: display.icon, label: obj.label ?? display.defaultLabel, current: Math.min(ctx.currentProteinStreak, obj.target), target: obj.target, met: ctx.currentProteinStreak >= obj.target };
       case 'foodLogs':
         return { kind: obj.kind, icon: display.icon, label: obj.label ?? display.defaultLabel, current: Math.min(ctx.lifetimeFoodLogs, obj.target), target: obj.target, met: ctx.lifetimeFoodLogs >= obj.target };
+      case 'proteinConsumed':
+        return { kind: obj.kind, icon: display.icon, label: obj.label ?? display.defaultLabel, current: Math.min(ctx.lifetimeWalletConsumed, obj.target), target: obj.target, met: ctx.lifetimeWalletConsumed >= obj.target };
       case 'stage': {
         const targetRank = obj.stage ? stageRank(obj.stage) : obj.target;
         const currentRank = Math.min(stageRank(ctx.highestStage), targetRank);

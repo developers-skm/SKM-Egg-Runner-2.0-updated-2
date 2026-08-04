@@ -57,6 +57,12 @@ export type NotificationType =
   | 'reward_redeemed'
   | 'membership_tier_up'
   | 'coupon_expiring'
+  // Protein Wallet (Smart Egg Bank)
+  | 'wallet_egg_stored'
+  | 'wallet_full'
+  | 'wallet_replaced'
+  | 'wallet_health'
+  | 'wallet_expiry_warning'
   // Admin
   | 'admin_announcement'
   | 'system_update'

@@ -30,7 +30,7 @@ import { db } from '../firebase/firebase';
 import { todayKey } from '../../utils/dateHelpers';
 
 // ── Existing services (used, never modified) ──────────────────────
-import { processEggScan, getTodayStats } from './proteinTrackerService';
+import { awardWalletConsumption, getTodayStats } from './proteinTrackerService';
 import { recordStreakDay, getEggStreakData, getStreakHistory } from './eggStreakService';
 import {
   addPoints, spendPoints, getRewardWallet, calcMembershipTier,
@@ -147,24 +147,20 @@ export async function getDevEnvSnapshot(uid: string, email: string | null): Prom
 // ─────────────────────────────────────────────────────────────────
 
 /**
- * Adds `grams` of protein by running the real scan flow N times (each scan ≈ 6g).
- * Mirrors QRScanScreen.tsx's post-scan pipeline exactly: processEggScan (the
- * atomic transaction covering protein, streak, reward points/membership,
- * summary, and challenges), then recordStreakDay (calendar history, not part
- * of the transaction) — so a dev "scan" produces the same effects as a
- * genuine QR scan.
+ * Adds `grams` of protein by running the real award transaction N times
+ * (each ≈ 6g). Mirrors what a genuine wallet consumption does — this
+ * bypasses the store-then-consume wallet flow (dev shortcut only, never a
+ * real QR) and calls awardWalletConsumption directly, the same atomic
+ * transaction covering protein, streak, reward points/membership, summary,
+ * and challenges that a real consume runs — then recordStreakDay (calendar
+ * history, not part of the transaction).
  */
 export async function devAddProtein(uid: string, grams: number): Promise<void> {
   await assertDevUser(uid);
   const scans = Math.max(1, Math.round(grams / 6));
   for (let i = 0; i < scans; i++) {
     const fakeCode = `DEV-TEST-${Date.now()}-${i}`;
-    await setDoc(doc(db, 'qrCodes', fakeCode), {
-      active: true, playCount: 0, maxPlays: 999, proteinConsumed: false,
-      createdAt: serverTimestamp(), _devTestEntry: true,
-    });
-    const result = await processEggScan(uid, fakeCode);
-    if (!result.ok) throw new Error(`devAddProtein: scan ${i} failed (${result.reason})`);
+    await awardWalletConsumption(uid, fakeCode);
     await recordStreakDay(uid).catch(err => console.error('[devAddProtein] recordStreakDay failed:', err));
   }
 }

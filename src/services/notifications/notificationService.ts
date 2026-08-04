@@ -362,6 +362,70 @@ export async function notifyRewardRedeemed(userId: string, rewardTitle: string, 
   });
 }
 
+// ── Protein Wallet (Smart Egg Bank) ──────────────────────────────────────
+// No renderNotify.* toast counterpart yet (would require extending
+// renderNotificationService.ts) — same lighter pattern as notifyRewardRedeemed
+// and the campaign notifications below: Firestore doc only, still visible in
+// the notification drawer/FCM push.
+
+export async function notifyWalletEggStored(userId: string, eggsStored: number, capacity: number): Promise<void> {
+  await createNotification({
+    userId,
+    title: 'Egg Added to Wallet',
+    message: `Your egg is safely stored. ${eggsStored}/${capacity} eggs in your Protein Wallet.`,
+    type: 'wallet_egg_stored',
+    priority: 'low',
+    actionUrl: 'wallet',
+    actions: [{ label: 'Open Wallet', actionType: 'view_dashboard' }],
+    metadata: { eggsStored, capacity },
+  });
+}
+
+export async function notifyWalletFull(userId: string): Promise<void> {
+  await createNotification({
+    userId,
+    title: 'Protein Wallet Full',
+    message: 'Your wallet already contains the maximum number of stored eggs. Choose how you would like to continue.',
+    type: 'wallet_full',
+    priority: 'normal',
+    actionUrl: 'wallet',
+  });
+}
+
+export async function notifyWalletReplaced(userId: string): Promise<void> {
+  await createNotification({
+    userId,
+    title: 'Wallet Egg Replaced',
+    message: 'Oldest wallet egg replaced successfully.',
+    type: 'wallet_replaced',
+    priority: 'low',
+    actionUrl: 'wallet',
+  });
+}
+
+export async function notifyWalletHealth(userId: string, label: string): Promise<void> {
+  await createNotification({
+    userId,
+    title: 'Wallet Health',
+    message: `Your Protein Wallet is ${label.toLowerCase()}.`,
+    type: 'wallet_health',
+    priority: 'low',
+    actionUrl: 'wallet',
+    metadata: { label },
+  });
+}
+
+export async function notifyWalletExpiryWarning(userId: string): Promise<void> {
+  await createNotification({
+    userId,
+    title: 'Egg Expiring Soon',
+    message: 'One of your stored eggs expires tomorrow. Consume it before it expires.',
+    type: 'wallet_expiry_warning',
+    priority: 'normal',
+    actionUrl: 'wallet',
+  });
+}
+
 // ── Seasonal Reward Campaigns ────────────────────────────────────────────
 // No renderNotify.* toast counterpart exists for these yet (would require
 // extending renderNotificationService.ts, out of scope here) — createNotification
