@@ -43,9 +43,10 @@ interface QRScanScreenProps {
 interface ScanResult {
   protein: number;
   consumedDirectly: boolean;
-  eggsStored?: number;
-  capacity?: number;
+  eggsStored: number;
+  capacity: number;
   goalJustMet?: boolean;
+  todayProteinAfter: number;
 }
 
 const QR_ELEMENT_ID = 'protein-qr-reader';
@@ -255,7 +256,12 @@ export default function QRScanScreen({ user, onScanSuccess, onOpenWallet }: QRSc
         const streakMilestoneHit = [3, 7, 14, 30, 60, 100].includes(streak);
         recordStreakDay(user.uid).catch(err => logBackgroundFailure('handleScan:recordStreakDay', err));
 
-        setResult({ protein: directResult.protein, consumedDirectly: true, goalJustMet: directResult.goalJustMet });
+        const walletSummary = await getWalletSummary(user.uid);
+        const todayProteinAfter = (todayStats?.totalProtein ?? 0) + directResult.protein;
+        setResult({
+          protein: directResult.protein, consumedDirectly: true, goalJustMet: directResult.goalJustMet,
+          eggsStored: walletSummary.walletEggsStored, capacity: WALLET_CAPACITY, todayProteinAfter,
+        });
         setPhase('success');
         if (streakMilestoneHit || directResult.goalJustMet) HapticService.success();
         else HapticService.light();
@@ -333,9 +339,13 @@ export default function QRScanScreen({ user, onScanSuccess, onOpenWallet }: QRSc
 
       if (!mountedRef.current) return;
 
-      setResult({ protein: item.protein, consumedDirectly: false, eggsStored: summary.walletEggsStored, capacity: WALLET_CAPACITY });
+      setResult({
+        protein: item.protein, consumedDirectly: false,
+        eggsStored: summary.walletEggsStored, capacity: WALLET_CAPACITY,
+        todayProteinAfter: todayStats?.totalProtein ?? 0,
+      });
       setPhase('success');
-      HapticService.light();
+      HapticService.success();
 
       notifyWalletEggStored(user.uid, summary.walletEggsStored, WALLET_CAPACITY).catch(err => logBackgroundFailure('handleScan:notifyWalletEggStored', err));
 
@@ -382,8 +392,8 @@ export default function QRScanScreen({ user, onScanSuccess, onOpenWallet }: QRSc
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-      {/* Header — hidden while camera is active */}
-      {!isCameraPhase && phase !== 'processing' && (
+      {/* Header — hidden while camera is active or on the full-screen success page */}
+      {!isCameraPhase && phase !== 'processing' && phase !== 'success' && (
         <div style={{
           background: 'linear-gradient(135deg,#D71920,#B31217)',
           padding: '18px 18px 16px', flexShrink: 0,
@@ -654,55 +664,113 @@ export default function QRScanScreen({ user, onScanSuccess, onOpenWallet }: QRSc
         </div>
       )}
 
-      {/* ── SUCCESS ── */}
+      {/* ── SUCCESS — full-screen premium result page, no header/goal card ── */}
       {phase === 'success' && result && (
-        <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 90 }}>
-          <div style={{ padding: 14 }}>
-            <div style={{ background: '#fff', borderRadius: 22, padding: 22, boxShadow: '0 4px 24px rgba(0,0,0,0.1)', textAlign: 'center' }}>
-              <div style={{
-                width: 76, height: 76, borderRadius: '50%', margin: '0 auto 14px',
-                background: 'linear-gradient(135deg,#D71920,#B31217)',
-                boxShadow: '0 8px 28px rgba(215,25,32,0.45)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                animation: 'popIn 0.4s cubic-bezier(0.34,1.56,0.64,1)',
-              }}>
-                <CheckCircleIcon size={38} color="#fff" />
-              </div>
-              <h3 style={{ fontSize: 21, fontWeight: 900, color: '#1A1A1A', margin: '0 0 4px' }}>
-                {result.consumedDirectly ? 'Protein Logged!' : 'Egg Stored in Wallet!'}
-              </h3>
-              <p style={{ fontSize: 12, color: '#666', margin: '0 0 16px' }}>
-                {result.consumedDirectly
-                  ? (result.goalJustMet ? "Today's goal reached!" : "Today's first egg was consumed automatically.")
-                  : "Consume it whenever you're ready to log protein."}
-              </p>
+        <div style={{
+          flex: 1, overflowY: 'auto', paddingBottom: 28,
+          background: 'linear-gradient(180deg,#FFF7F7 0%,#FFFFFF 220px)',
+          animation: 'successFadeIn 250ms ease-out',
+        }}>
+          <div style={{ padding: '36px 18px 0', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 18 }}>
-                <RBox label="Protein Value" value={`+${result.protein}g`} color="#D71920" bg="#FCE8E8" />
-                {result.consumedDirectly ? (
-                  <RBox label="Status" value="Consumed" color="#22C55E" bg="#F0FDF4" />
-                ) : (
-                  <RBox label="Eggs Stored" value={`${result.eggsStored}/${result.capacity}`} color="#22C55E" bg="#F0FDF4" />
-                )}
+            {/* Success icon — red glow circle, animated checkmark */}
+            <div style={{ position: 'relative', width: 108, height: 108, marginBottom: 20 }}>
+              <div style={{
+                position: 'absolute', inset: -14, borderRadius: '50%',
+                background: 'radial-gradient(circle, rgba(215,25,32,0.22) 0%, rgba(215,25,32,0) 70%)',
+                animation: 'successGlowPulse 1.8s ease-in-out infinite',
+              }} />
+              <div style={{
+                position: 'relative', width: 108, height: 108, borderRadius: '50%',
+                background: 'linear-gradient(135deg,#D71920,#B31217)',
+                boxShadow: '0 10px 32px rgba(215,25,32,0.4)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                animation: 'successIconPop 450ms cubic-bezier(0.34,1.56,0.64,1)',
+              }}>
+                <CheckCircleIcon size={54} color="#fff" />
               </div>
-              <div style={{ display: 'flex', gap: 10 }}>
-                <button onClick={scanAnother} style={{
-                  flex: 1, padding: '13px 0', borderRadius: 15, border: 'none', cursor: 'pointer',
-                  background: 'linear-gradient(135deg,#D71920,#B31217)', color: '#fff', fontWeight: 900, fontSize: 13,
-                  boxShadow: '0 4px 16px rgba(215,25,32,0.4)',
-                }}>Scan Another</button>
-                {onOpenWallet ? (
-                  <button onClick={onOpenWallet} style={{
-                    flex: 1, padding: '13px 0', borderRadius: 15, border: '1.5px solid #E8E8E8', cursor: 'pointer',
-                    background: '#F5F5F5', color: '#666', fontWeight: 700, fontSize: 13,
-                  }}>Open Wallet</button>
-                ) : (
-                  <button onClick={onScanSuccess} style={{
-                    flex: 1, padding: '13px 0', borderRadius: 15, border: '1.5px solid #E8E8E8', cursor: 'pointer',
-                    background: '#F5F5F5', color: '#666', fontWeight: 700, fontSize: 13,
-                  }}>Done</button>
-                )}
+            </div>
+
+            {/* Title + subtitle */}
+            <h3 style={{
+              fontSize: 24, fontWeight: 900, color: '#1A1A1A', margin: '0 0 6px', textAlign: 'center',
+              animation: 'successSlideUp 400ms ease-out 80ms both',
+            }}>
+              {result.consumedDirectly ? 'Protein Logged!' : 'Egg Stored Successfully!'}
+            </h3>
+            <p style={{
+              fontSize: 13, color: '#888', margin: '0 0 26px', textAlign: 'center', maxWidth: 280, lineHeight: 1.5,
+              animation: 'successSlideUp 400ms ease-out 140ms both',
+            }}>
+              {result.consumedDirectly
+                ? "Your first egg for today has been recorded."
+                : "Your egg has been safely added to your Protein Wallet."}
+            </p>
+
+            {/* Status card — premium glass card with protein/status + wallet + today's progress */}
+            <div style={{
+              width: '100%', maxWidth: 380, background: 'rgba(255,255,255,0.9)',
+              backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+              border: '1px solid rgba(0,0,0,0.04)',
+              borderRadius: 24, padding: 20, marginBottom: 14,
+              boxShadow: '0 8px 30px rgba(0,0,0,0.08)',
+              animation: 'successSlideUp 420ms ease-out 200ms both',
+            }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+                <RBox label="Protein" value={`+${result.protein}g`} color="#D71920" bg="#FCE8E8" />
+                <RBox label="Status" value={result.consumedDirectly ? 'Consumed' : 'Stored'} color="#22C55E" bg="#F0FDF4" />
               </div>
+              <div style={{ height: 1, background: '#F0F0F0', margin: '0 0 14px' }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#999' }}>Wallet</span>
+                <span style={{ fontSize: 13, fontWeight: 900, color: '#1A1A1A' }}>
+                  {result.eggsStored} / {result.capacity} Eggs
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#999' }}>Today's Progress</span>
+                <span style={{ fontSize: 13, fontWeight: 900, color: '#D71920' }}>
+                  {result.todayProteinAfter}g / {goal}g
+                </span>
+              </div>
+            </div>
+
+            {/* Bottom info card */}
+            <div style={{
+              width: '100%', maxWidth: 380, background: '#FAFAFA', border: '1px solid #F0F0F0',
+              borderRadius: 16, padding: '12px 16px', marginBottom: 22,
+              display: 'flex', alignItems: 'center', gap: 10,
+              animation: 'successSlideUp 420ms ease-out 260ms both',
+            }}>
+              <span style={{ fontSize: 16, flexShrink: 0 }}>{result.consumedDirectly ? '✅' : 'ℹ️'}</span>
+              <p style={{ fontSize: 11.5, color: '#888', margin: 0, lineHeight: 1.45 }}>
+                {result.consumedDirectly
+                  ? "Today's protein has been added successfully."
+                  : 'Stored eggs expire after 30 days — consume them anytime before then.'}
+              </p>
+            </div>
+
+            {/* Actions */}
+            <div style={{ width: '100%', maxWidth: 380, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <button onClick={scanAnother} style={{
+                width: '100%', padding: '16px 0', borderRadius: 18, border: 'none', cursor: 'pointer',
+                background: 'linear-gradient(135deg,#D71920,#B31217)', color: '#fff', fontWeight: 900, fontSize: 15,
+                boxShadow: '0 6px 20px rgba(215,25,32,0.4)', letterSpacing: 0.3,
+                animation: 'successFadeUp 400ms ease-out 320ms both',
+              }}>Scan Another Egg</button>
+              {onOpenWallet ? (
+                <button onClick={onOpenWallet} style={{
+                  width: '100%', padding: '15px 0', borderRadius: 18, border: '1.5px solid #F0F0F0', cursor: 'pointer',
+                  background: '#fff', color: '#666', fontWeight: 800, fontSize: 14,
+                  animation: 'successFadeUp 400ms ease-out 380ms both',
+                }}>Open Protein Wallet</button>
+              ) : (
+                <button onClick={onScanSuccess} style={{
+                  width: '100%', padding: '15px 0', borderRadius: 18, border: '1.5px solid #F0F0F0', cursor: 'pointer',
+                  background: '#fff', color: '#666', fontWeight: 800, fontSize: 14,
+                  animation: 'successFadeUp 400ms ease-out 380ms both',
+                }}>Done</button>
+              )}
             </div>
           </div>
         </div>
@@ -719,7 +787,11 @@ export default function QRScanScreen({ user, onScanSuccess, onOpenWallet }: QRSc
           onConsume={() => { setFullModal(null); (onOpenWallet ?? onScanSuccess)(); }}
           onReplaced={() => {
             setFullModal(null);
-            setResult({ protein: PROTEIN_PER_EGG, consumedDirectly: false, eggsStored: WALLET_CAPACITY, capacity: WALLET_CAPACITY });
+            setResult({
+              protein: PROTEIN_PER_EGG, consumedDirectly: false,
+              eggsStored: WALLET_CAPACITY, capacity: WALLET_CAPACITY,
+              todayProteinAfter: todayStats?.totalProtein ?? 0,
+            });
             setPhase('success');
           }}
           onCancel={() => { setFullModal(null); reset(); }}
@@ -839,6 +911,12 @@ export default function QRScanScreen({ user, onScanSuccess, onOpenWallet }: QRSc
         @keyframes spin    { to { transform: rotate(360deg); } }
         @keyframes scanline { 0% { top: 0%; } 50% { top: calc(100% - 2px); } 100% { top: 0%; } }
         @keyframes popIn   { from { transform: scale(0.5); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+        @keyframes successFadeIn  { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes successIconPop { 0% { transform: scale(0.8); opacity: 0; } 60% { transform: scale(1.06); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+        @keyframes successGlowPulse { 0%, 100% { opacity: 0.55; transform: scale(1); } 50% { opacity: 1; transform: scale(1.08); } }
+        @keyframes successSlideUp { from { transform: translateY(14px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        @keyframes successFadeUp  { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
         /* html5-qrcode CSS — surgical overrides only.
            DO NOT set position:static on descendant divs: html5-qrcode needs
