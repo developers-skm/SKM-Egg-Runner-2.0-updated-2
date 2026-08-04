@@ -18,13 +18,18 @@ import {
   PROTEIN_PER_EGG,
   type ProteinLogEntry, type DailyStats, type TrackerSettings,
 } from '../services/protein/proteinTrackerService';
-import { storeEggInWallet, getWalletSummary, WALLET_CAPACITY, type WalletEggItem } from '../services/protein/proteinWalletService';
+import { storeEggInWallet, directConsumeEgg, getWalletSummary, WALLET_CAPACITY, type WalletEggItem } from '../services/protein/proteinWalletService';
 import { CameraIcon, EggIcon, CheckCircleIcon, AlertIcon } from './Icons';
 import { playChickSuccess, resumeAudioContext } from '../services/audio/chickSound';
 import { HapticService } from '../services/audio/hapticService';
-import { notifyDuplicateEgg, notifyWalletEggStored, notifyWalletFull } from '../services/notifications/notificationService';
+import {
+  notifyDuplicateEgg, notifyWalletEggStored, notifyWalletFull,
+  notifyProteinAdded, notifyProteinGoalComplete, notifyStreakMilestone,
+  notifyRewardPointsEarned, notifyMembershipTierUp,
+} from '../services/notifications/notificationService';
 import { logBackgroundFailure } from '../utils/errorHandling';
 import { validateEggForProtein } from '../services/qr/qrService';
+import { recordStreakDay } from '../services/protein/eggStreakService';
 import WalletFullModal from './WalletFullModal';
 
 type Phase = 'idle' | 'opening' | 'scanning' | 'processing' | 'success' | 'duplicate' | 'consumed_other' | 'wallet_full' | 'error';
@@ -37,8 +42,10 @@ interface QRScanScreenProps {
 
 interface ScanResult {
   protein: number;
-  eggsStored: number;
-  capacity: number;
+  consumedDirectly: boolean;
+  eggsStored?: number;
+  capacity?: number;
+  goalJustMet?: boolean;
 }
 
 const QR_ELEMENT_ID = 'protein-qr-reader';
@@ -232,10 +239,63 @@ export default function QRScanScreen({ user, onScanSuccess, onOpenWallet }: QRSc
 
       console.log('[QR VALIDATED] accepted:', validation.eggCode);
 
-      // ── Store-only pipeline ───────────────────────────────────────────────
-      // Scanning no longer awards protein/streak/points directly — it only
-      // stores the egg in the Protein Wallet. Those awards now happen when
-      // the user explicitly consumes a stored egg (see WalletScreen).
+      // ── Direct-consume-first pipeline ───────────────────────────────────
+      // If today's first egg hasn't been consumed yet, award it immediately
+      // (protein, daily goal, streak, points, challenges, notifications) and
+      // skip the wallet entirely. Only the 2nd+ scan of the day gets stored
+      // in the Protein Wallet for later consumption (see WalletScreen).
+      const directResult = await directConsumeEgg(user.uid, validation.eggCode);
+
+      if (directResult.ok) {
+        console.log('[FIREBASE UPDATED] egg consumed directly, qrCodes marked consumed');
+        playChickSuccess();
+        if (!mountedRef.current) return;
+
+        const streak = directResult.streak?.currentStreak ?? 0;
+        const streakMilestoneHit = [3, 7, 14, 30, 60, 100].includes(streak);
+        recordStreakDay(user.uid).catch(err => logBackgroundFailure('handleScan:recordStreakDay', err));
+
+        setResult({ protein: directResult.protein, consumedDirectly: true, goalJustMet: directResult.goalJustMet });
+        setPhase('success');
+        if (streakMilestoneHit || directResult.goalJustMet) HapticService.success();
+        else HapticService.light();
+
+        notifyProteinAdded(user.uid, directResult.protein, (todayStats?.totalProtein ?? 0) + directResult.protein)
+          .catch(err => logBackgroundFailure('handleScan:notifyProteinAdded', err));
+        if (directResult.goalJustMet) {
+          notifyProteinGoalComplete(user.uid, settings?.dailyGoal ?? 60).catch(err => logBackgroundFailure('handleScan:notifyProteinGoalComplete', err));
+        }
+        if (streakMilestoneHit) {
+          notifyStreakMilestone(user.uid, streak).catch(err => logBackgroundFailure('handleScan:notifyStreakMilestone', err));
+        }
+        if (directResult.pointsEarned && directResult.wallet) {
+          notifyRewardPointsEarned(user.uid, directResult.pointsEarned, directResult.wallet.currentPoints).catch(err => logBackgroundFailure('handleScan:notifyRewardPointsEarned', err));
+        }
+        if (directResult.tierChanged && directResult.wallet) {
+          notifyMembershipTierUp(user.uid, directResult.wallet.membership).catch(err => logBackgroundFailure('handleScan:notifyMembershipTierUp', err));
+        }
+        return;
+      }
+
+      if (directResult.reason === 'error') {
+        console.error('[SCAN] directConsumeEgg error:', directResult.message);
+        if (mountedRef.current) { setErrorMessage(directResult.message); setPhase('error'); }
+        return;
+      }
+      if (directResult.reason === 'consumed_by_self') {
+        console.warn('[SCAN] Already claimed by this user:', validation.eggCode);
+        if (mountedRef.current) setPhase('duplicate');
+        notifyDuplicateEgg(user.uid).catch(err => logBackgroundFailure('handleScan:notifyDuplicateEgg', err));
+        return;
+      }
+      if (directResult.reason === 'consumed_by_other') {
+        console.warn('[SCAN] Already claimed by another user:', validation.eggCode);
+        if (mountedRef.current) setPhase('consumed_other');
+        return;
+      }
+
+      // reason === 'already_consumed_today' — today's first egg is claimed,
+      // fall through to the store-in-wallet pipeline for this (2nd+) scan.
       const storeResult = await storeEggInWallet(user.uid, validation.eggCode);
 
       if (!storeResult.ok) {
@@ -273,7 +333,7 @@ export default function QRScanScreen({ user, onScanSuccess, onOpenWallet }: QRSc
 
       if (!mountedRef.current) return;
 
-      setResult({ protein: item.protein, eggsStored: summary.walletEggsStored, capacity: WALLET_CAPACITY });
+      setResult({ protein: item.protein, consumedDirectly: false, eggsStored: summary.walletEggsStored, capacity: WALLET_CAPACITY });
       setPhase('success');
       HapticService.light();
 
@@ -608,14 +668,22 @@ export default function QRScanScreen({ user, onScanSuccess, onOpenWallet }: QRSc
               }}>
                 <CheckCircleIcon size={38} color="#fff" />
               </div>
-              <h3 style={{ fontSize: 21, fontWeight: 900, color: '#1A1A1A', margin: '0 0 4px' }}>Egg Stored in Wallet!</h3>
+              <h3 style={{ fontSize: 21, fontWeight: 900, color: '#1A1A1A', margin: '0 0 4px' }}>
+                {result.consumedDirectly ? 'Protein Logged!' : 'Egg Stored in Wallet!'}
+              </h3>
               <p style={{ fontSize: 12, color: '#666', margin: '0 0 16px' }}>
-                Consume it whenever you're ready to log protein.
+                {result.consumedDirectly
+                  ? (result.goalJustMet ? "Today's goal reached!" : "Today's first egg was consumed automatically.")
+                  : "Consume it whenever you're ready to log protein."}
               </p>
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 18 }}>
                 <RBox label="Protein Value" value={`+${result.protein}g`} color="#D71920" bg="#FCE8E8" />
-                <RBox label="Eggs Stored"   value={`${result.eggsStored}/${result.capacity}`} color="#22C55E" bg="#F0FDF4" />
+                {result.consumedDirectly ? (
+                  <RBox label="Status" value="Consumed" color="#22C55E" bg="#F0FDF4" />
+                ) : (
+                  <RBox label="Eggs Stored" value={`${result.eggsStored}/${result.capacity}`} color="#22C55E" bg="#F0FDF4" />
+                )}
               </div>
               <div style={{ display: 'flex', gap: 10 }}>
                 <button onClick={scanAnother} style={{
@@ -651,7 +719,7 @@ export default function QRScanScreen({ user, onScanSuccess, onOpenWallet }: QRSc
           onConsume={() => { setFullModal(null); (onOpenWallet ?? onScanSuccess)(); }}
           onReplaced={() => {
             setFullModal(null);
-            setResult({ protein: PROTEIN_PER_EGG, eggsStored: WALLET_CAPACITY, capacity: WALLET_CAPACITY });
+            setResult({ protein: PROTEIN_PER_EGG, consumedDirectly: false, eggsStored: WALLET_CAPACITY, capacity: WALLET_CAPACITY });
             setPhase('success');
           }}
           onCancel={() => { setFullModal(null); reset(); }}

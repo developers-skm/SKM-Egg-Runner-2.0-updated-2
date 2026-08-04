@@ -4,16 +4,17 @@
  * Firestore collection:
  *   proteinWallet/{uid}/items/{itemId}   — qrId, protein, status, storedAt, expiresAt, ...
  *
- * Scanning an SKM QR no longer awards protein immediately — it stores an
- * egg here (max 5, FIFO, 30-day expiry). The QR's global ownership claim
+ * Scanning an SKM QR only stores an egg in the wallet (max 5, FIFO, 30-day
+ * expiry) when today's first consumption has already happened — see
+ * directConsumeEgg. The QR's global ownership claim
  * (qrCodes/{code}.proteinConsumed) still happens exactly as before, at
- * store time — QR validation/security is untouched (see qrService.ts).
+ * store/consume time — QR validation/security is untouched (see qrService.ts).
  *
- * Only consuming a stored egg (consumeNextWalletEgg) runs the reward-side
- * transaction (streak, points, challenges, daily stats) — and only the
- * day's first consumption counts toward those; see awardWalletConsumption
- * in proteinTrackerService.ts, which this service calls but does not
- * duplicate.
+ * Only consuming an egg (directConsumeEgg for the day's first scan,
+ * consumeNextWalletEgg for wallet eggs) runs the reward-side transaction
+ * (streak, points, challenges, daily stats) — and only the day's first
+ * consumption counts toward those; see awardWalletConsumption in
+ * proteinTrackerService.ts, which this service calls but does not duplicate.
  */
 
 import {
@@ -254,6 +255,81 @@ export async function storeEggInWallet(uid: string, qrCode: string): Promise<Sto
   } catch (err: unknown) {
     const e = err as { message?: string };
     console.error('[storeEggInWallet] error:', { uid, qrCode, message: e?.message });
+    return { ok: false, reason: 'error', message: e?.message ?? 'Something went wrong. Please try again.' };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// DIRECT CONSUME — scan-time consumption for the day's first egg
+// ─────────────────────────────────────────────────────────────
+//
+// If today's first consumption hasn't happened yet, a scanned egg should be
+// awarded immediately instead of parked in the wallet — the wallet exists to
+// hold *extra* eggs beyond the one-per-day award, not the first one. This
+// claims the QR exactly like storeEggInWallet does (same ownership checks),
+// but skips creating a wallet item and instead runs the same award pipeline
+// consumeNextWalletEgg uses for a first-of-day wallet consumption.
+
+export type DirectConsumeResult =
+  | {
+      ok: true;
+      protein: number;
+      calories: number;
+      streak?: { currentStreak: number; bestStreak: number; lastActiveDate: string };
+      prevStreak?: number;
+      goalJustMet?: boolean;
+      pointsEarned?: number;
+      wallet?: { currentPoints: number; membership: string };
+      tierChanged?: boolean;
+    }
+  | { ok: false; reason: 'consumed_by_self' | 'consumed_by_other' }
+  | { ok: false; reason: 'already_consumed_today' }
+  | { ok: false; reason: 'error'; message: string };
+
+export async function directConsumeEgg(uid: string, qrCode: string): Promise<DirectConsumeResult> {
+  const qrRef = doc(db, 'qrCodes', qrCode);
+  const summaryRef = doc(db, 'userSummary', uid);
+
+  try {
+    const claim = await runTransaction(db, async (tx) => {
+      const [qrSnap, summarySnap] = await Promise.all([tx.get(qrRef), tx.get(summaryRef)]);
+
+      if (qrSnap.exists() && qrSnap.data().proteinConsumed === true) {
+        const claimedBy: string = qrSnap.data().proteinConsumedByUID ?? '';
+        return { ok: false as const, reason: claimedBy === uid ? 'consumed_by_self' as const : 'consumed_by_other' as const };
+      }
+
+      const today = todayKey();
+      const lastConsumedDate: string | null = summarySnap.exists() ? (summarySnap.data().walletLastConsumedDate ?? null) : null;
+      if (lastConsumedDate === today) {
+        // Today's first consumption is already claimed — caller should store this egg in the wallet instead.
+        return { ok: false as const, reason: 'already_consumed_today' as const };
+      }
+
+      tx.set(qrRef, { proteinConsumed: true, proteinConsumedAt: serverTimestamp(), proteinConsumedByUID: uid }, { merge: true });
+      tx.set(summaryRef, { uid, walletLastConsumedDate: today, updatedAt: serverTimestamp() }, { merge: true });
+      tx.set(doc(db, 'users', uid), { totalQRCodesScanned: increment(1), updatedAt: serverTimestamp() }, { merge: true });
+
+      return { ok: true as const };
+    });
+
+    if (!claim.ok) return claim;
+
+    const award = await awardWalletConsumption(uid, qrCode);
+    return {
+      ok: true,
+      protein: PROTEIN_PER_EGG,
+      calories: CALORIES_PER_EGG,
+      streak: award.streak,
+      prevStreak: award.prevStreak,
+      goalJustMet: award.goalJustMet,
+      pointsEarned: award.pointsEarned,
+      wallet: { currentPoints: award.wallet.currentPoints, membership: award.wallet.membership },
+      tierChanged: award.tierChanged,
+    };
+  } catch (err: unknown) {
+    const e = err as { message?: string };
+    console.error('[directConsumeEgg] error:', { uid, qrCode, message: e?.message });
     return { ok: false, reason: 'error', message: e?.message ?? 'Something went wrong. Please try again.' };
   }
 }
