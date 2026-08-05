@@ -19,6 +19,7 @@ import {
   type WalletEggItem, type WalletSummary, type ConsumeResult,
 } from '../services/protein/proteinWalletService';
 import { EggIcon, CheckCircleIcon } from './Icons';
+import ConsumeEggModal from './ConsumeEggModal';
 import StatusBadge from './rewards/StatusBadge';
 import { playChickSuccess } from '../services/audio/chickSound';
 import { HapticService } from '../services/audio/hapticService';
@@ -358,30 +359,11 @@ export default function WalletScreen({ user, refreshKey, onScanQR }: WalletScree
 
       {/* Confirmation modal */}
       {confirmOpen && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 50,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
-        }} onClick={() => setConfirmOpen(false)}>
-          <div style={{ background: '#fff', borderRadius: 20, padding: 22, maxWidth: 340, width: '100%', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
-            <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#FCE8E8', margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <EggIcon size={26} color={RED} />
-            </div>
-            <h3 style={{ fontSize: 16, fontWeight: 900, color: '#1A1A1A', margin: '0 0 6px' }}>Consume this egg today?</h3>
-            <p style={{ fontSize: 12, color: '#666', margin: '0 0 18px' }}>
-              This will add +{PROTEIN_PER_EGG}g protein and update your daily streak.
-            </p>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button onClick={() => setConfirmOpen(false)} style={{
-                flex: 1, padding: '12px 0', borderRadius: 14, border: '1.5px solid #E8E8E8', cursor: 'pointer',
-                background: '#F5F5F5', color: '#666', fontWeight: 700, fontSize: 13,
-              }}>Cancel</button>
-              <button onClick={handleConsume} style={{
-                flex: 1, padding: '12px 0', borderRadius: 14, border: 'none', cursor: 'pointer',
-                background: 'linear-gradient(135deg,#D71920,#B31217)', color: '#fff', fontWeight: 900, fontSize: 13,
-              }}>Consume</button>
-            </div>
-          </div>
-        </div>
+        <ConsumeEggModal
+          proteinPerEgg={PROTEIN_PER_EGG}
+          onConfirm={handleConsume}
+          onCancel={() => setConfirmOpen(false)}
+        />
       )}
 
       <style>{`
